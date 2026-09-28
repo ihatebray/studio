@@ -69,3 +69,4 @@ Key files for studio-specific behavior:
 - `src/StudioHome.jsx` — home screen, search/download, settings sheet
 - `src/main.js` — search "STUDIO" for the disabled updater
 - `forge.config.cjs`, `vite.*.config.mjs`, `scripts/` — build system
+"# studio" 
