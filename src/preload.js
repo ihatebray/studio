@@ -162,6 +162,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyPartnerDiscography: (id) => ipcRenderer.invoke('spotifyPartner:discography', id),
   spotifyPartnerTopTracks: (id) => ipcRenderer.invoke('spotifyPartner:topTracks', id),
   previewResolve: (track) => ipcRenderer.invoke('preview:resolve', track),
+  /* Spotify playback (studio-spotify helper). Control only — audio never
+     comes through here; the helper plays to the sound card itself. */
+  spotifyPlayerState: () => ipcRenderer.invoke('spotifyPlayer:state'),
+  spotifyPlayerConnect: () => ipcRenderer.invoke('spotifyPlayer:connect'),
+  spotifyPlayerLoad: (id, opts) => ipcRenderer.invoke('spotifyPlayer:load', id, opts),
+  spotifyPlayerPreload: (id) => ipcRenderer.invoke('spotifyPlayer:preload', id),
+  spotifyPlayerPlay: () => ipcRenderer.invoke('spotifyPlayer:play'),
+  spotifyPlayerPause: () => ipcRenderer.invoke('spotifyPlayer:pause'),
+  spotifyPlayerStop: () => ipcRenderer.invoke('spotifyPlayer:stop'),
+  spotifyPlayerSeek: (ms) => ipcRenderer.invoke('spotifyPlayer:seek', ms),
+  spotifyPlayerVolume: (v) => ipcRenderer.invoke('spotifyPlayer:volume', v),
+  onSpotifyPlayerEvent: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('spotifyPlayer:event', listener);
+    return () => ipcRenderer.removeListener('spotifyPlayer:event', listener);
+  },
   spotifyPartnerTrackPlays: (id) => ipcRenderer.invoke('spotifyPartner:trackPlays', id),
   spotifyPartnerLibrary: (kind) => ipcRenderer.invoke('spotifyPartner:library', kind),
   onSpotifyPartnerChanged: (cb) => {

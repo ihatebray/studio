@@ -38,3 +38,17 @@ export function toolsInstalled() {
   const { ytDlp, ffmpeg } = getToolPaths();
   return fs.existsSync(ytDlp) && fs.existsSync(ffmpeg);
 }
+
+/**
+ * The Spotify playback helper (studio-spotify/, built with
+ * `npm run setup:spotify`). Lives beside yt-dlp and ffmpeg so packaging
+ * picks it up through the same extraResource entry.
+ */
+export function getSpotifyHelperPath() {
+  const { base } = getToolPaths();
+  return path.join(base, process.platform === 'win32' ? 'studio-spotify.exe' : 'studio-spotify');
+}
+
+export function spotifyHelperInstalled() {
+  return fs.existsSync(getSpotifyHelperPath());
+}

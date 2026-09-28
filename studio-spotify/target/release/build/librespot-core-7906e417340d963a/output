@@ -1,0 +1,9 @@
+cargo:rustc-env=VERGEN_BUILD_DATE=2026-09-28
+cargo:rustc-env=VERGEN_GIT_COMMIT_DATE=2026-09-27
+cargo:rustc-env=VERGEN_GIT_SHA=d16b7fa
+cargo:rerun-if-changed=C:/Users/bray/.cargo/git/checkouts/librespot-0e915a47c8983697/d16b7fa/.git\HEAD
+cargo:rerun-if-changed=C:/Users/bray/.cargo/git/checkouts/librespot-0e915a47c8983697/d16b7fa/.git\refs/heads/master
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-env-changed=VERGEN_IDEMPOTENT
+cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH
+cargo:rustc-env=LIBRESPOT_BUILD_ID=yxFLR1SD

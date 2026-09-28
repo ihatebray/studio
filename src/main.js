@@ -149,6 +149,7 @@ import * as twitchOverlay from './twitchOverlay.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
+import { registerSpotifyPlayerIpc } from './spotifyPlayer.js';
 import { registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch } from './spotifyPartner.js';
 
 /* Search fallback chain: Client ID → signed-in Spotify account → iTunes.
@@ -171,6 +172,9 @@ async function viaAccount(kind, q) {
    Separate from the Client ID / Secret flow above, which keeps powering search
    and metadata whether or not this is connected. */
 registerSpotifyPartnerIpc(ipcMain);
+/* Spotify playback: the studio-spotify helper (librespot). Started on first
+   use, signed in with the account above. */
+registerSpotifyPlayerIpc(ipcMain);
 
 /* Preview before you get: resolves the YouTube match a download would use to
    a stream URL. Nothing is saved. */

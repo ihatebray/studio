@@ -2,7 +2,7 @@
   "name": "studio",
   "productName": "studio",
   "version": "0.1.0",
-  "description": "studio — a personal fullscreen now-playing app",
+  "description": "studio \u2014 a personal fullscreen now-playing app",
   "author": "bray",
   "main": ".vite/build/main.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "setup:binaries": "node scripts/download-binaries.mjs",
-    "postinstall": "node scripts/postinstall.mjs"
+    "postinstall": "node scripts/postinstall.mjs",
+    "setup:spotify": "node scripts/build-spotify-helper.mjs"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.2.0",

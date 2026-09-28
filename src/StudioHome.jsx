@@ -9938,7 +9938,118 @@ function SpotifyAccountPanel() {
           ))}
         </div>
       ) : null}
+      {st?.connected ? <SpotifyPlaybackCheck needsReauth={st.canStream === false} onReauth={signIn} /> : null}
     </section>
+  );
+}
+
+/**
+ * Settings → Connections → Spotify account → Playback.
+ *
+ * Stage one of Spotify playback: the studio-spotify helper, on its own,
+ * before the player bar and library are routed through it. Shows whether the
+ * helper is built and signed in, and plays any track you paste so the whole
+ * chain (helper → librespot → your speakers) can be checked end to end.
+ */
+function SpotifyPlaybackCheck({ needsReauth, onReauth }) {
+  const a = typeof window !== 'undefined' ? window.electronAPI : null;
+  const [snap, setSnap] = useState(null);
+  const [link, setLink] = useState('');
+  const [pb, setPb] = useState({ state: 'idle', id: null, positionMs: 0 });
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    if (!a?.spotifyPlayerState) return undefined;
+    a.spotifyPlayerState().then((s2) => { setSnap(s2); if (s2?.playback) setPb(s2.playback); }).catch(() => {});
+    const off = a.onSpotifyPlayerEvent?.((ev) => {
+      if (ev.event === 'status') { setSnap(ev); return; }
+      if (['loading', 'playing', 'paused', 'ended', 'stopped', 'unavailable'].includes(ev.event)) {
+        setPb((p) => ({ ...p, id: ev.id, state: ev.event, positionMs: ev.positionMs ?? p.positionMs }));
+        if (ev.event === 'unavailable') setNote('Spotify says this track can’t be played on this account.');
+      } else if (ev.event === 'position' || ev.event === 'seeked') {
+        setPb((p) => ({ ...p, id: ev.id, positionMs: ev.positionMs }));
+      } else if (ev.event === 'error') {
+        setNote(String(ev.message || 'The helper reported an error.'));
+      }
+    });
+    return () => off?.();
+  }, [a]);
+
+  if (!a?.spotifyPlayerState) return null;
+
+  // Accepts a track link, a spotify:track: URI, or a bare ID.
+  const trackId = (() => {
+    const v = link.trim();
+    const m = v.match(/track[/:]([0-9A-Za-z]{22})/) || v.match(/^([0-9A-Za-z]{22})$/);
+    return m ? m[1] : null;
+  })();
+  const status = snap?.status || 'stopped';
+  const statusText = !snap?.installed ? 'Helper not built'
+    : status === 'ready' ? `Ready${snap.account?.account ? ` · ${snap.account.account}` : ''}`
+      : status === 'starting' ? 'Starting…'
+        : status === 'signingIn' ? 'Signing in…'
+          : status === 'error' ? 'Not available' : 'Idle — starts when you play';
+  const fmt = (ms) => { const t = Math.floor((ms || 0) / 1000); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+  const act = async (fn) => {
+    setNote('');
+    const r = await fn().catch((e) => ({ ok: false, error: String(e?.message || e) }));
+    if (r && r.ok === false) setNote(r.error || 'That didn’t work.');
+  };
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 750, color: 'var(--text)' }}>Playback</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: status === 'error' || !snap?.installed ? 'var(--danger)' : 'var(--text-faint)' }}>{statusText}</span>
+        <span style={{ flex: 1 }} />
+        {snap?.installed && status === 'error' ? (
+          <button type="button" className="st-btn st-btn-outline" onClick={() => act(() => a.spotifyPlayerConnect())}>Retry</button>
+        ) : null}
+      </div>
+
+      {needsReauth ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
+          <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-faint)' }}>
+            Your sign-in is from before playback existed. Sign in once more to allow it.
+          </span>
+          <button type="button" className="st-btn st-btn-primary" onClick={onReauth}>Sign in again</button>
+        </div>
+      ) : null}
+
+      {!snap?.installed ? (
+        <p style={{ margin: '8px 0 0', fontSize: 12.5, lineHeight: 1.55, color: 'var(--text-faint)' }}>
+          Build it once from the project folder with <code>npm run setup:spotify</code> (needs Rust from rustup.rs), then restart Studio.
+        </p>
+      ) : snap?.error?.message && status === 'error' ? (
+        <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--danger)' }}>{snap.error.message}</p>
+      ) : null}
+
+      {snap?.installed && !needsReauth ? (
+        <>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <input className="st-input" style={{ flex: 1, minWidth: 0 }} value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="Paste a Spotify track link to test playback"
+              aria-label="Spotify track link" spellCheck={false} />
+            <button type="button" className="st-btn st-btn-primary" disabled={!trackId}
+              onClick={() => act(() => a.spotifyPlayerLoad(trackId, { play: true }))}>Play</button>
+            <button type="button" className="st-btn st-btn-outline" disabled={pb.state !== 'playing' && pb.state !== 'paused'}
+              onClick={() => act(() => (pb.state === 'playing' ? a.spotifyPlayerPause() : a.spotifyPlayerPlay()))}>
+              {pb.state === 'paused' ? 'Resume' : 'Pause'}
+            </button>
+            <button type="button" className="st-btn st-btn-outline" disabled={pb.state !== 'playing' && pb.state !== 'paused'}
+              onClick={() => act(() => a.spotifyPlayerStop())}>Stop</button>
+          </div>
+          {pb.id ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }}>
+              {pb.state === 'loading' ? 'Loading…' : pb.state === 'playing' ? `Playing · ${fmt(pb.positionMs)}`
+                : pb.state === 'paused' ? `Paused · ${fmt(pb.positionMs)}` : pb.state === 'ended' ? 'Finished' : pb.state}
+            </div>
+          ) : null}
+          {note ? <div role="status" style={{ marginTop: 8, fontSize: 12, color: 'var(--danger)' }}>{note}</div> : null}
+        </>
+      ) : null}
+    </div>
   );
 }
 

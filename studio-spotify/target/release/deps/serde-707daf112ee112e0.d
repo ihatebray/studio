@@ -1,0 +1,14 @@
+C:\Users\bray\Desktop\studio test\studio-spotify\target\release\deps\serde-707daf112ee112e0.d: C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\bray\Desktop\studio\ test\studio-spotify\target\release\build\serde-b572537707d3de9f\out/private.rs
+
+C:\Users\bray\Desktop\studio test\studio-spotify\target\release\deps\libserde-707daf112ee112e0.rlib: C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\bray\Desktop\studio\ test\studio-spotify\target\release\build\serde-b572537707d3de9f\out/private.rs
+
+C:\Users\bray\Desktop\studio test\studio-spotify\target\release\deps\libserde-707daf112ee112e0.rmeta: C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\bray\Desktop\studio\ test\studio-spotify\target\release\build\serde-b572537707d3de9f\out/private.rs
+
+C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs:
+C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs:
+C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs:
+C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs:
+C:\Users\bray\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs:
+C:\Users\bray\Desktop\studio\ test\studio-spotify\target\release\build\serde-b572537707d3de9f\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\bray\\Desktop\\studio test\\studio-spotify\\target\\release\\build\\serde-b572537707d3de9f\\out

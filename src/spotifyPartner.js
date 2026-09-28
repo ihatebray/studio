@@ -44,6 +44,9 @@ const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/login`;
 const SCOPES = [
   'playlist-read-private',
   'playlist-read-collaborative',
+  // Playback through the studio-spotify helper, and Save (hearting a track).
+  'streaming',
+  'user-library-modify',
   'user-follow-read',
   'user-library-read',
   'user-read-email',
@@ -118,7 +121,12 @@ function rateLimited(sec) {
   });
 }
 
+const changeListeners = new Set();
+/** Main-process subscribers to sign-in / sign-out (spotifyPlayer.js). */
+export function onPartnerChange(fn) { changeListeners.add(fn); return () => changeListeners.delete(fn); }
+
 function broadcast(channel, payload) {
+  if (channel === 'spotifyPartner:changed') changeListeners.forEach((fn) => { try { fn(payload); } catch { /* ignore */ } });
   for (const w of BrowserWindow.getAllWindows()) {
     try { w.webContents.send(channel, payload); } catch { /* window closing */ }
   }
@@ -236,11 +244,15 @@ export function signOut() {
 function state_() {
   const t = readJson(tokenFile());
   if (!t?.refreshToken && !t?.accessToken) return { connected: false };
-  return { connected: true, displayName: t.displayName || '', userId: t.userId || '', product: t.product || '' };
+  /* Sign-ins from before playback existed lack the `streaming` scope; the
+     helper can't use those tokens, so Settings asks for one more sign-in. */
+  const canStream = String(t.scope || '').split(/\s+/).includes('streaming');
+  return { connected: true, displayName: t.displayName || '', userId: t.userId || '', product: t.product || '', canStream };
 }
 export const partnerState = state_;
 
 let refreshing = null;
+export async function getAccessToken() { return accessToken(); }
 async function accessToken() {
   const t = readJson(tokenFile());
   if (!t) throw new StepError('signin', 'Not signed in');
