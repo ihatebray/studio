@@ -2501,6 +2501,25 @@ export function closeLibraryDb() {
   }
 }
 
+/** file_path → id for rows that exist. An upsert keeps the existing id on
+ *  conflict, so callers that need the real id read it back here. */
+export async function idsForFilePaths(paths) {
+  await ensureLibraryOpen();
+  const out = new Map();
+  if (!db || !Array.isArray(paths)) return out;
+  const stmt = db.prepare('SELECT id FROM tracks WHERE file_path = ? LIMIT 1;');
+  try {
+    for (const p of paths) {
+      stmt.bind([String(p || '')]);
+      if (stmt.step()) out.set(p, stmt.getAsObject().id);
+      stmt.reset();
+    }
+  } finally {
+    stmt.free();
+  }
+  return out;
+}
+
 /** True if this absolute path is a row in the library (used to gate custom playback protocol). */
 export function isPlaybackPathAllowed(filePath) {
   if (!db || typeof filePath !== 'string') return false;

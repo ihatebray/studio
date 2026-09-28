@@ -26,6 +26,7 @@
 //!   {"event":"loading|playing|paused|position|seeked","id":"…","positionMs":n}
 //!   {"event":"ended","id":"…"}  {"event":"stopped","id":"…"}
 //!   {"event":"unavailable","id":"…"}
+//!   {"event":"track","id":"…","durationMs":n}   metadata loaded
 //!   {"event":"error","message":"…"}
 
 use std::path::PathBuf;
@@ -36,7 +37,7 @@ use librespot_core::authentication::Credentials;
 use librespot_core::cache::Cache;
 use librespot_core::{Session, SessionConfig, SpotifyUri};
 use librespot_playback::audio_backend;
-use librespot_playback::config::{AudioFormat, Bitrate, PlayerConfig};
+use librespot_playback::config::{AudioFormat, Bitrate, PlayerConfig, VolumeCtrl};
 use librespot_playback::mixer::softmixer::SoftMixer;
 use librespot_playback::mixer::{Mixer, MixerConfig};
 use librespot_playback::player::{Player, PlayerEvent};
@@ -226,7 +227,11 @@ async fn connect(cache_dir: Option<PathBuf>, token: Option<String>) -> Result<(S
 }
 
 fn start_player(session: Session) -> Engine {
-    let mixer = Arc::new(SoftMixer::open(MixerConfig::default()).expect("software mixer"));
+    // Linear: Studio sends the amplitude it wants (its volume slider is
+    // already on a perceptual curve), so a second log curve here would make
+    // the lower half of the slider near-silent.
+    let mixer_config = MixerConfig { volume_ctrl: VolumeCtrl::Linear, ..MixerConfig::default() };
+    let mixer = Arc::new(SoftMixer::open(mixer_config).expect("software mixer"));
     let config = PlayerConfig {
         bitrate: Bitrate::Bitrate320,
         gapless: true,
@@ -265,6 +270,7 @@ fn translate(ev: PlayerEvent) -> Option<Value> {
         PlayerEvent::Stopped { track_id, .. } => json!({ "event": "stopped", "id": id(&track_id) }),
         PlayerEvent::Unavailable { track_id, .. } => json!({ "event": "unavailable", "id": id(&track_id) }),
         PlayerEvent::TimeToPreloadNextTrack { track_id, .. } => json!({ "event": "preloadNext", "id": id(&track_id) }),
+        PlayerEvent::TrackChanged { audio_item } => json!({ "event": "track", "id": id(&audio_item.track_id), "durationMs": audio_item.duration_ms }),
         _ => return None,
     })
 }

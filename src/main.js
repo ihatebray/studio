@@ -150,6 +150,7 @@ import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc } from './spotifyPlayer.js';
+import { saveSpotifyTrack, isStreamedPath } from './spotifyLibrary.js';
 import { registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch } from './spotifyPartner.js';
 
 /* Search fallback chain: Client ID → signed-in Spotify account → iTunes.
@@ -175,6 +176,13 @@ registerSpotifyPartnerIpc(ipcMain);
 /* Spotify playback: the studio-spotify helper (librespot). Started on first
    use, signed in with the account above. */
 registerSpotifyPlayerIpc(ipcMain);
+
+/* Save: Get's replacement. Adds the track to the library as a streamed row
+   (spotify:track:<id>, played by the helper) and hearts it on Spotify.
+   Nothing is downloaded. */
+ipcMain.handle('library:saveSpotify', async (_e, meta) => {
+  try { return await saveSpotifyTrack(meta); } catch (e) { return { ok: false, error: String(e?.message || e), noPicker: true }; }
+});
 
 /* Preview before you get: resolves the YouTube match a download would use to
    a stream URL. Nothing is saved. */
@@ -2369,7 +2377,8 @@ ipcMain.handle('dialog:openFolder', async () => {
   return scanDirForAudio(result.filePaths[0]);
 });
 
-ipcMain.handle('file:getMetadata', async (event, filePath) => parseAudioFileToTrack(filePath));
+// Streamed (Saved) rows have no file to read.
+ipcMain.handle('file:getMetadata', async (event, filePath) => (isStreamedPath(filePath) ? null : parseAudioFileToTrack(filePath)));
 
 ipcMain.handle('tools:getState', () => ({ installed: toolsInstalled() }));
 
@@ -4139,116 +4148,16 @@ ipcMain.handle('playlist:importBatch', async (event, params = {}) => {
         completedAt[i] = track;
         emitPlaylistProgress({ spotifyId: t.spotifyId, state: 'done', track, index: i, total: tracks.length });
       } else {
-        // yt-dlp path: invoke the existing import:fromSpotifyYoutube
-        // handler synchronously via its underlying logic. To avoid
-        // duplicating that whole 100-line block here, we just trigger
-        // the same code path by calling it.
-        //
-        // ipcMain.invoke isn't exposed for the main process to call
-        // its own handlers — so we replicate the import logic
-        // directly. (It's only ~30 lines; cleaner than refactoring.)
-        const realSpotifyId = (t.spotifyId || '').trim();
-        const title = (t.title || '').trim();
-        const artists = (t.artists || '').trim();
-        const album = (t.album || '').trim();
-        const albumArtUrl = (t.albumArtUrl || '').trim();
-        const durationMs = Number(t.durationMs) || 0;
-
-        if (!title) {
-          failed.push({ spotifyId: t.spotifyId, error: 'Track has no title.' });
-          emitPlaylistProgress({ spotifyId: t.spotifyId, state: 'failed', error: 'No title', index: i, total: tracks.length });
-          return;
-        }
-        const targetDurationSec = durationMs > 0 ? durationMs / 1000 : 0;
-        let filePath;
-        try {
-          filePath = await downloadYoutubeAudioForQuery({
-            artists: artists || 'Unknown Artist',
-            title,
-            targetDurationSec,
-            expectedExplicit: typeof t.explicit === 'boolean' ? t.explicit : null,
-          });
-        } catch (dlErr) {
-          // YouTube auto-match failed. Fetch search candidates so the
-          // user can pick one manually from the failures-review UI
-          // after the batch completes. The candidate fetch is best-effort
-          // — if THAT also fails (e.g. network died), we just record an
-          // empty array and the user gets a manual "paste URL" fallback
-          // in the picker modal.
-          let candidates = [];
-          try {
-            candidates = await searchCandidatesForPicker({
-              artists: artists || 'Unknown Artist',
-              title,
-            });
-          } catch {
-            /* empty array */
-          }
-          const errMsg = String(dlErr?.message || dlErr || 'YouTube match failed');
-          // Meta payload mirrors what import:fromYoutubeId expects so
-          // the renderer can hand it straight to the picker modal
-          // without re-shaping.
-          const pickerMeta = {
-            spotifyId: realSpotifyId || null,
-            title,
-            artists: artists || 'Unknown Artist',
-            album,
-            albumArtUrl: albumArtUrl || '',
-            durationMs,
-            explicit: typeof t.explicit === 'boolean' ? t.explicit : null,
-            trackNumber: t.trackNumber ?? null,
-            discNumber: t.discNumber ?? null,
-            year: t.releaseDate ? Number((t.releaseDate || '').slice(0, 4)) || null : null,
-          };
-          failed.push({
-            spotifyId: t.spotifyId,
-            error: errMsg,
-            candidates,
-            meta: pickerMeta,
-          });
-          emitPlaylistProgress({
-            spotifyId: t.spotifyId,
-            state: 'failed',
-            error: errMsg,
-            candidates,
-            meta: pickerMeta,
-            index: i,
-            total: tracks.length,
-          });
-          return;
-        }
-        const parsed = await parseAudioFileToTrack(filePath);
-        const durationFromFile = typeof parsed.duration === 'number' && parsed.duration > 0 ? parsed.duration : 0;
-        const duration = durationFromFile > 0 ? durationFromFile : targetDurationSec;
-        let coverStored = null;
-        if (albumArtUrl) {
-          try { coverStored = (await fetchSpotifyCoverAsDataUrl(albumArtUrl)) || albumArtUrl; }
-          catch { coverStored = albumArtUrl; }
-        }
-        const track = {
-          id: newTrackId(),
-          filePath: parsed.filePath,
-          duration,
-          title,
-          artist: artists || 'Unknown Artist',
-          album: album || 'Unknown Album',
-          coverArt: coverStored,
-          coverArtUrl: albumArtUrl || null,
-          trackNumber: t.trackNumber ?? null,
-          discNumber: t.discNumber ?? null,
-          year: t.releaseDate ? Number((t.releaseDate || '').slice(0, 4)) || null : null,
-          genre: parsed.genre || '',
-          explicit: typeof t.explicit === 'boolean' ? t.explicit : null,
-          spotifyId: realSpotifyId || null,
-        };
-        const res = await upsertTracks([track]);
+        /* Spotify source: Save, not download. The row streams through the
+           studio-spotify helper and the track is hearted on Spotify. */
+        const res = await saveSpotifyTrack(t);
         if (!res.ok) {
           failed.push({ spotifyId: t.spotifyId, error: res.error || 'Could not save.' });
           emitPlaylistProgress({ spotifyId: t.spotifyId, state: 'failed', error: res.error, index: i, total: tracks.length });
           return;
         }
-        completedAt[i] = track;
-        emitPlaylistProgress({ spotifyId: t.spotifyId, state: 'done', track, index: i, total: tracks.length });
+        completedAt[i] = res.track;
+        emitPlaylistProgress({ spotifyId: t.spotifyId, state: 'done', track: res.track, index: i, total: tracks.length });
       }
     } catch (e) {
       const msg = String(e?.message || e);

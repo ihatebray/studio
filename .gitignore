@@ -10,3 +10,5 @@ spotify-credentials.json
 spotify-user-token.json
 .env
 .env.local
+studio-spotify/target/
+

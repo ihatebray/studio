@@ -140,7 +140,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('import:progress', listener);
     return () => ipcRenderer.removeListener('import:progress', listener);
   },
-  importFromYoutubeSearch: (meta) => ipcRenderer.invoke('import:fromSpotifyYoutube', meta),
+  /* Get is now Save: every caller that used to download through YouTube
+     adds a streamed library row and hearts the track on Spotify instead. */
+  importFromYoutubeSearch: (meta) => ipcRenderer.invoke('library:saveSpotify', meta),
+  spotifySaveTrack: (meta) => ipcRenderer.invoke('library:saveSpotify', meta),
   importFromYoutubeId: ({ videoId, meta }) => ipcRenderer.invoke('import:fromYoutubeId', { videoId, meta }),
   searchYoutubeCandidates: (params) => ipcRenderer.invoke('youtube:searchCandidates', params),
   geniusCredits: (params) => ipcRenderer.invoke('genius:credits', params),

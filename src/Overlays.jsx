@@ -678,8 +678,10 @@ function CoverFullscreenOverlay({
   // Portals above this fullscreen overlay (older builds punted on this).
   const [pick, setPick] = useState(null); // { meta, seed, dlKey } | null
   const openPicker = useCallback((meta, res, dlKey) => {
+    // A failed Save (not signed in, no Spotify match) has no video to pick.
+    if (res?.noPicker) { toastError(res.error, `Couldn't save "${meta?.title || 'this track'}".`); return; }
     setPick({ meta, seed: res && Array.isArray(res.candidates) ? res.candidates : null, dlKey });
-  }, []);
+  }, [toastError]);
   // Catalogue-album expansion (Find → Albums)
   const [openFindAlbum, setOpenFindAlbum] = useState(null);
   const [findAlbumTracks, setFindAlbumTracks] = useState({});

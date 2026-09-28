@@ -8,6 +8,7 @@ import {
   loadGoogleFontForPreset,
 } from './uiFonts.js';
 import { useToastBus, ToastStack, ToastContext } from './Toasts.jsx';
+import { SpotifyMediaElement, spotifyIdOf } from './spotifyMediaElement.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
 import { useMiniPlayerBridge } from './useMiniPlayerBridge.js';
 import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
@@ -1305,6 +1306,12 @@ export default function App() {
   const audioRef = useRef(null);            // ALWAYS points at the active element
   const inactiveAudioRef = useRef(null);    // the standby element (preloads the next track)
   const firstElementRef = useRef(null);     // stable handle to "element A" so we can tell which crossfade gain is which
+  /* Saved Spotify tracks play through the studio-spotify helper. While one is
+     current, audioRef points at this stand-in element (spotifyMediaElement.js)
+     instead of a real <audio>, and localAudioRef remembers which real element
+     to go back to. inactiveAudioRef is always a real element. */
+  const spotifyElRef = useRef(null);
+  const localAudioRef = useRef(null);
   const seekGenerationRef = useRef(0);
   /** When this matches the active queue slot + file, we must not set `audio.src` again or playback restarts from 0. */
   const lastAudioLoadKeyRef = useRef(null);
@@ -1421,7 +1428,7 @@ export default function App() {
     const CONC = 4;
     const timer = setTimeout(async () => {
       const lib = libraryRef.current;
-      const need = lib.filter((t) => t.filePath && !t.coverArt).slice(0, CAP);
+      const need = lib.filter((t) => t.filePath && !t.coverArt && !spotifyIdOf(t)).slice(0, CAP);
       for (let i = 0; i < need.length; i += CONC) {
         if (cancelled) return;
         const chunk = need.slice(i, i + CONC);
@@ -1458,10 +1465,15 @@ export default function App() {
     audioRef.current = a;
     inactiveAudioRef.current = b;
     firstElementRef.current = a;
+    localAudioRef.current = a;
+    const sp = window.electronAPI?.spotifyPlayerLoad ? new SpotifyMediaElement(window.electronAPI) : null;
+    spotifyElRef.current = sp;
     return () => {
       for (const el of [a, b]) {
         try { el.pause(); el.src = ''; } catch { /* ignore */ }
       }
+      sp?.destroy();
+      spotifyElRef.current = null;
       // Close the analyser graph if it was ever created. Safe to call even
       // if the context is already closed — close() on a closed context
       // throws an InvalidStateError which we swallow.
@@ -1759,6 +1771,8 @@ export default function App() {
   // Resolve a playback src for a track (mirrors the load effect's logic).
   const srcForTrack = useCallback((t) => {
     if (!t) return null;
+    // Streamed tracks have no file for a standby <audio> to buffer.
+    if (spotifyIdOf(t)) return null;
     if (window.electronAPI?.getPlaybackUrl && t.filePath) {
       return window.electronAPI.getPlaybackUrl(t.filePath);
     }
@@ -1893,9 +1907,26 @@ export default function App() {
   // Driven by the active element's timeupdate. Decides when to preload and
   // when to fire the handoff.
   const maybeStartHandoff = useCallback((el) => {
+    if (el.isSpotify) {
+      /* The helper plays one track at a time, so there's no handoff. Tell it
+         what's next ~10s early (librespot buffers it for a near-gapless
+         start) and let the natural 'ended' advance the queue. */
+      const dur = el.duration;
+      if (!Number.isFinite(dur) || dur - el.currentTime > 10 || repeat === 'one') return;
+      const nxt = peekNext();
+      const nid = spotifyIdOf(nxt?.track);
+      if (nid && preloadedKeyRef.current !== `sp:${nid}`) {
+        preloadedKeyRef.current = `sp:${nid}`;
+        window.electronAPI?.spotifyPlayerPreload?.(nid)?.catch?.(() => {});
+      }
+      return;
+    }
     const mode = transitionModeRef.current;
     if (mode === 'off') return;
     if (repeat === 'one') return;            // loops via the seek path instead
+    /* Next up is streamed: the standby element can't hold it (and may still
+       hold a stale file), so no gapless/crossfade — 'ended' advances. */
+    if (spotifyIdOf(peekNext()?.track)) return;
     const dur = el.duration;
     if (!Number.isFinite(dur) || dur <= 0) return;
     const remaining = dur - el.currentTime;
@@ -1923,7 +1954,7 @@ export default function App() {
       if (ready) performHandoff(mode);
       else preloadNext();                    // not ready; natural 'ended' covers it
     }
-  }, [repeat, preloadNext, performHandoff]);
+  }, [repeat, preloadNext, performHandoff, peekNext]);
 
   // Keep a ref to maybeStartHandoff so the (mount-once) listener effect can
   // call the latest version without re-binding listeners.
@@ -1985,8 +2016,28 @@ export default function App() {
 
   handleNextRef.current = handleNext;
 
+  /* Spotify playback problems (helper not built, sign-in needed, a track
+     that isn't available) arrive as 'error' on the stand-in element. Say
+     why, and skip a track Spotify won't play instead of stalling there. */
   useEffect(() => {
-    const els = [audioRef.current, inactiveAudioRef.current].filter(Boolean);
+    const sp = spotifyElRef.current;
+    if (!sp) return undefined;
+    let lastMsg = '';
+    let lastAt = 0;
+    const onError = (e) => {
+      const msg = e?.message || 'Spotify playback failed.';
+      const now = Date.now();
+      if (msg !== lastMsg || now - lastAt > 5000) pushToast({ message: msg, kind: 'error' });
+      lastMsg = msg;
+      lastAt = now;
+      if (e?.code === 'unavailable' && audioRef.current === sp) handleNextRef.current?.();
+    };
+    sp.addEventListener('error', onError);
+    return () => sp.removeEventListener('error', onError);
+  }, [pushToast]);
+
+  useEffect(() => {
+    const els = [audioRef.current, inactiveAudioRef.current, spotifyElRef.current].filter(Boolean);
     if (els.length === 0) return undefined;
 
     // Only the element that is currently active drives UI state. After a
@@ -2070,7 +2121,6 @@ export default function App() {
     lastAudioLoadKeyRef.current = loadKey;
 
     seekGenerationRef.current += 1;
-    const audio = audioRef.current;
     setCurrentTime(0);
     const seed =
       typeof currentTrack.duration === 'number'
@@ -2079,6 +2129,33 @@ export default function App() {
         ? currentTrack.duration
         : 0;
     setDuration(seed);
+
+    /* Saved Spotify track → the helper. Point audioRef at the stand-in
+       BEFORE pausing the real elements, so their 'pause' events land on an
+       inactive element and don't flip the play button off. */
+    const sp = spotifyElRef.current;
+    const sid = spotifyIdOf(currentTrack);
+    if (sid && sp) {
+      if (audioRef.current !== sp) {
+        localAudioRef.current = audioRef.current;
+        audioRef.current = sp;
+      }
+      for (const el of [localAudioRef.current, inactiveAudioRef.current]) {
+        if (el) { try { el.pause(); } catch { /* ignore */ } }
+      }
+      handoffArmedRef.current = false;
+      resetCrossfadeGains();
+      sp.volume = perceptualVolume(volume);
+      sp.loadTrack(sid, seed);
+      sp.play();
+      return;
+    }
+    // Back to a local file: stop the helper and hand the bar back.
+    if (sp && audioRef.current === sp) {
+      sp.unload();
+      audioRef.current = localAudioRef.current || firstElementRef.current;
+    }
+    const audio = audioRef.current;
     async function load() {
       if (window.electronAPI?.getPlaybackUrl) {
         audio.src = window.electronAPI.getPlaybackUrl(currentTrack.filePath);

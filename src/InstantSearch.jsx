@@ -211,10 +211,10 @@ function SlotTag({ free }) {
 
 /** Download affordance for one row. Mirrors FindGetBtn's states exactly so a
  *  download looks the same wherever you started it. */
-function GetBtn({ dl, progress, label = 'Get', solid = false, big = false, onGrab, width = 92 }) {
+function GetBtn({ dl, progress, label = 'Save', solid = false, big = false, onGrab, width = 92 }) {
   if (dl === 'busy') {
     const pct = typeof progress?.pct === 'number' ? progress.pct : null;
-    const text = progress?.phase === 'processing' ? 'Processing…' : pct != null ? `${Math.round(pct * 100)}%` : 'Downloading…';
+    const text = progress?.phase === 'processing' ? 'Processing…' : pct != null ? `${Math.round(pct * 100)}%` : 'Saving…';
     return (
       <div className="isx-prog" style={{ width }} title={text}>
         <div className="isx-prog-bar"><i style={{ width: pct != null ? `${Math.round(pct * 100)}%` : '35%' }} /></div>
@@ -1548,21 +1548,21 @@ export default function InstantSearch({
 
   /** The download key a row will report under, so its progress renders. */
   const dlKeyFor = useCallback((track, source) => (
-    source ? `t:${source.id}` : track?.spotifyId ? `s:${track.spotifyId}` : ''
+    track?.spotifyId ? `s:${track.spotifyId}` : source ? `t:${source.id}` : ''
   ), []);
 
   /**
-   * Get one track.
+   * Get one track — which is now Save.
    *
-   * A real file from a peer beats the YouTube route every time — it's the
-   * actual master rather than a re-encode of a video — so a matched source is
-   * always preferred, and Spotify is the fallback for tracks nobody is
-   * sharing. This is the pairing the split-by-source UI couldn't express.
+   * A catalogue track with a Spotify ID is saved as a streamed library row
+   * (nothing downloaded). A peer's file is only fetched when one was picked
+   * explicitly, or when Spotify has no copy of the track at all.
    */
   const getTrack = useCallback((track, tKey, explicitSource) => {
-    const src = explicitSource || sourcesFor(tKey)[0];
-    if (src) return onGetSlskFile?.(src);
+    if (explicitSource) return onGetSlskFile?.(explicitSource);
     if (track?.spotifyId) return onGetSpotifyTrack?.(track);
+    const src = sourcesFor(tKey)[0];
+    if (src) return onGetSlskFile?.(src);
     return null;
   }, [sourcesFor, onGetSlskFile, onGetSpotifyTrack]);
 
@@ -1642,13 +1642,12 @@ export default function InstantSearch({
         if (data.libTrack) { onPlayTrack?.(data.libTrack); onClose?.(); }
         return;
       }
-      /* Order of preference: a file this song was explicitly probed for, then
-         one the background pass happened to find, then YouTube — which is the
-         floor, and always available. A click never fails and never waits. */
+      /* Save through Spotify when the song is on it — streamed, nothing
+         downloaded. A peer's file only when Spotify has no copy. */
       const probed = songProbes[data.id]?.sources?.[0];
-      if (probed) onGetSlskFile?.(probed);
+      if (data.spotify) onGetSpotifyTrack?.(data.spotify);
+      else if (probed) onGetSlskFile?.(probed);
       else if (data.slsk?.best) onGetSlskFile?.(data.slsk.best);
-      else if (data.spotify) onGetSpotifyTrack?.(data.spotify);
       return;
     }
     if (kind === 'folder') { onGetSlskAlbum?.(data); return; }
@@ -2002,7 +2001,7 @@ export default function InstantSearch({
               <SlotTag free={!!f.slots} />
             </div>
           </div>
-          <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Get all"
+          <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Save all"
             onGrab={() => onGetSlskAlbum?.(f)} width={100} />
         </button>
       );
@@ -2068,7 +2067,7 @@ export default function InstantSearch({
                   <>
                     <PreviewButton pkey={`pv:${track.spotifyId || tKey}`} accent="var(--st-acc-rgb)"
                       track={{ title: track.title, artists: track.artists || frame?.album?.artists || '', durationMs: track.durationMs, explicit: track.explicit }} />
-                    <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Get"
+                    <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Save"
                       onGrab={() => getTrack(track, tKey)} />
                   </>
                 )

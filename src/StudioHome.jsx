@@ -944,9 +944,11 @@ export default function StudioHome({
   // plus any candidates the failed import already surfaced (no-tier-match).
   const [pick, setPick] = useState(null); // { meta, seed, dlKey } | null
   const openPicker = useCallback((meta, res, dlKey) => {
+    // A failed Save (not signed in, no Spotify match) has no video to pick.
+    if (res?.noPicker) { toastError(res.error, `Couldn't save "${meta?.title || 'this track'}".`); return; }
     const seed = res && Array.isArray(res.candidates) ? res.candidates : null;
     setPick({ meta, seed, dlKey });
-  }, []);
+  }, [toastError]);
 
   /* Ownership is keyed by songKey, not by raw strings.
      Raw equality meant a library cleaned the way most people clean one —

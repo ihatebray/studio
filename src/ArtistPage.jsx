@@ -350,12 +350,12 @@ function GetCell({ owned, dl, progress, accent, onGet }) {
   if (dl === 'busy') {
     const pct = typeof progress?.pct === 'number' ? Math.round(progress.pct * 100) : null;
     return (
-      <span style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 84 }} title="Downloading">
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 84 }} title="Saving">
         <span style={{ height: 4, borderRadius: 2, background: 'rgba(var(--st-fg-rgb), 0.12)', overflow: 'hidden' }}>
           <span style={{ display: 'block', height: '100%', width: `${pct ?? 30}%`, background: `rgb(${accent})`, transition: 'width 0.24s ease' }} />
         </span>
         <span style={{ fontSize: 10, fontWeight: 650, color: 'rgba(var(--st-sub-rgb), 0.55)', fontVariantNumeric: 'tabular-nums' }}>
-          {progress?.phase === 'processing' ? 'Processing…' : pct != null ? `${pct}%` : 'Downloading…'}
+          {progress?.phase === 'processing' ? 'Processing…' : pct != null ? `${pct}%` : 'Saving…'}
         </span>
       </span>
     );
@@ -370,7 +370,7 @@ function GetCell({ owned, dl, progress, accent, onGet }) {
         fontSize: 11.5, fontWeight: 750, border: `1px solid rgba(${accent}, 0.45)`,
         background: `rgba(${accent}, 0.14)`, color: 'var(--st-text)',
       }}>
-      {dl === 'failed' ? 'Retry' : 'Get'}
+      {dl === 'failed' ? 'Retry' : 'Save'}
     </button>
   );
 }
@@ -1487,7 +1487,7 @@ export default function ArtistPage({
             {/* One click for every popular song you don't have yet. */}
             {getTrack && missingPopular.length ? (
               <PillBtn onClick={() => missingPopular.forEach((t) => getTrack(t))}>
-                {`Get ${missingPopular.length} popular song${missingPopular.length === 1 ? '' : 's'}`}
+                {`Save ${missingPopular.length} popular song${missingPopular.length === 1 ? '' : 's'}`}
               </PillBtn>
             ) : null}
 

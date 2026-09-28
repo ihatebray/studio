@@ -592,20 +592,23 @@ async function query(op, variables) {
 
 /* --------------------------------------------------- Web API, same token */
 
-async function webApi(p, attempt = 0) {
+async function webApi(p, attempt = 0, method = 'GET') {
   const token = await accessToken();
-  const res = await fetch(p.startsWith('http') ? p : `${WEB_API}${p}`, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch(p.startsWith('http') ? p : `${WEB_API}${p}`, { method, headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 429) {
     const wait = retryAfterOf(res);
     if (wait <= RATE_ABSORB_S && attempt === 0) {
       await new Promise((r) => setTimeout(r, wait * 1000));
-      return webApi(p, 1);
+      return webApi(p, 1, method);
     }
     throw rateLimited(wait);
   }
   if (res.status === 401) throw new StepError('signin', 'Spotify rejected the session (401)');
+  if (res.status === 403 && method !== 'GET') throw new StepError('scope', 'Spotify refused the change (403). Sign in again in Settings to allow it.');
   if (!res.ok) throw new StepError('webapi', `Spotify returned HTTP ${res.status}`);
-  return res.json();
+  // Writes (PUT /me/tracks) answer with an empty body.
+  const body = await res.text();
+  return body ? JSON.parse(body) : null;
 }
 
 async function paged(first, cap = 2000) {
@@ -831,6 +834,56 @@ export async function searchCatalogue(kind, q) {
     popularity: Number.isFinite(a.popularity) ? a.popularity : null,
     image: Array.isArray(a.images) && a.images.length ? [...a.images].sort((x, y) => (y.width || 0) - (x.width || 0))[0].url : null,
   }));
+}
+
+/* ------------------------------------------------ Save (stream, no file) */
+
+/** One track in searchCatalogue's shape, for filling in a Save's details. */
+export async function trackById(id) {
+  const t = await webApi(`/tracks/${encodeURIComponent(id)}?market=from_token`);
+  if (!t?.id) return null;
+  return {
+    spotifyId: t.id, title: t.name,
+    artists: (t.artists || []).map((a) => a.name).join(', '),
+    album: t.album?.name || '', albumId: t.album?.id || null,
+    albumArtUrl: t.album?.images?.[0]?.url || t.album?.images?.[1]?.url || '',
+    durationMs: t.duration_ms || 0, explicit: !!t.explicit,
+    trackNumber: t.track_number || null, discNumber: t.disc_number || null,
+    releaseDate: t.album?.release_date || '',
+  };
+}
+
+const fold = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/\(.*?\)|\[.*?\]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * The Spotify track for a title + artist that came from somewhere else
+ * (the iTunes charts, a release list). Field-filtered search first, then a
+ * plain one; the pick must share the title and the first artist, and the
+ * closest duration wins among those.
+ */
+export async function findTrack(title, artists, durationMs = 0) {
+  const first = String(artists || '').split(/,|&| feat\.? | ft\.? | x /i)[0].trim();
+  const want = fold(title);
+  const wantArtist = fold(first);
+  for (const q of [`track:${title} artist:${first}`, `${first} ${title}`]) {
+    const hits = await searchCatalogue('tracks', q);
+    const ok = hits.filter((h) => fold(h.title) === want && fold(h.artists).includes(wantArtist));
+    if (ok.length) {
+      if (!(durationMs > 0)) return ok[0];
+      return [...ok].sort((a, b) => Math.abs(a.durationMs - durationMs) - Math.abs(b.durationMs - durationMs))[0];
+    }
+  }
+  return null;
+}
+
+/** Heart tracks on Spotify (Liked Songs). Up to 50 ids per call. */
+export async function likeTracks(ids) {
+  const clean = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
+  for (let i = 0; i < clean.length; i += 50) {
+    await webApi(`/me/tracks?ids=${clean.slice(i, i + 50).join(',')}`, 0, 'PUT');
+  }
+  return clean.length;
 }
 
 /* Popular songs without play counts, for when the overview (Pathfinder) is
