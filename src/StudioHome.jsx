@@ -21,6 +21,7 @@ import { sampleCoverTheme, washSourceFor, recordWashSource, recordDeep, setColou
 import { getFileFormatLabel, formatTime, formatDurationMs, formatTotalMs, titleCollator, parseGenres } from './mediaUtils.js';
 import { songKey } from './instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
+import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPlayer.jsx';
 import ArtistGrid from './ArtistGrid.jsx';
 import { NewReleases, HomeRail, HOME_CSS } from './HomeReleases.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
@@ -502,6 +503,36 @@ export default function StudioHome({
   /* Settings → Layout → List density. Row height for every song table. */
   const [listDensity, setListDensity] = useState(() => { try { return localStorage.getItem('studio:listDensity') || 'default'; } catch { return 'default'; } });
   const pickListDensity = useCallback((v) => { setListDensity(v); try { localStorage.setItem('studio:listDensity', v); } catch { /* ignore */ } }, []);
+  /* Compact mode. The content card takes the whole window (10px gutters) and
+     the Now Playing bar runs edge to edge beneath it. The top bar and the
+     library sidebar aren't gone — they slide in over the card when the
+     pointer touches the top or left edge of the window (`chromePeek`), so
+     navigation, search, settings and window dragging all still work without
+     reserving any space. Ctrl/Cmd+Shift+C toggles it from anywhere. */
+  const [compactMode, setCompactMode] = useState(() => { try { return localStorage.getItem('studio:compact') === '1'; } catch { return false; } });
+  const pickCompactMode = useCallback((on) => {
+    const n = !!on;
+    setCompactMode(n);
+    try { localStorage.setItem('studio:compact', n ? '1' : '0'); } catch { /* ignore */ }
+  }, []);
+  const [chromePeek, setChromePeek] = useState(null); // null | 'top' | 'side'
+  /* Fullscreen Now Playing. Takes the whole window (10px edges) over the
+     top bar, sidebar, content card and Now Playing bar; the side panel is
+     unavailable while it's up, so lyrics / queue / info live in the view's
+     own panel (`npFullTab`, null = closed, cover centred alone). Not
+     persisted across launches — opening the app straight into a player
+     with nothing loaded would be a dead screen. The tab choice is. */
+  const [npFull, setNpFull] = useState(false);
+  const [npFullTab, setNpFullTab] = useState(() => {
+    try { const v = localStorage.getItem('studio:npFullTab'); return v === 'lyrics' || v === 'queue' || v === 'info' ? v : null; } catch { return null; }
+  });
+  const pickNpFullTab = useCallback((t) => {
+    setNpFullTab((cur) => {
+      const n = cur === t ? null : t; // clicking the open tab closes the panel
+      try { localStorage.setItem('studio:npFullTab', n || ''); } catch { /* ignore */ }
+      return n;
+    });
+  }, []);
   /* Settings → Color → Accent. 'artwork' follows whatever is playing; 'fixed'
      pins one colour of your choosing (one of four swatches). */
   /* Back to white by default. The cover-derived accent is still here and
@@ -930,6 +961,14 @@ export default function StudioHome({
     return set;
   }, [library]);
   const alreadyOwned = useCallback((title, artists) => owned.has(songKey(title, artists)), [owned]);
+  /* Same key, but returns the track — for surfaces that need to PLAY the copy
+     you own rather than just know it exists (the artist page's Popular list). */
+  const ownedByKey = useMemo(() => {
+    const m = new Map();
+    for (const t of library) { const k = songKey(t.title, t.artist); if (!m.has(k)) m.set(k, t); }
+    return m;
+  }, [library]);
+  const ownedTrackFor = useCallback((title, artists) => ownedByKey.get(songKey(title, artists)) || null, [ownedByKey]);
 
   /* Resolve a track to the artwork the app should SHOW for it.
    *
@@ -990,6 +1029,123 @@ export default function StudioHome({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  /* Compact mode: Ctrl/Cmd+Shift+C toggles it, from anywhere including a text
+     field — same reasoning as Ctrl-K. The toast only fires on the way in, and
+     says how to get the hidden chrome back, since nothing on screen does. */
+  const compactRef = useRef(compactMode);
+  useEffect(() => { compactRef.current = compactMode; }, [compactMode]);
+  const toggleCompactMode = useCallback(() => {
+    const n = !compactRef.current;
+    pickCompactMode(n);
+    if (n) pushToast?.({ message: 'Compact mode on. Touch the top or left edge for navigation. Ctrl+Shift+C to exit.', durationMs: 5000 });
+  }, [pickCompactMode, pushToast]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
+      if (e.key !== 'c' && e.key !== 'C') return;
+      e.preventDefault();
+      toggleCompactMode();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggleCompactMode]);
+
+  /* Fullscreen keys. Ctrl/Cmd+Shift+F toggles. Inside the view, Esc leaves
+     and L / Q / I switch the panel — but only when nothing else owns the
+     key: a menu, a dialog, a lyric selection or the lyric card each handle
+     their own Esc, and closing the whole view underneath them would be the
+     wrong thing to undo. `blockers` is read through a ref so the listener
+     isn't re-bound on every state change. */
+  /* Track previews (previewPlayer.jsx) and the main player share the
+     speakers: a preview pauses what's playing and resumes it when it ends;
+     starting real playback ends the preview. `resumeAfterPreview` is only set
+     when the preview itself did the pausing, so a song you'd paused stays
+     paused. */
+  const playingRef = useRef(isPlaying);
+  const toggleRef = useRef(onTogglePlay);
+  const resumeAfterPreview = useRef(false);
+  const previewPausing = useRef(false);
+  useEffect(() => { playingRef.current = isPlaying; toggleRef.current = onTogglePlay; });
+  useEffect(() => {
+    setPreviewHooks({
+      onStart: () => {
+        if (playingRef.current && toggleRef.current) {
+          resumeAfterPreview.current = true;
+          previewPausing.current = true;
+          toggleRef.current();
+        }
+      },
+      onEnd: () => {
+        if (resumeAfterPreview.current && !playingRef.current && toggleRef.current) toggleRef.current();
+        resumeAfterPreview.current = false;
+      },
+    });
+  }, []);
+  useEffect(() => {
+    if (isPlaying && isPreviewing() && !previewPausing.current) {
+      resumeAfterPreview.current = false; // you chose to play something; don't toggle it back off
+      stopPreview();
+    }
+    if (!isPlaying) previewPausing.current = false;
+  }, [isPlaying, currentTrack?.id]);
+
+  const npFullBlockers = useRef(false);
+  // Nothing loaded, nothing to show: the view closes itself rather than
+  // leaving an empty stage over the app.
+  useEffect(() => { if (!currentTrack) setNpFull(false); }, [currentTrack]);
+  const npFullRef = useRef(npFull);
+  useEffect(() => { npFullRef.current = npFull; }, [npFull]);
+  useEffect(() => {
+    const onKey = (e) => {
+      const el = e.target;
+      const tag = el && el.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable;
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        setNpFull((v) => !v);
+        return;
+      }
+      if (!npFullRef.current || npFullBlockers.current || e.defaultPrevented) return;
+      if (e.key === 'Escape') { e.preventDefault(); setNpFull(false); return; }
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      const t = k === 'l' ? 'lyrics' : k === 'q' ? 'queue' : k === 'i' ? 'info' : null;
+      if (t) { e.preventDefault(); pickNpFullTab(t); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pickNpFullTab]);
+
+  /* Edge peek. Only the window's outermost 8px opens anything, so ordinary
+     movement over the card never does. Once open, the top bar stays until
+     the pointer is clearly below it, the sidebar until it's clearly right of
+     it. Ignored while a button is held so scrubbing or dragging a row across
+     an edge doesn't throw chrome over the thing being dragged. The pointer
+     over the revealed top bar is inside a drag region and generates no
+     mousemove at all — which is exactly the state that should hold it open. */
+  useEffect(() => {
+    if (!compactMode || npFull) { setChromePeek(null); return undefined; }
+    const EDGE = 8;
+    const onMove = (e) => {
+      if (e.buttons) return;
+      const x = e.clientX; const y = e.clientY;
+      setChromePeek((p) => {
+        if (p === 'top') return y > TOPBAR_H + 16 ? null : p;
+        if (p === 'side') return x > SIDEBAR_W + 28 ? null : p;
+        if (y <= EDGE) return 'top';
+        if (x <= EDGE) return 'side';
+        return p;
+      });
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setChromePeek(null); };
+    window.addEventListener('mousemove', onMove, { passive: true });
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [compactMode, npFull]);
 
 
 
@@ -1366,9 +1522,11 @@ export default function StudioHome({
   // longer opens the stage overlay — it grows the library grid to fill the
   // content area, hiding the page header (title + totals). The nav rail and
   // the Now Playing pane stay.
-  const [libExpanded, setLibExpanded] = useState(() => {
-    try { return localStorage.getItem('studio:libExpanded') === '1'; } catch { return false; }
-  });
+  /* Retired: the new fullscreen view (`npFull`) replaces this. Always starts
+     false and nothing sets it, so the old portal and the gates keyed on it
+     are inert. The stale localStorage value is ignored rather than read,
+     since a leftover '1' used to hide the Now Playing bar on every launch. */
+  const [libExpanded, setLibExpanded] = useState(false);
   // Floating Now Playing bar: collapses the panel to a slim bar pinned at the
   // bottom (Spotify-mobile style), giving the library list the full width.
   const [npBar, setNpBar] = useState(() => {
@@ -2259,10 +2417,45 @@ export default function StudioHome({
     return [...list].sort((a, b) => plays(b) - plays(a) || titleCollator.compare(a.name, b.name));
   }, [libArtists, libFilter, playCountFor]);
 
-  const openArtist = useMemo(
-    () => (libDetail?.kind === 'artist' ? libArtists.find((a) => a.key === libDetail.key) || null : null),
-    [libDetail, libArtists],
-  );
+  /* An artist page can now be ANY artist, not only ones in the library. With
+     the Spotify account connected the page is built from Spotify, so an
+     artist you have nothing from still gets a full page; one you do have
+     carries your tracks and records alongside. */
+  const openArtist = useMemo(() => {
+    if (libDetail?.kind !== 'artist') return null;
+    const hit = libArtists.find((a) => a.key === libDetail.key);
+    if (hit) return libDetail.spotifyId ? { ...hit, spotifyId: libDetail.spotifyId } : hit;
+    if (!libDetail.name) return null;
+    return {
+      key: libDetail.key, name: libDetail.name, spotifyId: libDetail.spotifyId || null,
+      art: libDetail.image || null, tracks: [], albums: [], singles: [], appearsOn: [], totalSec: 0,
+    };
+  }, [libDetail, libArtists]);
+
+  /* The artist object a page or the search panel's artist view renders from:
+     your library's entry when you have them (with the Spotify ID attached if
+     known), otherwise an empty shell the Spotify data fills. */
+  const artistRefFor = useCallback(({ name, spotifyId = null, image = null } = {}) => {
+    const n = String(name || '').trim();
+    const key = n.toLowerCase();
+    const sid = /^[0-9A-Za-z]{22}$/.test(String(spotifyId || '')) ? spotifyId : null;
+    const hit = libArtists.find((a) => a.key === key);
+    if (hit) return sid ? { ...hit, spotifyId: sid } : hit;
+    return {
+      key: `sp:${sid || key}`, name: n, spotifyId: sid, art: image || null,
+      tracks: [], albums: [], singles: [], appearsOn: [], totalSec: 0,
+    };
+  }, [libArtists]);
+
+  const openArtistAnywhere = useCallback(({ name, spotifyId = null, image = null } = {}) => {
+    const n = String(name || '').trim();
+    if (!n) return;
+    const key = n.toLowerCase();
+    const sid = /^[0-9A-Za-z]{22}$/.test(String(spotifyId || '')) ? spotifyId : null;
+    pickSection('library');
+    if (libArtists.some((a) => a.key === key)) setLibDetail({ kind: 'artist', key, spotifyId: sid });
+    else setLibDetail({ kind: 'artist', key: `sp:${sid || key}`, name: n, spotifyId: sid, image });
+  }, [libArtists, pickSection]);
 
   /* Jump from a songs-list row to the artist or album it belongs to.
    *
@@ -2654,12 +2847,14 @@ export default function StudioHome({
    * ======================================================================== */
   const NAV_BTN = 40;
   const NAV_GAP = 4;
+  // Anything that owns Esc (or the letter keys) while fullscreen is up.
+  npFullBlockers.current = !!(rowMenu || plPicker || coverZoom || editingTrack || lyricSel || lyricShareOpen);
 
   return (
     /* Flat black behind everything. The radial gradient that used to lift the
        top of the window read as a seam once the content became its own panel —
        the panel floated on a lighter patch instead of on the shell. */
-    <div style={{
+    <div className={compactMode ? 'sth-root is-compact' : 'sth-root'} style={{
       position: 'absolute', inset: 0, overflow: 'hidden',
       /* Every themed colour resolves from these four. Defined once on the root
          so the whole tree — including the class-based styles below — picks them
@@ -2675,7 +2870,10 @@ export default function StudioHome({
          them inline on this div shadowed the fade and snapped the colour. */
       background: `rgb(${theme.bg})`,
       '--np-bar-bg': npBarColor,
-      '--np-bar-left': `${SIDEBAR_W}px`,
+      '--np-bar-left': compactMode ? 'var(--gutter)' : `${SIDEBAR_W}px`,
+      /* Where the content card and the side panel start. Compact drops the
+         top bar out of the layout, so both begin one gutter from the top. */
+      '--shell-top': compactMode ? 'var(--gutter)' : `${TOPBAR_H}px`,
       /* The height bug (brief, App shell): the card used to reserve the Now
          Playing bar's space whether or not the bar was showing. Now it only
          does when the bar is actually mounted — 16 gutter + 86 bar + 12 gap. */
@@ -2686,9 +2884,11 @@ export default function StudioHome({
                      the gutter alone, or gutter + bar + gap while the bar is up.
          Every surface below reads these instead of carrying its own number,
          which is what let the card, the bar and the panel drift apart. */
-      '--gutter': '16px',
-      '--gap': '12px',
-      '--np-reserve': currentTrack && !libExpanded ? `${16 + 86 + 12}px` : '16px',
+      '--gutter': compactMode ? '10px' : '16px',
+      '--gap': compactMode ? '10px' : '12px',
+      '--np-reserve': currentTrack && !libExpanded
+        ? (compactMode ? `${10 + 86 + 10}px` : `${16 + 86 + 12}px`)
+        : (compactMode ? '10px' : '16px'),
       '--row-h': listDensity === 'compact' ? '40px' : listDensity === 'roomy' ? '64px' : '54px',
       '--row-art': listDensity === 'compact' ? '30px' : listDensity === 'roomy' ? '48px' : '40px',
     }}>
@@ -3894,6 +4094,51 @@ export default function StudioHome({
         .sth-npbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
         .sth-npbar-art { width: 52px; height: 52px; border-radius: var(--r-art); flex-shrink: 0; padding: 0; border: none; box-shadow: 0 0 0 1px rgba(255,255,255,0.06); }
         .sth-npbar-title { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* Title doubles as the Spotify link: click to copy. */
+        .sth-npbar-title.is-link { display: block; max-width: 100%; padding: 0; margin: 0; border: 0; background: none; font-family: inherit; line-height: inherit; text-align: left; cursor: pointer; }
+        .sth-npbar-title.is-link:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+        .sth-npbar-title.is-link:disabled { cursor: progress; opacity: 0.6; }
+        /* ---- Fullscreen Now Playing (NowPlayingFullView) ---- */
+        .sth-full { position: absolute; inset: 10px; z-index: 42; border-radius: var(--r-card); overflow: hidden; background: #0a0a0b; border: 1px solid var(--border); display: flex; flex-direction: column; animation: sthFullIn 0.28s cubic-bezier(0.22,1,0.36,1) both; }
+        @keyframes sthFullIn { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+        .sth-full-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+        .sth-full-top { position: relative; z-index: 1; flex-shrink: 0; height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 20px; -webkit-app-region: drag; }
+        .sth-full-top button { -webkit-app-region: no-drag; }
+        .sth-full-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.5); }
+        .sth-full-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(0,0,0,0.28); -webkit-app-region: no-drag; }
+        .sth-full-tab { height: 28px; padding: 0 14px; border-radius: 999px; border: none; cursor: pointer; background: transparent; color: rgba(255,255,255,0.6); font-family: inherit; font-size: 12.5px; font-weight: 600; transition: background 0.15s ease, color 0.15s ease; }
+        .sth-full-tab:hover { color: #fff; }
+        .sth-full-tab.on { background: rgba(255,255,255,0.14); color: #fff; font-weight: 700; }
+        .sth-full-body { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; gap: 14px; padding: 0 14px 14px; }
+        .sth-full-stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; padding: 8px 24px 20px; }
+        .sth-full-cover { flex-shrink: 1; width: min(46vh, 460px, 72%); aspect-ratio: 1 / 1; min-height: 0; border-radius: 14px; border: none; padding: 0; background-color: rgba(255,255,255,0.06); background-size: cover; background-position: center; box-shadow: 0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06); transition: width 0.3s cubic-bezier(0.22,1,0.36,1); }
+        .sth-full.has-panel .sth-full-cover { width: min(40vh, 400px, 80%); }
+        .sth-full-meta { width: 100%; max-width: 560px; margin-top: 26px; text-align: center; min-width: 0; }
+        .sth-full-title { display: block; max-width: 100%; margin: 0 auto; font-size: clamp(22px, 3.2vh, 32px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sth-full-title.is-link { padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; }
+        .sth-full-title.is-link:hover { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 2px; }
+        .sth-full-title.is-link:disabled { cursor: progress; opacity: 0.6; }
+        .sth-full-sub { margin-top: 6px; font-size: 15px; color: rgba(255,255,255,0.66); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sth-full-scrub { width: 100%; max-width: 520px; margin-top: 22px; display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; align-items: center; gap: 10px; }
+        .sth-full-transport { margin-top: 12px; display: flex; align-items: center; gap: 14px; }
+        .sth-full-skip { width: 42px; height: 42px; }
+        .sth-full-play { width: 58px; height: 58px; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: #fff; color: #0a0a0b; box-shadow: 0 8px 24px rgba(0,0,0,0.35); transition: transform 0.1s ease, filter 0.14s ease; }
+        .sth-full-play:hover { filter: brightness(0.92); }
+        .sth-full-play:active { transform: scale(0.95); }
+        .sth-full-actions { margin-top: 14px; display: flex; align-items: center; gap: 4px; }
+        .sth-full-panel { position: relative; flex-shrink: 0; width: clamp(340px, 36%, 520px); min-height: 0; display: flex; flex-direction: column; border-radius: var(--r-card); overflow: hidden; background: rgba(0,0,0,0.34); border: 1px solid rgba(255,255,255,0.07); animation: sthPanelIn 0.26s cubic-bezier(0.22,1,0.3,1) both; }
+        @media (max-height: 640px) { .sth-full-meta { margin-top: 16px; } .sth-full-scrub { margin-top: 14px; } }
+        @media (prefers-reduced-motion: reduce) { .sth-full, .sth-full-panel { animation: none; } .sth-full-cover { transition: none; } }
+        /* Compact mode: no page title in the library views. Tier one (title +
+           count) goes; the controls row and table move up to the top of the
+           card. Single-row headers (Albums, Artists) keep their search and
+           Import, pushed right by the existing spacer. */
+        .sth-root.is-compact .sth-libhead-tw { display: none; }
+        .sth-root.is-compact .sth-libhead { gap: 0; padding-top: 0; }
+        .sth-root.is-compact .sth-libhead.is-single { padding-top: 0; min-height: 34px; }
+        /* Compact mode: the top bar slides down over the card on edge peek. */
+        .sth-topbar.is-compact { transform: translateY(-100%); visibility: hidden; pointer-events: none; transition: transform 0.18s ease, visibility 0s linear 0.18s; }
+        .sth-topbar.is-compact.is-peek { transform: none; visibility: visible; pointer-events: auto; box-shadow: 0 12px 36px rgba(0,0,0,0.45); transition: transform 0.22s cubic-bezier(0.22,1,0.36,1); }
         .sth-npbar-artist { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sth-npbar-mid { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
         .sth-npbar-transport { display: flex; align-items: center; gap: 10px; }
@@ -4049,8 +4294,10 @@ ${HOME_CSS}
           the release grid gains a column at most sizes.
           64px tall: enough to clear the frameless window's 36px invisible
           drag strip without eating into the content. */}
-      <header style={{
-        position: 'absolute', top: 0, left: 0, right: 0, height: TOPBAR_H, zIndex: 3,
+      <header className={`sth-topbar${compactMode ? ' is-compact' : ''}${compactMode && chromePeek === 'top' ? ' is-peek' : ''}`}
+        aria-hidden={compactMode && chromePeek !== 'top' ? true : undefined}
+        style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: TOPBAR_H, zIndex: compactMode ? 46 : 3,
         /* No left padding: the "My Library" block below is exactly SIDEBAR_W
            wide, so the tabs after it line up with the content wrapper's left
            edge rather than floating somewhere before it. */
@@ -4064,8 +4311,11 @@ ${HOME_CSS}
         alignItems: 'center', gap: 16, padding: '0 16px 0 0',
         background: `rgb(${theme.bg})`,
         borderBottom: 'none',
-        animation: 'stFadeIn 0.6s ease both',
-        WebkitAppRegion: 'drag',
+        animation: compactMode ? 'none' : 'stFadeIn 0.6s ease both',
+        /* Hidden in compact: no drag region at all. A transformed-away drag
+           element can still claim its untransformed box at the OS hit-test,
+           which would swallow clicks across the top of the card. */
+        WebkitAppRegion: compactMode && chromePeek !== 'top' ? 'no-drag' : 'drag',
       }}>
         {/* My Library belongs on the same visual baseline as Home and Discover.
             It still reserves the full sidebar column, so the primary tabs begin
@@ -4143,7 +4393,22 @@ ${HOME_CSS}
         /* Left inset = the window gutter; right inset = the gap to the card. */
         padding: '0 var(--gap) 0 var(--gutter)',
         WebkitAppRegion: 'no-drag',
-      }}>
+        /* Compact: a floating card over the content, parked off the left edge
+           until the pointer touches it. Same background as the shell so it
+           reads as the sidebar you already know, lifted. */
+        ...(compactMode ? {
+          top: 'var(--gutter)', left: 'var(--gutter)', bottom: 'var(--np-reserve)',
+          width: SIDEBAR_W - 16, zIndex: 45, padding: '6px 8px 8px',
+          background: `rgb(${theme.bg})`, border: '1px solid var(--border)', borderRadius: 'var(--r-card)',
+          boxShadow: '0 18px 48px rgba(0,0,0,0.5)',
+          transform: chromePeek === 'side' ? 'none' : 'translateX(calc(-100% - 24px))',
+          visibility: chromePeek === 'side' ? 'visible' : 'hidden',
+          transition: chromePeek === 'side'
+            ? 'transform 0.22s cubic-bezier(0.22,1,0.36,1)'
+            : 'transform 0.18s ease, visibility 0s linear 0.18s',
+        } : null),
+      }}
+      aria-hidden={compactMode && chromePeek !== 'side' ? true : undefined}>
         {/* LIBRARY heading — the point of the change: the sidebar reads as one
             category rather than the leftovers of a split navigation. */}
         <div className="sth-side-eyebrow"><span className="st-eyebrow">Library</span></div>
@@ -4212,8 +4477,8 @@ ${HOME_CSS}
            which no longer exists. The flag is still persisted in localStorage,
            so anyone who ever opened that view had the content wrapper stripped
            and slid under the tabs on every launch since. */
-        position: 'absolute', top: TOPBAR_H,
-        bottom: 0, left: SIDEBAR_W, right: 0, zIndex: 1,
+        position: 'absolute', top: 'var(--shell-top)',
+        bottom: 0, left: compactMode ? 'var(--gutter)' : SIDEBAR_W, right: 0, zIndex: 1,
         display: 'flex', flexDirection: 'column',
         /* Reserve the dock's width so the content narrows instead of being
            covered. The shelves re-measure through HomeRow's ResizeObserver, so
@@ -4565,7 +4830,10 @@ ${HOME_CSS}
                 /* 10px, not 18px. With the header no longer padding itself out
                    to 52px, the wrapper's own inset was the remaining source of
                    the gap above the title. */
-                padding: detailPage ? 0 : '28px 28px 20px',
+                /* Compact drops the page title (see .is-compact .sth-libhead-tw),
+                   so the top inset tightens with it and the controls row
+                   becomes the first thing in the card. */
+                padding: detailPage ? 0 : (compactMode ? '14px 24px 16px' : '28px 28px 20px'),
                 boxSizing: 'border-box',
               }}>
 
@@ -4642,6 +4910,13 @@ ${HOME_CSS}
                     onBack={() => setLibDetail(null)}
                     following={isFollowing(openArtist.name)}
                     onToggleFollow={toggleFollow}
+                    hasArtist={(n) => libArtists.some((a) => a.key === String(n || '').toLowerCase())}
+                    onConnectSpotify={() => { pickSection('settings'); setSetCat('connections'); }}
+                    onOpenRelated={(r) => openArtistAnywhere({ name: r.name, spotifyId: r.id, image: r.image })}
+                    dlState={dlState}
+                    dlProgress={dlProgress}
+                    onGetTrack={downloadSpotifyRow}
+                    ownedTrackFor={ownedTrackFor}
                   />
                 ) : detailData ? (
                   /* ---- Album / playlist page ----
@@ -5243,15 +5518,7 @@ ${HOME_CSS}
               playEvents={playEvents}
               coverFor={coverFor}
               onPlaySong={(t) => onPlayTrack?.(t, library, 'list')}
-              onOpenArtist={(name) => {
-                /* Only artists you own have a page to open — same rule the
-                   palette uses. Navigating to an empty page costs the user
-                   their place to show them nothing. */
-                const key = String(name || '').toLowerCase();
-                if (!libArtists.some((a) => a.key === key)) return;
-                pickSection('library');
-                setLibDetail({ kind: 'artist', key });
-              }}
+              onOpenArtist={(name) => openArtistAnywhere({ name })}
               onOpenGenre={(name) => {
                 pickSection('library');
                 pickLibView('songs');
@@ -5372,6 +5639,10 @@ ${HOME_CSS}
                       <SetRow title="Active tab marker" note="How the sidebar shows which library tab you are on.">
                         <SetSeg label="Active tab marker" value={navStyle === 'glow' ? 'chip' : navStyle} onPick={setNavStylePref}
                           options={[['chip', 'Chip'], ['bar', 'Bar'], ['underline', 'Underline'], ['dot', 'Dot']]} />
+                      </SetRow>
+                      <SetRow title="Window layout" note="Compact gives the whole window to the page you're on, with the Now Playing bar full width underneath. Touch the top or left edge to bring back the top bar or the library. Ctrl+Shift+C switches.">
+                        <SetSeg label="Window layout" value={compactMode ? 'compact' : 'standard'} onPick={(v) => pickCompactMode(v === 'compact')}
+                          options={[['standard', 'Standard'], ['compact', 'Compact']]} />
                       </SetRow>
                       <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits about half again as many rows on screen.">
                         <SetSeg label="List density" value={listDensity} onPick={pickListDensity}
@@ -5500,6 +5771,7 @@ ${HOME_CSS}
                         <SpotifyCredsPanel compact onSaved={onSpotifyCredsSaved}
                           onStatus={(v) => setConnState((c2) => ({ ...c2, spotify: v }))} />
                       </section>
+                      <SpotifyAccountPanel />
                       <section className="sth-conn">
                         <div className="sth-conn-head">
                           <div>
@@ -5673,15 +5945,22 @@ ${HOME_CSS}
               {rowMenu.bar ? (
                 <>
                   <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.08)', margin: '4px 3px' }} />
-                  <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); toggleLibExpanded(); }}
+                  <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); setNpFull((v) => !v); }}
                     icon={<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />}
-                    label="Open expanded player" />
+                    label={npFull ? 'Exit fullscreen' : 'Fullscreen'} sub="Ctrl+Shift+F" />
                   <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); toggleNpAnimatedBg(); }}
                     icon={<path d="M12 3.2c3.4 3.6 5.4 6.2 5.4 8.9a5.4 5.4 0 1 1-10.8 0c0-2.7 2-5.3 5.4-8.9z" />}
                     label={npAnimatedBg ? 'Turn Immerse off' : 'Turn Immerse on'} />
+                  {/* The colour tray hangs off the Now Playing bar, which isn't
+                      mounted in fullscreen — so the item goes with it. */}
+                  {!npFull ? (
                   <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); setColourTrayOpen(true); }}
-                    icon={<><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" /></>}
-                    label="Colour for this record" sub={coverOverride ? 'Custom colour set' : 'Picked from the artwork'} />
+                      icon={<><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" /></>}
+                      label="Colour for this record" sub={coverOverride ? 'Custom colour set' : 'Picked from the artwork'} />
+                  ) : null}
+                  <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); toggleCompactMode(); }}
+                    icon={<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 15h18" /></>}
+                    label={compactMode ? 'Exit compact mode' : 'Compact mode'} sub="Ctrl+Shift+C" />
                 </>
               ) : null}
               {onRemoveFromLibrary && !rowMenu.bar ? (
@@ -6005,7 +6284,7 @@ ${HOME_CSS}
         />
       ) : null}
 
-      {currentTrack && !libExpanded ? (
+      {currentTrack && !libExpanded && !npFull ? (
         <>
           {/* Colour override for this record.
               The handle is a chevron tucked behind the left edge of the Now
@@ -6046,7 +6325,7 @@ ${HOME_CSS}
           immersePalette={immersePalette}
           immerseOn={npAnimatedBg}
           onToggleImmerse={toggleNpAnimatedBg}
-          onFullscreen={toggleLibExpanded}
+          onFullscreen={() => setNpFull(true)}
           onToggleQueue={() => toggleNpPanel('queue')}
           queueOpen={npPanelOpen && npPanelTab === 'queue'}
           onToggleLyrics={() => toggleNpPanel('lyrics')}
@@ -6074,7 +6353,7 @@ ${HOME_CSS}
       ) : null}
 
       <NowPlayingPanelDock
-        open={npPanelOpen && !!currentTrack && !libExpanded}
+        open={npPanelOpen && !!currentTrack && !libExpanded && !npFull}
         tab={npPanelTab}
         onTab={(t) => setPanel(true, t)}
         onClose={() => setPanel(false)}
@@ -6105,10 +6384,59 @@ ${HOME_CSS}
         onLyricSelectLine={extendLyricSel}
         currentTime={currentTime}
         onSeek={onSeek}
-        onExpand={toggleLibExpanded}
+        /* Opens fullscreen on the tab the dock was showing, so the thing
+           you were reading carries over instead of disappearing. */
+        onExpand={() => { setNpFullTab(npPanelTab); try { localStorage.setItem('studio:npFullTab', npPanelTab || ''); } catch { /* ignore */ } setNpFull(true); }}
         artistInfo={artistInfo}
         credits={panelCredits}
       />
+
+      {npFull && currentTrack ? (
+        <NowPlayingFullView
+          track={currentTrack}
+          art={coverFor(currentTrack)}
+          accent={accent}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          onSeek={onSeek}
+          onTogglePlay={onTogglePlay}
+          onPrev={onPrev}
+          onNext={onNext}
+          shuffleOn={shuffleOn}
+          repeat={repeat}
+          onToggleShuffle={onToggleShuffle}
+          onToggleRepeat={onToggleRepeat}
+          volume={volume}
+          onSetVolume={onSetVolume}
+          onToggleFavorite={onToggleFavorite}
+          onAddToPlaylist={onAddTracksToPlaylist ? (e, t) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            openPlaylistPicker(t, { x: Math.max(12, r.left + r.width / 2 - 144), y: r.top - 10, above: true });
+          } : null}
+          onMore={openBarMenu}
+          onCopyLink={copySpotifyLink}
+          copyBusy={sharing === currentTrack.id}
+          onZoomCover={openCoverZoom}
+          animatedBg={npAnimatedBg}
+          immersePalette={immersePalette}
+          tab={npFullTab}
+          onTab={pickNpFullTab}
+          onClose={() => setNpFull(false)}
+          coverFor={coverFor}
+          upNext={queueIndex >= 0 ? queue.slice(queueIndex + 1) : []}
+          onSelectTrack={(t) => onPlayTrack?.(t, queue)}
+          onReorderQueue={onReorderQueue}
+          queueOffset={queueIndex >= 0 ? queueIndex + 1 : 0}
+          lyricsData={lyricsData}
+          onLyricsSaved={onLyricsSaved}
+          onBrowseLyrics={onPickLyrics ? () => setLyricsPickReq((n2) => n2 + 1) : null}
+          lyricSelection={lyricSel}
+          onLyricSelectStart={startLyricSel}
+          onLyricSelectLine={extendLyricSel}
+          artistInfo={artistInfo}
+          credits={panelCredits}
+        />
+      ) : null}
 
       {/* ---- Lyric browser + share, for the DOCK ---------------------------
        * The pair inside the fullscreen portal above is gated on `libExpanded`,
@@ -6944,15 +7272,44 @@ ${HOME_CSS}
           setLibFilter(q);
           pickSection('library');
         }}
+        onOpenLibraryAlbum={(t) => { pickSection('library'); openAlbumFromRow(t); }}
         onOpenArtist={(artist) => {
-          /* Only artists you own have a page to open. Everyone else stays in
-             the palette, which is the whole artist experience for them now —
-             the Find page this used to fall through to is gone. */
-          const key = String(artist?.name || '').toLowerCase();
-          const hit = libArtists.find((a) => a.key === key);
-          if (!hit) return;
-          pickSection('library');
-          setLibDetail({ kind: 'artist', key: hit.key });
+          /* "Open full page" from the panel's artist view. */
+          setPaletteOpen(false);
+          openArtistAnywhere({ name: artist?.name, spotifyId: artist?.id, image: artist?.imageUrl || artist?.image || null });
+        }}
+        /* The artist view, rendered inside the search panel. Same component
+           as the full page, so the two can't drift apart; `nav` keeps
+           everything it opens inside the panel. */
+        renderArtist={(ref, nav) => {
+          const art = artistRefFor(ref);
+          return (
+            <ArtistPage
+              key={art.key}
+              embedded
+              artist={art}
+              accent={accent}
+              theme={theme}
+              playEvents={playEvents}
+              currentTrack={currentTrack}
+              isPlaying={isPlaying}
+              onPlayTrack={onPlayTrack}
+              onTogglePlay={onTogglePlay}
+              onOpenAlbum={(key) => { setPaletteOpen(false); pickSection('library'); setLibDetail({ kind: 'album', key }); }}
+              onOpenRelease={nav.openAlbum}
+              onJumpToFind={(q) => nav.search(q)}
+              onOpenFullPage={nav.openPage}
+              following={isFollowing(art.name)}
+              onToggleFollow={toggleFollow}
+              hasArtist={(n) => libArtists.some((a) => a.key === String(n || '').toLowerCase())}
+              onConnectSpotify={() => { setPaletteOpen(false); pickSection('settings'); setSetCat('connections'); }}
+              onOpenRelated={(r) => nav.openArtist(r)}
+              dlState={dlState}
+              dlProgress={dlProgress}
+              onGetTrack={downloadSpotifyRow}
+              ownedTrackFor={ownedTrackFor}
+            />
+          );
         }}
       />
     </div>
@@ -7711,6 +8068,268 @@ const NP_PANEL_TABS = [
  * Open state is persisted by the caller, so the layout is stable across
  * navigation rather than re-shifting every time you come back to a page.
  */
+/**
+ * Fullscreen Now Playing.
+ *
+ * One card over the whole window, 10px from every edge — the same inset
+ * compact mode uses, so the two read as one family. The cover, the song and
+ * the transport sit centred on their own; opening Lyrics, Queue or Info
+ * slides a panel in on the right and the stage re-centres in what's left.
+ * The panel is this view's own, not the side dock: the dock is suppressed
+ * while this is up, and its three tab bodies (QueueTab, LyricsTab, InfoTab)
+ * are reused here unchanged, so lyric editing, queue reordering and lyric
+ * selection behave identically in both places.
+ *
+ * The strip across the top is the window's drag region — the top bar is
+ * covered, and a frameless window needs something to hold.
+ */
+const NP_FULL_TABS = [
+  ['lyrics', 'Lyrics', 'L'],
+  ['queue', 'Queue', 'Q'],
+  ['info', 'Info', 'I'],
+];
+
+function NowPlayingFullView({
+  track, art, accent, isPlaying = false, currentTime = 0, onSeek,
+  onTogglePlay, onPrev, onNext, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat,
+  volume = 1, onSetVolume, onToggleFavorite, onAddToPlaylist, onMore,
+  onCopyLink, copyBusy = false, onZoomCover,
+  animatedBg = false, immersePalette = null,
+  tab = null, onTab, onClose,
+  coverFor, upNext = [], onSelectTrack, onReorderQueue, queueOffset = 0,
+  lyricsData, onLyricsSaved, onBrowseLyrics,
+  lyricSelection = null, onLyricSelectStart, onLyricSelectLine,
+  artistInfo, credits,
+}) {
+  const acc = readableAccent(accent);
+  const dur = Number.isFinite(track.duration) && track.duration > 0 ? track.duration : 0;
+
+  /* Scrubbing — same contract as the bar: follow the pointer while held,
+     seek once on release. */
+  const [scrub, setScrub] = useState(null);
+  const seekRef = useRef(null);
+  const posFrom = (x) => {
+    const el = seekRef.current; if (!el) return 0;
+    const r = el.getBoundingClientRect();
+    return Math.min(1, Math.max(0, (x - r.left) / r.width));
+  };
+  const beginScrub = (e) => {
+    if (!onSeek || !dur) return;
+    e.preventDefault();
+    setScrub(posFrom(e.clientX));
+    const move = (ev) => setScrub(posFrom(ev.clientX));
+    const up = (ev) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      setScrub(null);
+      onSeek(posFrom(ev.clientX) * dur);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const onSeekKey = (e) => {
+    if (!onSeek || !dur) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); onSeek(Math.min(dur, currentTime + 5)); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); onSeek(Math.max(0, currentTime - 5)); }
+  };
+  const shownTime = scrub != null ? scrub * dur : currentTime;
+  const pct = dur ? Math.min(100, Math.max(0, (shownTime / dur) * 100)) : 0;
+  const fmt = (sec) => {
+    if (!Number.isFinite(sec) || sec < 0) return '0:00';
+    return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+  };
+
+  const lastVol = useRef(volume > 0 ? volume : 0.6);
+  useEffect(() => { if (volume > 0) lastVol.current = volume; }, [volume]);
+  const muted = volume <= 0.001;
+
+  const gradBase = immersePalette?.accent || accent;
+  const gradMid = immersePalette?.mid || gradBase.split(',').map((n) => Math.round(Number(n) * 0.82)).join(', ');
+  const gradWash = immersePalette?.wash || gradBase.split(',').map((n) => Math.round(Number(n) * 0.45)).join(', ');
+
+  const meta2 = [track.artist, track.album].filter(Boolean);
+
+  return (
+    <div className={`sth-full${tab ? ' has-panel' : ''}`} role="dialog" aria-modal="true" aria-label="Now playing, fullscreen">
+      {/* Backdrop: Immerse's moving gradient when that's on, otherwise the
+          artwork blurred under a scrim — the dock's cover treatment, scaled
+          up. Both sit behind everything and take no pointer events. */}
+      {animatedBg ? (
+        <div aria-hidden className="sth-full-bg">
+          <AnimatedGradientBg accent={gradBase} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1} />
+        </div>
+      ) : art ? (
+        <div aria-hidden className="sth-full-bg" style={{
+          inset: -80, backgroundImage: `url("${art}")`, backgroundSize: 'cover', backgroundPosition: 'center',
+          filter: 'blur(80px) saturate(1.6)', opacity: 0.55,
+        }} />
+      ) : null}
+      <div aria-hidden className="sth-full-bg" style={{
+        background: `linear-gradient(180deg, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.46) 55%, rgba(0,0,0,0.62) 100%), linear-gradient(135deg, rgba(${acc},0.10), transparent 60%)`,
+      }} />
+
+      {/* ---- Top strip: drag region, panel tabs, exit ---- */}
+      <div className="sth-full-top">
+        <span className="sth-full-eyebrow">Now playing</span>
+        <span style={{ flex: 1 }} />
+        <div className="sth-full-tabs" role="tablist" aria-label="Side panel">
+          {NP_FULL_TABS.map(([id, label, key]) => (
+            <button key={id} type="button" role="tab" aria-selected={tab === id}
+              className={`sth-full-tab${tab === id ? ' on' : ''}`}
+              onClick={() => onTab?.(id)} title={`${label} (${key})`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="sth-npbtn sth-full-exit" onClick={onClose}
+          title="Exit fullscreen (Esc)" aria-label="Exit fullscreen">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+          </svg>
+        </button>
+      </div>
+
+      <div className="sth-full-body">
+        {/* ---- Stage: cover, song, transport — centred ---- */}
+        <section className="sth-full-stage">
+          {art && onZoomCover ? (
+            <button type="button" className="sth-full-cover" onClick={() => onZoomCover(art)}
+              title="View cover art" aria-label="View cover art full size"
+              style={{ backgroundImage: `url("${art}")`, cursor: 'zoom-in' }} />
+          ) : (
+            <div className="sth-full-cover" style={{ backgroundImage: art ? `url("${art}")` : undefined }} />
+          )}
+
+          <div className="sth-full-meta">
+            {onCopyLink ? (
+              <button type="button" className="sth-full-title is-link" onClick={() => onCopyLink(track)} disabled={copyBusy}
+                title={copyBusy ? 'Looking up on Spotify…' : 'Click to copy Spotify link'}
+                aria-label={`Copy Spotify link for ${track.title}`}>{track.title}</button>
+            ) : (
+              <div className="sth-full-title">{track.title}</div>
+            )}
+            {meta2.length ? <div className="sth-full-sub" title={meta2.join(' · ')}>{meta2.join(' · ')}</div> : null}
+          </div>
+
+          <div className="sth-full-scrub">
+            <span className="sth-npbar-t st-num" style={{ textAlign: 'right' }}>{fmt(shownTime)}</span>
+            <div className="sth-npbar-seek" ref={seekRef}
+              onPointerDown={onSeek && dur ? beginScrub : undefined} onKeyDown={onSeekKey}
+              role="slider" aria-label="Seek" tabIndex={0}
+              aria-valuemin={0} aria-valuemax={Math.round(dur) || 0} aria-valuenow={Math.round(shownTime)}
+              aria-valuetext={`${fmt(shownTime)} of ${fmt(dur)}`}>
+              <div className="sth-npbar-seek-fill" style={{ width: `${pct}%`, transition: scrub != null ? 'none' : 'width 0.25s linear' }}>
+                <span className="sth-npbar-seek-knob" />
+              </div>
+            </div>
+            <span className="sth-npbar-t st-num">{fmt(dur)}</span>
+          </div>
+
+          <div className="sth-full-transport">
+            {onToggleShuffle ? (
+              <button type="button" className={`sth-npbtn${shuffleOn ? ' is-on' : ''}`} onClick={onToggleShuffle}
+                title={shuffleOn ? 'Shuffle on' : 'Shuffle off'} aria-label="Shuffle" aria-pressed={shuffleOn}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" />
+                </svg>
+              </button>
+            ) : null}
+            {onPrev ? (
+              <button type="button" className="sth-npbtn sth-full-skip" onClick={onPrev} title="Previous" aria-label="Previous">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 5l-7 7 7 7" /></svg>
+              </button>
+            ) : null}
+            {onTogglePlay ? (
+              <button type="button" className="sth-full-play" onClick={onTogglePlay}
+                title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause' : 'Play'}>
+                {isPlaying ? <PauseIcon size={22} /> : <PlayIcon size={22} />}
+              </button>
+            ) : null}
+            {onNext ? (
+              <button type="button" className="sth-npbtn sth-full-skip" onClick={onNext} title="Next" aria-label="Next">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+              </button>
+            ) : null}
+            {onToggleRepeat ? (
+              <button type="button" className={`sth-npbtn${repeat !== 'off' ? ' is-on' : ''}`} onClick={onToggleRepeat}
+                title={repeat === 'one' ? 'Repeat this track' : repeat === 'all' ? 'Repeat queue' : 'Repeat off'}
+                aria-label={repeat === 'one' ? 'Repeat: this track' : repeat === 'all' ? 'Repeat: queue' : 'Repeat: off'} aria-pressed={repeat !== 'off'}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                  <polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                  {repeat === 'one' ? <text x="12" y="15" textAnchor="middle" fontSize="9" fontWeight="700" fill="currentColor" stroke="none">1</text> : null}
+                </svg>
+              </button>
+            ) : null}
+          </div>
+
+          <div className="sth-full-actions">
+            {onToggleFavorite ? (
+              <button type="button" className={`sth-npbtn${track.isFavorite ? ' is-on' : ''}`} onClick={() => onToggleFavorite(track.id)}
+                title={track.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+                aria-label={track.isFavorite ? 'Remove from favourites' : 'Add to favourites'} aria-pressed={!!track.isFavorite}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill={track.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
+                </svg>
+              </button>
+            ) : null}
+            {onAddToPlaylist ? (
+              <button type="button" className="sth-npbtn" onClick={(e) => onAddToPlaylist(e, track)}
+                title="Add to playlist" aria-label="Add to playlist" aria-haspopup="menu">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" />
+                </svg>
+              </button>
+            ) : null}
+            {onMore ? (
+              <button type="button" className="sth-npbtn" onClick={(e) => onMore(e, track)}
+                title="More" aria-label="More actions" aria-haspopup="menu">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" />
+                </svg>
+              </button>
+            ) : null}
+            {onSetVolume ? (
+              <>
+                <span aria-hidden className="sth-npbtn-rule" />
+                <button type="button" className="sth-npbtn" onClick={() => onSetVolume(muted ? (lastVol.current || 0.6) : 0)}
+                  title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'} aria-pressed={muted}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
+                    {muted ? <path d="M16 9.5l5 5M21 9.5l-5 5" /> : <><path d="M15.5 9a4 4 0 0 1 0 6" />{volume > 0.5 ? <path d="M18.5 6.5a8 8 0 0 1 0 11" /> : null}</>}
+                  </svg>
+                </button>
+                <input type="range" min={0} max={1} step={0.01} value={volume}
+                  onChange={(e) => onSetVolume(Number(e.target.value))}
+                  className="sth-vol" aria-label="Volume"
+                  style={{ width: 96, background: `linear-gradient(to right, #fff 0%, #fff ${volume * 100}%, rgba(255,255,255,0.16) ${volume * 100}%, rgba(255,255,255,0.16) 100%)` }} />
+              </>
+            ) : null}
+          </div>
+        </section>
+
+        {/* ---- Panel: lyrics / queue / info ---- */}
+        {tab ? (
+          <aside className="sth-full-panel" aria-label={tab === 'lyrics' ? 'Lyrics' : tab === 'queue' ? 'Queue' : 'Info'}>
+            {tab === 'queue' ? (
+              <QueueTab current={track} upNext={upNext} acc={acc} coverFor={coverFor}
+                onSelectTrack={onSelectTrack} currentTime={currentTime} isPlaying={isPlaying}
+                onReorder={onReorderQueue} queueOffset={queueOffset} />
+            ) : tab === 'lyrics' ? (
+              <LyricsTab lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} track={track}
+                onBrowseLyrics={onBrowseLyrics}
+                selection={lyricSelection} onSelectStart={onLyricSelectStart} onSelectLine={onLyricSelectLine}
+                currentTime={currentTime} accent={accent} onSeek={onSeek} />
+            ) : (
+              <InfoTab track={track} art={art} acc={acc} artistInfo={artistInfo} credits={credits} />
+            )}
+          </aside>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function NowPlayingPanelDock({
   open, tab, onTab, onClose,
   track, art, accent, coverFor,
@@ -7733,7 +8352,7 @@ function NowPlayingPanelDock({
          the panel ran up behind the tabs. The wrapper it should line up with
          starts at TOPBAR_H + the column's 4px padding, and ends 104px from the
          bottom (the Now Playing bar's clearance). */
-      position: 'absolute', top: TOPBAR_H, right: 'var(--gutter)', bottom: 'var(--np-reserve)', width: NP_PANEL_W,
+      position: 'absolute', top: 'var(--shell-top, 62px)', right: 'var(--gutter)', bottom: 'var(--np-reserve)', width: NP_PANEL_W,
       zIndex: 5, display: 'flex', flexDirection: 'column',
       borderRadius: 'var(--r-card)', overflow: 'hidden',
       /* `bar` paints the Now Playing bar's own colour, undimmed, so the two
@@ -9225,6 +9844,104 @@ function SettingsPreview({
 /* Brief, Settings: every row is a description on the left and a fixed 320px
    right-aligned control column. Segmented controls fill that column at equal
    segment widths, so every row on a page ends at the same right edge. */
+/**
+ * Settings → Connections → Spotify account.
+ *
+ * The full sign-in (spotifyPartner.js): play counts, monthly listeners, bios
+ * and related artists on artist pages, and your own Spotify library. Separate
+ * from the Client ID panel above, which keeps powering search either way.
+ * "Test connection" walks sign-in → web player scan → client token → a real
+ * artist query and shows where it stops, because this rides an unofficial
+ * interface and "it's blank" needs to come with a reason.
+ */
+function SpotifyAccountPanel() {
+  const a = typeof window !== 'undefined' ? window.electronAPI : null;
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [steps, setSteps] = useState(null);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    if (!a?.spotifyPartnerState) return undefined;
+    a.spotifyPartnerState().then(setSt).catch(() => setSt({ connected: false }));
+    const off = a.onSpotifyPartnerChanged?.((next) => {
+      setBusy(false);
+      setSt(next);
+      if (next?.error) setErr(String(next.error));
+      else setErr('');
+    });
+    return () => off?.();
+  }, [a]);
+
+  if (!a?.spotifyPartnerState) return null;
+
+  const signIn = async () => {
+    setErr(''); setSteps(null); setBusy(true);
+    const r = await a.spotifyPartnerSignIn().catch((e) => ({ ok: false, error: String(e) }));
+    if (!r?.ok) { setBusy(false); setErr(r?.error || 'Could not start sign-in.'); }
+  };
+  const signOut = async () => { await a.spotifyPartnerSignOut(); setSteps(null); };
+  const test = async () => {
+    setTesting(true); setSteps(null);
+    const r = await a.spotifyPartnerDiagnose().catch((e) => ({ ok: false, error: String(e) }));
+    setSteps(r?.ok ? r.data : [{ step: 'Test', ok: false, detail: r?.error || 'failed' }]);
+    setTesting(false);
+  };
+
+  return (
+    <section className="sth-conn">
+      <div className="sth-conn-head">
+        <div>
+          <h2>Spotify account</h2>
+          <p>
+            Sign in to see play counts, monthly listeners, bios and related artists on artist pages.
+            Read-only, and nothing is played or downloaded through Spotify. This uses Spotify&apos;s
+            private web player interface, which is unofficial and can change without notice.
+          </p>
+        </div>
+        {st ? (
+          <span className={`st-status ${st.connected ? 'ok' : 'off'}`}>{st.connected ? 'Connected' : 'Not connected'}</span>
+        ) : null}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {st?.connected ? (
+          <>
+            <span style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)' }}>
+              {st.displayName || 'Signed in'}
+              {st.product ? <span style={{ color: 'var(--text-faint)', fontWeight: 600 }}> · {st.product}</span> : null}
+            </span>
+            <span style={{ flex: 1 }} />
+            <button type="button" className="st-btn st-btn-outline" onClick={test} disabled={testing}>
+              {testing ? 'Testing…' : 'Test connection'}
+            </button>
+            <button type="button" className="st-btn st-btn-outline" onClick={signOut}>Sign out</button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="st-btn st-btn-primary" onClick={signIn} disabled={busy}>
+              {busy ? 'Waiting for your browser…' : 'Sign in with Spotify'}
+            </button>
+            {busy ? <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Finish in the browser tab that opened.</span> : null}
+          </>
+        )}
+      </div>
+      {err ? <div role="status" style={{ fontSize: 12, color: 'var(--danger)', marginTop: 10 }}>{err}</div> : null}
+      {steps ? (
+        <div style={{ display: 'grid', gap: 6, marginTop: 14 }}>
+          {steps.map((x) => (
+            <div key={x.step} style={{ display: 'grid', gridTemplateColumns: '16px 150px minmax(0, 1fr)', gap: 10, alignItems: 'baseline', fontSize: 12.5 }}>
+              <span style={{ color: x.ok ? 'rgb(140,220,160)' : 'var(--danger)', fontWeight: 800 }}>{x.ok ? '✓' : '×'}</span>
+              <span style={{ fontWeight: 700, color: 'var(--text)' }}>{x.step}</span>
+              <span style={{ color: 'var(--text-faint)', overflowWrap: 'anywhere' }}>{x.detail}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function SetRow({ title, note, children, wide = true }) {
   return (
     <div className="sth-set-r">
@@ -9968,7 +10685,13 @@ function NowPlayingBar({ track, isPlaying, art, accent, immersePalette = null, o
             <div className="sth-npbar-art" style={{ background: art ? `url("${art}") center/cover` : 'rgba(255,255,255,0.08)' }} />
           )}
           <div style={{ minWidth: 0 }}>
-            <div className="sth-npbar-title" title={track.title}>{track.title}</div>
+            {onCopyLink ? (
+              <button type="button" className="sth-npbar-title is-link" onClick={() => onCopyLink(track)} disabled={copyBusy}
+                title={copyBusy ? 'Looking up on Spotify…' : `${track.title} · click to copy Spotify link`}
+                aria-label={`Copy Spotify link for ${track.title}`}>{track.title}</button>
+            ) : (
+              <div className="sth-npbar-title" title={track.title}>{track.title}</div>
+            )}
             <div className="sth-npbar-artist" title={track.artist}>{track.artist}</div>
           </div>
         </div>
@@ -10077,6 +10800,14 @@ function NowPlayingBar({ track, isPlaying, art, accent, immersePalette = null, o
                 title="Lyrics" aria-label="Lyrics" aria-pressed={lyricsOpen}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M4 6h16M4 11h16M4 16h10" />
+                </svg>
+              </button>
+            ) : null}
+            {onFullscreen ? (
+              <button type="button" className="sth-npbtn" onClick={onFullscreen}
+                title="Fullscreen" aria-label="Open fullscreen player">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
                 </svg>
               </button>
             ) : null}

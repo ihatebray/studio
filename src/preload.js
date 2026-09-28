@@ -150,6 +150,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifySearchArtists: (q) => ipcRenderer.invoke('spotify:searchArtists', q),
   spotifyArtistTopTracks: (id, name) => ipcRenderer.invoke('spotify:artistTopTracks', id, name),
   spotifyArtistAlbums: (id) => ipcRenderer.invoke('spotify:artistAlbums', id),
+  /* Full Spotify account — see spotifyPartner.js. Every data call resolves to
+     { ok, data } or { ok: false, step, error }; nothing throws across IPC. */
+  spotifyPartnerState: () => ipcRenderer.invoke('spotifyPartner:state'),
+  spotifyPartnerSignIn: () => ipcRenderer.invoke('spotifyPartner:signIn'),
+  spotifyPartnerSignOut: () => ipcRenderer.invoke('spotifyPartner:signOut'),
+  spotifyPartnerDiagnose: () => ipcRenderer.invoke('spotifyPartner:diagnose'),
+  spotifyPartnerArtist: (id) => ipcRenderer.invoke('spotifyPartner:artist', id),
+  spotifyPartnerFindArtist: (name) => ipcRenderer.invoke('spotifyPartner:findArtist', name),
+  spotifyPartnerAlbumPlays: (id) => ipcRenderer.invoke('spotifyPartner:albumPlays', id),
+  spotifyPartnerDiscography: (id) => ipcRenderer.invoke('spotifyPartner:discography', id),
+  spotifyPartnerTopTracks: (id) => ipcRenderer.invoke('spotifyPartner:topTracks', id),
+  previewResolve: (track) => ipcRenderer.invoke('preview:resolve', track),
+  spotifyPartnerTrackPlays: (id) => ipcRenderer.invoke('spotifyPartner:trackPlays', id),
+  spotifyPartnerLibrary: (kind) => ipcRenderer.invoke('spotifyPartner:library', kind),
+  onSpotifyPartnerChanged: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('spotifyPartner:changed', listener);
+    return () => ipcRenderer.removeListener('spotifyPartner:changed', listener);
+  },
   fetchLyrics: (params) => ipcRenderer.invoke('lyrics:fetch', params),
   saveLyrics: (params) => ipcRenderer.invoke('lyrics:save', params),
   searchAllLyrics: (params) => ipcRenderer.invoke('lyrics:searchAll', params),

@@ -131,7 +131,7 @@ import {
   ITUNES_ID_PREFIX,
 } from './itunesClient.js';
 import http from 'http';
-import { downloadYoutubeAudioForQuery, downloadYoutubeAudioById, searchCandidatesForPicker } from './ytdlpImport.js';
+import { downloadYoutubeAudioForQuery, downloadYoutubeAudioById, searchCandidatesForPicker, resolvePreviewStream } from './ytdlpImport.js';
 import {
   loadSoulseekCredentials,
   saveSoulseekCredentials,
@@ -149,6 +149,42 @@ import * as twitchOverlay from './twitchOverlay.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
+import { registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch } from './spotifyPartner.js';
+
+/* Search fallback chain: Client ID → signed-in Spotify account → iTunes.
+   The account has its own rate-limit bucket, so when the Client ID is
+   limited it usually still answers with real Spotify results (and IDs the
+   artist page and tracklists can use); iTunes stays the floor. Returns null
+   when the account isn't connected or can't answer, so callers fall through. */
+async function viaAccount(kind, q) {
+  if (!partnerState().connected) return null;
+  try {
+    const rows = await partnerSearch(kind, q);
+    return Array.isArray(rows) && rows.length ? rows : null;
+  } catch (e) {
+    console.warn(`[search:${kind}] account route failed:`, e?.message || e);
+    return null;
+  }
+}
+
+/* Full Spotify account (artist pages with play counts, your Spotify library).
+   Separate from the Client ID / Secret flow above, which keeps powering search
+   and metadata whether or not this is connected. */
+registerSpotifyPartnerIpc(ipcMain);
+
+/* Preview before you get: resolves the YouTube match a download would use to
+   a stream URL. Nothing is saved. */
+ipcMain.handle('preview:resolve', async (_e, t) => {
+  try {
+    const data = await resolvePreviewStream({
+      artists: String(t?.artists || ''), title: String(t?.title || ''),
+      durationMs: Number(t?.durationMs) || 0, explicit: typeof t?.explicit === 'boolean' ? t.explicit : null,
+    });
+    return { ok: true, ...data };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+});
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -1127,14 +1163,20 @@ ipcMain.handle('spotify:searchArtists', async (_event, q) => {
     try {
       const r = await spotifySearchArtists(query);
       if (Array.isArray(r) && r.length) return remember(r);
+      const acct = await viaAccount('artists', query);
+      if (acct) return remember(acct);
       emitFallbackNotice('itunes', 'ratelimit');
       return remember(await itunesSearchArtists(query));
     } catch (e) {
       console.error('[spotify:searchArtists]', e);
+      const acct = await viaAccount('artists', query);
+      if (acct) return remember(acct);
       emitFallbackNotice('itunes', isRateLimitError(e) ? 'ratelimit' : 'spotifyerror');
       return remember(await itunesSearchArtists(query));
     }
   }
+  const acct = await viaAccount('artists', query);
+  if (acct) return remember(acct);
   emitFallbackNotice('itunes', 'nocreds');
   return remember(await itunesSearchArtists(query));
 });
@@ -2629,14 +2671,20 @@ ipcMain.handle('spotify:search', async (event, query) => {
         setSearchCache('tracks', q, r);
         return r;
       }
-      // Empty result — try iTunes rather than returning nothing.
+      // Empty result — try the account, then iTunes, rather than returning nothing.
+      const acct = await viaAccount('tracks', q);
+      if (acct) { setSearchCache('tracks', q, acct); return acct; }
       const it = await itunesSearchTracks(q);
       return it.length ? it : r;
     } catch (e) {
+      const acct = await viaAccount('tracks', q);
+      if (acct) { setSearchCache('tracks', q, acct); return acct; }
       emitFallbackNotice('itunes', isRateLimitError(e) ? 'ratelimit' : 'spotifyerror');
       return itunesSearchTracks(q);
     }
   }
+  const acct = await viaAccount('tracks', q);
+  if (acct) { setSearchCache('tracks', q, acct); return acct; }
   emitFallbackNotice('itunes', 'nocreds');
   return itunesSearchTracks(q);
 });
@@ -2653,13 +2701,19 @@ ipcMain.handle('spotify:searchAlbums', async (event, query) => {
         setSearchCache('albums', q, r);
         return r;
       }
+      const acct = await viaAccount('albums', q);
+      if (acct) { setSearchCache('albums', q, acct); return acct; }
       const it = await itunesSearchAlbums(q);
       return it.length ? it : r;
     } catch (e) {
+      const acct = await viaAccount('albums', q);
+      if (acct) { setSearchCache('albums', q, acct); return acct; }
       emitFallbackNotice('itunes', isRateLimitError(e) ? 'ratelimit' : 'spotifyerror');
       return itunesSearchAlbums(q);
     }
   }
+  const acct = await viaAccount('albums', q);
+  if (acct) { setSearchCache('albums', q, acct); return acct; }
   emitFallbackNotice('itunes', 'nocreds');
   return itunesSearchAlbums(q);
 });
@@ -2675,7 +2729,18 @@ ipcMain.handle('spotify:albumTracks', async (event, albumId) => {
   }
   const cached = getAlbumTracksCache(id);
   if (cached) return cached;
-  const data = await spotifyGetAlbumTracks(id);
+  /* With the full Spotify account connected, its token goes first — it isn't
+     held to Developer Mode's quota — and the Client ID route is the fallback.
+     Either way a failure in one doesn't blank the tracklist. */
+  let data = null;
+  if (partnerState().connected) {
+    try { data = await partnerAlbumTracks(id); } catch (e) { console.warn('[spotify:albumTracks] account route failed:', e?.message || e); }
+  }
+  if (!data?.tracks?.length) {
+    try { data = await spotifyGetAlbumTracks(id); } catch (e) {
+      if (!data) throw e;
+    }
+  }
   if (data?.tracks?.length) setAlbumTracksCache(id, data);
   return data;
 });

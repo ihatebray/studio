@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { PreviewButton, stop as stopPreview } from './previewPlayer.jsx';
 import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent, accentTextColor } from './coverTheme.js';
 import { PlayIcon } from './sharedUI.jsx';
 import { formatTotalMs, titleCollator, parseGenres } from './mediaUtils.js';
@@ -67,6 +68,8 @@ function storeProfile(key, data) {
    frame, 50% = middle). Both are here rather than inline so they're one edit,
    not a hunt through JSX. Dialled in against a real photo at full width. */
 const HERO_H = 260;
+/* Discography cards shown before "Show all". Two rows at typical widths. */
+const DISC_PAGE = 12;
 const HERO_FOCUS = '40%';
 
 function fmtDur(s) {
@@ -84,6 +87,23 @@ function normRelease(name) {
     .replace(/\[(deluxe|expanded|remaster(ed)?|anniversary|edition|version|explicit)[^\]]*\]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+/* Song-level match between a Spotify title and a library title. Featured
+   credits and "- 2011 Remaster" tails are how the same recording ends up
+   with two names, so both are dropped before comparing. */
+function normSong(title) {
+  return normRelease(String(title || '')
+    .replace(/[([](feat|ft|with)\.?\s[^)\]]*[)\]]/gi, '')
+    .replace(/\s-\s.*\b(remaster(ed)?|version|edit|mix|live)\b.*$/i, ''));
+}
+
+function Note({ children }) {
+  return (
+    <div style={{ padding: '2px 0 4px', fontSize: 12.5, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.38)' }}>
+      {children}
+    </div>
+  );
 }
 
 /* ---- Small shared pieces ------------------------------------------------ */
@@ -277,6 +297,341 @@ function TrackRow({ n, track, art, plays, playing, isPlaying, accent, onPlay, on
   );
 }
 
+/* ---- Spotify pieces ------------------------------------------------------
+   Everything below renders data from the signed-in Spotify account
+   (spotifyPartner.js). Each one is built from the page's existing parts —
+   the TrackRow grid, SectionHead, the card treatment — so the Spotify
+   sections read as more of the same page, not a panel bolted onto it. */
+
+const fmtCount = (n) => (Number.isFinite(n) && n > 0 ? Math.round(n).toLocaleString() : '');
+const fmtShort = (n) => {
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K`;
+  return String(n);
+};
+const fmtMs = (ms) => (ms ? fmtDur(ms / 1000) : '');
+
+/* Column layout shared by the header and every row, so the labels sit
+   exactly over the values they name. */
+const POP_COLS = '28px 44px minmax(0, 1fr) 128px 52px 138px';
+
+function PopularHeader({ plays = true }) {
+  const cell = { fontSize: 10.5, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.42)' };
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: POP_COLS, gap: 14, alignItems: 'center',
+      padding: '0 12px 9px', marginBottom: 6, boxShadow: 'inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.08)',
+    }}>
+      <span style={{ ...cell, textAlign: 'right' }}>#</span>
+      <span />
+      <span style={cell}>Title</span>
+      <span style={{ ...cell, textAlign: 'right' }} title="All-time streams on Spotify">{plays ? 'Spotify plays' : ''}</span>
+      <span style={{ ...cell, textAlign: 'right', display: 'flex', justifyContent: 'flex-end' }} title="Length">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+      </span>
+      <span />
+    </div>
+  );
+}
+
+/** The action cell. Owned rows say so; everything else downloads in place,
+ *  with the same busy / done / retry states the search panel uses. */
+function GetCell({ owned, dl, progress, accent, onGet }) {
+  if (owned) {
+    return (
+      <span title="In your library" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 700, color: 'rgba(140,220,160,0.9)' }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+        In library
+      </span>
+    );
+  }
+  if (dl === 'busy') {
+    const pct = typeof progress?.pct === 'number' ? Math.round(progress.pct * 100) : null;
+    return (
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 84 }} title="Downloading">
+        <span style={{ height: 4, borderRadius: 2, background: 'rgba(var(--st-fg-rgb), 0.12)', overflow: 'hidden' }}>
+          <span style={{ display: 'block', height: '100%', width: `${pct ?? 30}%`, background: `rgb(${accent})`, transition: 'width 0.24s ease' }} />
+        </span>
+        <span style={{ fontSize: 10, fontWeight: 650, color: 'rgba(var(--st-sub-rgb), 0.55)', fontVariantNumeric: 'tabular-nums' }}>
+          {progress?.phase === 'processing' ? 'Processing…' : pct != null ? `${pct}%` : 'Downloading…'}
+        </span>
+      </span>
+    );
+  }
+  if (dl === 'done') {
+    return <span style={{ fontSize: 11.5, fontWeight: 700, color: 'rgba(140,220,160,0.9)' }}>Added</span>;
+  }
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); onGet?.(); }}
+      style={{
+        height: 26, padding: '0 13px', borderRadius: 999, cursor: 'pointer', font: 'inherit',
+        fontSize: 11.5, fontWeight: 750, border: `1px solid rgba(${accent}, 0.45)`,
+        background: `rgba(${accent}, 0.14)`, color: 'var(--st-text)',
+      }}>
+      {dl === 'failed' ? 'Retry' : 'Get'}
+    </button>
+  );
+}
+
+/** One row of the artist's Popular list: rank, cover, title over album,
+ *  all-time Spotify plays, length, and what you can do with it. */
+function PopularRow({ n, t, owned, playing, isPlaying, accent, dl, progress, onPlay, onGet }) {
+  const [hot, setHot] = useState(false);
+  const act = () => (owned ? onPlay() : onGet?.());
+  return (
+    <div role="button" tabIndex={0} onClick={act}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } }}
+      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      style={{
+        display: 'grid', gridTemplateColumns: POP_COLS, gap: 14, alignItems: 'center',
+        padding: '6px 12px', borderRadius: 9, cursor: 'pointer',
+        background: hot ? 'rgba(var(--st-fg-rgb), 0.055)' : 'transparent',
+        transition: 'background 0.13s ease',
+      }}>
+      <span style={{
+        textAlign: 'right', fontSize: 13, fontWeight: 650, fontVariantNumeric: 'tabular-nums',
+        color: playing ? `rgb(${accent})` : `rgba(var(--st-sub-rgb), ${hot ? 0.85 : 0.4})`,
+        display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+      }}>
+        {hot && owned ? (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            {playing && isPlaying
+              ? <><rect x="6.5" y="5" width="3.6" height="14" rx="1.1" /><rect x="13.9" y="5" width="3.6" height="14" rx="1.1" /></>
+              : <path d="M8 6.5v11l9.5-5.5z" />}
+          </svg>
+        ) : n}
+      </span>
+      <span style={{
+        width: 44, height: 44, borderRadius: 6, flexShrink: 0,
+        background: t.albumArtUrl ? `url("${String(t.albumArtUrl).replace(/"/g, '%22')}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
+      }} />
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <span style={{
+            fontSize: 13.5, fontWeight: 650, minWidth: 0,
+            color: playing ? `rgb(${accent})` : 'var(--st-text)',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>{t.title}</span>
+          {t.explicit ? (
+            <span aria-label="Explicit" title="Explicit" style={{
+              flexShrink: 0, fontSize: 9, fontWeight: 800, lineHeight: 1, padding: '3px 4px', borderRadius: 3,
+              background: 'rgba(var(--st-fg-rgb), 0.16)', color: 'rgba(var(--st-text-rgb), 0.75)',
+            }}>E</span>
+          ) : null}
+        </span>
+        {t.album ? (
+          <span style={{
+            display: 'block', marginTop: 3, fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.48)',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>{t.album}</span>
+        ) : null}
+      </span>
+      <span style={{
+        textAlign: 'right', fontSize: 12.5, fontWeight: 650, fontVariantNumeric: 'tabular-nums',
+        color: 'rgba(var(--st-text-rgb), 0.7)',
+      }}>{fmtCount(t.playcount)}</span>
+      <span style={{
+        textAlign: 'right', fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+        color: 'rgba(var(--st-sub-rgb), 0.45)',
+      }}>{fmtMs(t.durationMs)}</span>
+      <span style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+        {!owned && dl !== 'busy' && dl !== 'done' ? (
+          <PreviewButton pkey={`pv:${t.spotifyId || t.title}`} accent={accent}
+            track={{ title: t.title, artists: t.artists, durationMs: t.durationMs, explicit: t.explicit }} />
+        ) : null}
+        <GetCell owned={owned} dl={dl} progress={progress} accent={accent} onGet={onGet} />
+      </span>
+    </div>
+  );
+}
+
+/** A release in the discography grid. Every release looks like a record —
+ *  the page is the artist's catalogue, not a list of gaps — and the ones you
+ *  already have carry a small "In library" mark. */
+function DiscCard({ r, owned, accent, onClick, opensTracklist = false }) {
+  const [hot, setHot] = useState(false);
+  const kind = r.group === 'appears_on' ? (r.artists || 'Appears on')
+    : r.type === 'compilation' || r.group === 'compilation' ? 'Compilation'
+      : r.group === 'single' ? (r.totalTracks > 1 ? 'EP' : 'Single') : 'Album';
+  const meta = [r.year || String(r.releaseDate || '').slice(0, 4), kind].filter(Boolean).join(' · ');
+  return (
+    <button type="button" onClick={onClick}
+      title={opensTracklist ? `Open ${r.name} — see the tracklist and get what you're missing` : owned ? `Open ${r.name}` : `Find ${r.name}`}
+      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      style={{
+        border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit', textAlign: 'left',
+        padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', minWidth: 0,
+      }}>
+      <div style={{
+        position: 'relative', width: '100%', aspectRatio: '1', borderRadius: 9, overflow: 'hidden',
+        background: r.albumArtUrl ? `url("${String(r.albumArtUrl).replace(/"/g, '%22')}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
+        boxShadow: hot ? '0 16px 34px rgba(0,0,0,0.5)' : '0 10px 26px rgba(0,0,0,0.4)',
+        transform: hot ? 'translateY(-3px)' : 'none',
+        transition: 'transform 0.22s cubic-bezier(0.22,0.9,0.3,1), box-shadow 0.22s ease',
+      }}>
+        {owned ? (
+          <span title="In your library" style={{
+            position: 'absolute', left: 8, top: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '4px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 750,
+            background: 'rgba(0,0,0,0.62)', color: 'rgba(160,235,180,0.95)', backdropFilter: 'blur(8px)',
+          }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+            In library
+          </span>
+        ) : null}
+        <span style={{
+          position: 'absolute', right: 9, bottom: 9, width: 36, height: 36, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: `rgb(${accent})`, color: accentTextColor(accent),
+          boxShadow: '0 6px 16px rgba(0,0,0,0.45)',
+          opacity: hot ? 1 : 0, transform: hot ? 'none' : 'translateY(7px)',
+          transition: 'opacity 0.18s ease, transform 0.18s ease',
+        }}>
+          {opensTracklist ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round"><path d="M4 6h11M4 12h11M4 18h7M19 15v6M16 18h6" /></svg>
+          ) : owned ? <PlayIcon size={14} /> : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4-4" /></svg>
+          )}
+        </span>
+      </div>
+      <div style={{
+        fontSize: 13, fontWeight: 750, marginTop: 10, lineHeight: 1.25, color: 'var(--st-text)',
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>{r.name}</div>
+      <div style={{
+        fontSize: 11.5, fontWeight: 600, color: 'rgba(var(--st-fg-rgb), 0.5)', marginTop: 3, lineHeight: 1.25,
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>{meta}{r.totalTracks > 1 ? ` · ${r.totalTracks} songs` : ''}</div>
+    </button>
+  );
+}
+
+/** A problem with where the page's data comes from, said plainly, with the
+ *  one thing you can do about it. */
+function IssueBanner({ title, detail, action }) {
+  return (
+    <div role="status" style={{
+      display: 'flex', alignItems: 'center', gap: 16, marginTop: 22, padding: '14px 16px',
+      borderRadius: 12, background: 'rgba(255, 170, 60, 0.08)', border: '1px solid rgba(255, 170, 60, 0.28)',
+    }}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgb(255,190,110)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+        <path d="M12 3l9.5 17h-19z" /><path d="M12 10v4.5M12 17.5v.5" />
+      </svg>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 750, color: 'var(--st-text)' }}>{title}</div>
+        {detail ? <div style={{ marginTop: 3, fontSize: 12.5, fontWeight: 600, lineHeight: 1.5, color: 'rgba(var(--st-sub-rgb), 0.62)' }}>{detail}</div> : null}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function StatBlock({ value, label }) {
+  if (!value) return null;
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 22, fontWeight: 850, letterSpacing: '-0.02em', color: 'var(--st-text)', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.45)', marginTop: 3 }}>{label}</div>
+    </div>
+  );
+}
+
+/** Bio, headline numbers and where the listeners are. The bio clamps to four
+ *  lines; the whole card is the toggle, since it's the only thing it does. */
+function AboutCard({ data, image, accent }) {
+  const [open, setOpen] = useState(false);
+  const bio = data.biography || '';
+  const long = bio.length > 320;
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: image ? 'minmax(0, 220px) minmax(0, 1fr)' : 'minmax(0, 1fr)', gap: 0,
+      borderRadius: 14, overflow: 'hidden',
+      background: 'rgba(var(--st-fg-rgb), 0.045)', border: '1px solid rgba(var(--st-fg-rgb), 0.07)',
+    }}>
+      {image ? (
+        <div aria-hidden style={{
+          minHeight: 220, background: `url("${String(image).replace(/"/g, '%22')}") center/cover`,
+        }} />
+      ) : null}
+      <div style={{ padding: '20px 22px', minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+          <StatBlock value={fmtCount(data.monthlyListeners)} label="Monthly listeners" />
+          <StatBlock value={fmtCount(data.followers)} label="Followers" />
+          <StatBlock value={data.worldRank ? `#${data.worldRank.toLocaleString()}` : ''} label="In the world" />
+        </div>
+        {bio ? (
+          <div
+            role={long ? 'button' : undefined} tabIndex={long ? 0 : undefined}
+            onClick={long ? () => setOpen((v) => !v) : undefined}
+            onKeyDown={long ? (e) => { if (e.key === 'Enter') setOpen((v) => !v); } : undefined}
+            style={{
+              marginTop: 18, fontSize: 13, lineHeight: 1.65, fontWeight: 500,
+              color: 'rgba(var(--st-text-rgb), 0.74)', cursor: long ? 'pointer' : 'default',
+              display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: open ? 'unset' : 4, overflow: 'hidden',
+            }}>
+            {bio}
+          </div>
+        ) : null}
+        {long ? (
+          <button type="button" onClick={() => setOpen((v) => !v)} style={{
+            marginTop: 6, padding: 0, border: 'none', background: 'none', cursor: 'pointer', font: 'inherit',
+            fontSize: 12, fontWeight: 700, color: `rgba(${accent}, 0.95)`,
+          }}>{open ? 'Show less' : 'Read more'}</button>
+        ) : null}
+        {data.topCities?.length ? (
+          <div style={{ marginTop: 22 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.45)', marginBottom: 8 }}>
+              Top cities
+            </div>
+            <div style={{ display: 'grid', gap: 2 }}>
+              {data.topCities.map((c, i) => (
+                <div key={`${c.city}-${c.country}`} style={{ display: 'grid', gridTemplateColumns: '18px minmax(0, 1fr) auto', gap: 10, alignItems: 'baseline', padding: '5px 0' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'rgba(var(--st-sub-rgb), 0.4)', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</span>
+                  <span style={{ fontSize: 13, fontWeight: 650, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {c.city}<span style={{ color: 'rgba(var(--st-sub-rgb), 0.45)', fontWeight: 600 }}>{c.country ? `, ${c.country}` : ''}</span>
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'rgba(var(--st-sub-rgb), 0.55)' }}>
+                    {fmtCount(c.listeners)} listeners
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RelatedArtist({ a, inLibrary, onClick }) {
+  const [hot, setHot] = useState(false);
+  return (
+    <button type="button" onClick={onClick} title={a.name}
+      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      style={{
+        border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit', padding: 0,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0,
+      }}>
+      <span style={{
+        width: '100%', aspectRatio: '1', borderRadius: '50%',
+        background: a.image ? `url("${String(a.image).replace(/"/g, '%22')}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
+        boxShadow: hot ? '0 12px 28px rgba(0,0,0,0.5)' : '0 6px 18px rgba(0,0,0,0.35)',
+        transform: hot ? 'translateY(-3px)' : 'none',
+        transition: 'transform 0.22s cubic-bezier(0.22,0.9,0.3,1), box-shadow 0.22s ease',
+      }} />
+      <span style={{
+        marginTop: 10, fontSize: 13, fontWeight: 750, color: 'var(--st-text)', maxWidth: '100%',
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>{a.name}</span>
+      <span style={{ marginTop: 2, fontSize: 11.5, fontWeight: 600, color: inLibrary ? 'rgba(140,220,160,0.8)' : 'rgba(var(--st-fg-rgb), 0.45)' }}>
+        {inLibrary ? 'In your library' : 'Artist'}
+      </span>
+    </button>
+  );
+}
+
 /* ========================================================================= */
 
 /**
@@ -298,6 +653,16 @@ export default function ArtistPage({
   onBack,
   following = false,
   onToggleFollow,
+  onOpenRelated,          // (name) → that artist's page if you have them, search if not
+  hasArtist,              // (name) → boolean, for "In your library" on related artists
+  onConnectSpotify,       // () → Settings → Connections
+  dlState = {},           // download state by key (`s:<spotifyId>`), shared with search
+  dlProgress = {},
+  onGetTrack,             // (spotifyRow) → download it
+  ownedTrackFor,          // (title, artists) → the library track, or null
+  embedded = false,       // rendered inside the search panel: no back button, no header editing
+  onOpenRelease,          // (spotifyRelease) → open it in place (the panel's album frame)
+  onOpenFullPage,         // () → leave the panel for the full artist page
 }) {
   const [profile, setProfile] = useState(() => {
     const c = cachedProfile(artist?.key || '');
@@ -314,6 +679,27 @@ export default function ArtistPage({
 
   const name = artist?.name || 'Unknown artist';
   const key = artist?.key || '';
+
+  /* ---- Spotify account data --------------------------------------------
+   * Only when the full Spotify account is connected (Settings → Connections).
+   * `sp.status`: off | loading | done | nomatch | error. The overview is cached
+   * for an hour in the main process, so flipping between pages is free. */
+  const [spConnected, setSpConnected] = useState(false);
+  const [sp, setSp] = useState({ status: 'off', data: null, error: '' });
+  const [showAllPopular, setShowAllPopular] = useState(false);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => () => stopPreview(), []);
+  const [disc, setDisc] = useState({ status: 'idle', list: null });
+  const [discTab, setDiscTab] = useState('album');
+  const [discAll, setDiscAll] = useState(false);
+  const spData = sp.status === 'done' ? sp.data : null;
+  useEffect(() => {
+    const a = api();
+    if (!a?.spotifyPartnerState) return undefined;
+    a.spotifyPartnerState().then((st) => setSpConnected(!!st?.connected)).catch(() => {});
+    const off = a.onSpotifyPartnerChanged?.((st) => setSpConnected(!!st?.connected));
+    return () => off?.();
+  }, []);
 
   /* ---- Header override --------------------------------------------------
    * The fetched header is a default, not a verdict. `override` holds what the
@@ -347,18 +733,21 @@ export default function ArtistPage({
      had before and are kept so the page never renders empty. Declared up here
      rather than beside the JSX because the aspect probe below is a hook, and
      hooks can't sit after this component's early return. */
-  const heroSrc = override?.image || profile?.header || profile?.image || artist?.art || null;
+  /* Spotify's own header art (the wide banner on the artist's page) beats
+     everything fetched, since it's the image the artist chose for exactly this
+     shape. The remaining chain is unchanged. */
+  const heroSrc = override?.image || spData?.header || profile?.header || profile?.image || spData?.avatar || artist?.art || null;
   /* A real photo is shown as-is. The album-cover fallback is blurred, because
      stretching a 300px cover across the band is exactly the artefact this
      whole change exists to remove. A chosen image is never blurred — if you
      picked it, you meant it. */
-  const heroIsPhoto = !!(override?.image || profile?.header || profile?.image);
+  const heroIsPhoto = !!(override?.image || spData?.header || profile?.header || profile?.image || spData?.avatar);
   const heroIsCustom = !!override?.image;
 
   /* Default framing depends on what kind of picture we ended up with. Wide
      header art is already composed for a band, so it centres. A square avatar
      has to be pushed up onto the face — that's what HERO_FOCUS is for. */
-  const autoFocusY = profile?.header ? 50 : parseFloat(HERO_FOCUS);
+  const autoFocusY = (spData?.header || profile?.header) ? 50 : parseFloat(HERO_FOCUS);
   const frame = draft || override || { focusX: 50, focusY: autoFocusY, zoom: 1 };
 
   const saveHeader = useCallback(async (next) => {
@@ -529,6 +918,80 @@ export default function ArtistPage({
     return () => { dead = true; };
   }, [key, name]);
 
+  /* ---- Spotify overview --------------------------------------------------
+   * Needs a Spotify artist ID. The profile lookup above usually has one; an
+   * iTunes-sourced profile doesn't, and then the signed-in account searches
+   * for the name itself. Waits for the profile so it doesn't search for an ID
+   * that's a moment away from arriving. */
+  const knownSpotifyId = artist?.spotifyId
+    || (/^[0-9A-Za-z]{22}$/.test(String(profile?.id || '')) ? profile.id : null);
+  useEffect(() => {
+    setShowAllPopular(false);
+    if (!spConnected || !key) { setSp({ status: 'off', data: null, error: '' }); return undefined; }
+    if (profileState === 'loading' && !artist?.spotifyId) return undefined;
+    const a = api();
+    if (!a?.spotifyPartnerArtist) return undefined;
+    let dead = false;
+    setSp((cur) => (cur.data?.name && cur.status === 'done' && cur.forKey === key ? cur : { status: 'loading', data: null, error: '' }));
+    (async () => {
+      let id = knownSpotifyId;
+      if (!id) {
+        const f = await a.spotifyPartnerFindArtist(name).catch((e) => ({ ok: false, error: String(e) }));
+        if (dead) return;
+        if (f?.ok && f.data?.id) id = f.data.id;
+        /* A failed lookup is an error, not "not on Spotify" — a rate limit
+           here used to read as "Couldn't find X on Spotify". */
+        else if (f && f.ok === false) {
+          setSp({ status: 'error', data: null, error: f.error || 'Spotify did not answer', step: f.step, retryAfter: f.retryAfter, id: null });
+          return;
+        }
+      }
+      if (dead) return;
+      if (!id) { setSp({ status: 'nomatch', data: null, error: '' }); return; }
+      const r = await a.spotifyPartnerArtist(id).catch((e) => ({ ok: false, error: String(e) }));
+      if (dead) return;
+      if (r?.ok && r.data) setSp({ status: 'done', data: r.data, error: '', forKey: key, id });
+      else setSp({ status: 'error', data: null, error: r?.error || 'Spotify did not answer', step: r?.step, retryAfter: r?.retryAfter, id });
+    })();
+    return () => { dead = true; };
+  }, [spConnected, key, name, knownSpotifyId, profileState, retry, artist?.spotifyId]);
+
+  /* A short rate limit retries itself when it lifts; a long one waits for
+     the Try again button rather than keeping a timer alive for an hour. */
+  useEffect(() => {
+    if (sp.status !== 'error' || sp.step !== 'ratelimit' || !sp.retryAfter || sp.retryAfter > 180) return undefined;
+    const t = setTimeout(() => setRetry((n) => n + 1), (sp.retryAfter + 1) * 1000);
+    return () => clearTimeout(t);
+  }, [sp]);
+
+  /* Fallback Popular: when the overview failed but the artist is known,
+     their top tracks from a different endpoint (no play counts, but the
+     right songs in the right order). */
+  const [fbTop, setFbTop] = useState(null);
+  useEffect(() => {
+    setFbTop(null);
+    const a = api();
+    if (sp.status !== 'error' || !sp.id || !a?.spotifyPartnerTopTracks) return undefined;
+    let dead = false;
+    a.spotifyPartnerTopTracks(sp.id).then((r) => { if (!dead && r?.ok) setFbTop(r.data || []); }).catch(() => {});
+    return () => { dead = true; };
+  }, [sp.status, sp.id]);
+
+  /* The complete discography, after the overview is up. Until it lands the
+     grid shows the releases the overview already carried. */
+  const spId = spData?.id || sp.id || null;
+  useEffect(() => {
+    setDiscAll(false);
+    const id = spId;
+    const a = api();
+    if (!id || !a?.spotifyPartnerDiscography) { setDisc({ status: 'idle', list: null }); return undefined; }
+    let dead = false;
+    setDisc({ status: 'loading', list: null });
+    a.spotifyPartnerDiscography(id)
+      .then((r) => { if (!dead) setDisc(r?.ok ? { status: 'done', list: r.data || [] } : { status: 'error', list: null, error: r?.error || '' }); })
+      .catch((e) => { if (!dead) setDisc({ status: 'error', list: null, error: String(e?.message || e) }); });
+    return () => { dead = true; };
+  }, [spId]);
   /* ---- Page wash -------------------------------------------------------
    * Sampled from `heroSrc` — the SAME image the header ends up displaying,
    * override and all.
@@ -603,6 +1066,10 @@ export default function ArtistPage({
    * Only fetched on demand: it's a second network call per artist and most
    * visits to this page are to play something, not to shop. */
   const loadRemote = useCallback(async () => {
+    /* With the Spotify account connected the overview already carries the
+       whole discography, so the ten paged Web API calls this makes are
+       skipped entirely. */
+    if (spData || sp.status === 'loading') return;
     if (remoteState !== 'idle' || !profile?.id) return;
     const a = api();
     if (!a?.spotifyArtistAlbums) return;
@@ -612,7 +1079,7 @@ export default function ArtistPage({
       setRemote(Array.isArray(res) ? res : []);
     } catch { setRemote([]); }
     setRemoteState('done');
-  }, [remoteState, profile]);
+  }, [remoteState, profile, spData, sp.status]);
 
   /* Fetched only when the section is actually scrolled to.
    *
@@ -636,7 +1103,20 @@ export default function ArtistPage({
     return () => io.disconnect();
   }, [profile, remoteState, loadRemote]);
 
+  /* If the Spotify account was expected to supply the discography and then
+     failed, fall back to the Web API route instead of leaving the section on
+     its loading note. */
+  useEffect(() => {
+    if (sp.status === 'error' && (disc.status === 'error' || disc.status === 'idle') && remoteState === 'idle' && profile?.id) loadRemote();
+  }, [sp.status, disc.status, remoteState, profile, loadRemote]);
+
+  const catalogue = useMemo(() => (spData
+    ? [...(spData.albums || []), ...(spData.singles || []), ...(spData.compilations || [])]
+      .map((r) => ({ ...r, albumGroup: r.group === 'single' ? 'single' : 'album' }))
+    : remote), [spData, remote]);
+
   const missing = useMemo(() => {
+    const remote = catalogue;
     if (!Array.isArray(remote) || !remote.length) return [];
     const owned = new Set();
     for (const t of artist?.tracks || []) {
@@ -666,7 +1146,101 @@ export default function ArtistPage({
     const rank = (r) => (r.albumGroup === 'single' || r.totalTracks === 1 ? 1 : 0);
     out.sort((a, b) => rank(a) - rank(b) || String(b.releaseDate).localeCompare(String(a.releaseDate)));
     return out;
-  }, [remote, artist]);
+  }, [catalogue, artist]);
+
+  /* Spotify's Popular list, each row matched to a library track if you have
+     it — a match plays, a miss goes to search. */
+  const popular = useMemo(() => {
+    const byTitle = new Map();
+    for (const t of artist?.tracks || []) {
+      const k = normSong(t.title);
+      if (k && !byTitle.has(k)) byTitle.set(k, t);
+    }
+    const src = spData?.topTracks || (sp.status === 'error' ? fbTop : null) || [];
+    return src.map((t) => ({
+      t,
+      lib: ownedTrackFor?.(t.title, t.artists || name) || byTitle.get(normSong(t.title)) || null,
+    }));
+  }, [spData, fbTop, sp.status, artist, ownedTrackFor, name]);
+  const hasPlays = popular.some((p) => p.t.playcount);
+
+  const popularOwned = useMemo(() => popular.filter((p) => p.lib).map((p) => p.lib), [popular]);
+
+  /* Play: the popular songs you own, in popular order, then everything else
+     of theirs you have. */
+  const playable = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const t of [...popularOwned, ...(artist?.tracks || [])]) {
+      if (!t || seen.has(t.id)) continue;
+      seen.add(t.id);
+      out.push(t);
+    }
+    return out;
+  }, [popularOwned, artist]);
+  const playQueue = (shuffle) => {
+    if (!playable.length) return;
+    const list = shuffle ? [...playable].sort(() => Math.random() - 0.5) : playable;
+    onPlayTrack?.(list[0], list);
+  };
+  const getTrack = onGetTrack || null;
+  const missingPopular = useMemo(
+    () => popular.filter((p) => !p.lib && dlState?.[`s:${p.t.spotifyId}`] !== 'busy' && dlState?.[`s:${p.t.spotifyId}`] !== 'done').map((p) => p.t),
+    [popular, dlState],
+  );
+
+  /* ---- Discography ---------------------------------------------------- */
+  /* Account discography → the overview's releases → the Client ID route
+     (the old "not in your library" source). Whichever answered. */
+  const discSource = useMemo(() => {
+    if (Array.isArray(disc.list) && disc.list.length) return disc.list;
+    if (spData) {
+      return [
+        ...(spData.albums || []), ...(spData.singles || []),
+        ...(spData.compilations || []), ...(spData.appearsOn || []),
+      ];
+    }
+    if (Array.isArray(remote) && remote.length) {
+      return remote.map((r) => ({ ...r, group: r.albumGroup || r.group || 'album', year: r.releaseDate ? Number(String(r.releaseDate).slice(0, 4)) : null }));
+    }
+    return [];
+  }, [disc.list, spData, remote]);
+  const discGroups = useMemo(() => {
+    const g = { album: [], single: [], compilation: [], appears_on: [] };
+    for (const r of discSource) {
+      const k = r.group === 'appears_on' ? 'appears_on'
+        : (r.group === 'compilation' || r.type === 'compilation') ? 'compilation'
+          : r.group === 'single' ? 'single' : 'album';
+      g[k].push(r);
+    }
+    return g;
+  }, [discSource]);
+  const discTabs = [
+    ['album', 'Albums', discGroups.album.length],
+    ['single', 'Singles & EPs', discGroups.single.length],
+    ['compilation', 'Compilations', discGroups.compilation.length],
+    ['appears_on', 'Appears on', discGroups.appears_on.length],
+  ].filter(([, , n]) => n > 0);
+  /* Land on the first non-empty group — an artist with only singles
+     shouldn't open on an empty Albums tab. */
+  useEffect(() => {
+    if (discTabs.length && !discTabs.some(([id]) => id === discTab)) setDiscTab(discTabs[0][0]);
+  }, [discTabs.map((x) => x[0]).join(','), discTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  const discList = discGroups[discTab] || [];
+  const discShown = discAll ? discList : discList.slice(0, DISC_PAGE);
+
+  /* A Spotify release you already have, matched by name against this
+     artist's library records. */
+  const ownedReleaseIndex = useMemo(() => {
+    const m = new Map();
+    for (const g of [...(artist?.albums || []), ...(artist?.singles || []), ...(artist?.appearsOn || [])]) {
+      const k = normRelease(g.name);
+      if (k && !m.has(k)) m.set(k, g);
+    }
+    return m;
+  }, [artist]);
+  const ownedRelease = (r) => ownedReleaseIndex.get(normRelease(r.name)) || null;
+
 
   /* ---- Header condenses once the hero scrolls past --------------------- */
   const onScroll = useCallback((e) => {
@@ -728,8 +1302,9 @@ export default function ArtistPage({
       `}</style>
 
       {/* Back — floats top-right, exactly where the album page keeps it, so
-          the two pages have one close gesture in one place. */}
-      <button type="button" onClick={onBack} title="Back" aria-label="Back"
+          the two pages have one close gesture in one place. The search panel
+          has its own back (the crumb), so the embedded view doesn't. */}
+      {!embedded ? <button type="button" onClick={onBack} title="Back" aria-label="Back"
         style={{
           position: 'absolute', top: 14, right: 16, zIndex: 5,
           width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -737,7 +1312,7 @@ export default function ArtistPage({
           background: 'rgba(0,0,0,0.34)', color: 'rgba(var(--st-text-rgb), 0.85)',
         }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
-      </button>
+      </button> : null}
 
       <div ref={scrollRef} onScroll={onScroll} className="sth-artist sth-artistscroll"
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
@@ -792,7 +1367,7 @@ export default function ArtistPage({
           {/* Edit affordance — appears on hover, like the playlist cover. */}
           <div className="sth-artist-hero-tools" style={{
             position: 'absolute', top: 14, left: 30, zIndex: 3,
-            display: 'flex', alignItems: 'center', gap: 8,
+            display: embedded ? 'none' : 'flex', alignItems: 'center', gap: 8,
           }}>
             {!editing ? (
               <button type="button" className="sth-artist-editbtn" onClick={() => setEditing(true)}>
@@ -836,16 +1411,31 @@ export default function ArtistPage({
           </div>
 
           <div style={{ position: 'absolute', left: 30, right: 30, bottom: 26, zIndex: 1, animation: 'sthArtistIn 0.42s cubic-bezier(0.22,0.9,0.3,1) both' }}>
-            <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '0.13em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.6)' }}>
-              Artist
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.13em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.6)' }}>
+              {spData?.verified ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
+                  <path fill={`rgb(${pageAccUI})`} d="M12 2l2.4 2.1 3.2-.3.9 3.1 2.8 1.6-1.1 3 1.1 3-2.8 1.6-.9 3.1-3.2-.3L12 22l-2.4-2.1-3.2.3-.9-3.1-2.8-1.6 1.1-3-1.1-3 2.8-1.6.9-3.1 3.2.3z" />
+                  <path d="M8 12.2l2.7 2.6L16.2 9.4" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : null}
+              {spData?.verified ? 'Verified artist' : 'Artist'}
             </div>
             <h1 style={{
               fontSize: 'clamp(38px, 5.2vw, 66px)', fontWeight: 900, letterSpacing: '-0.035em',
               lineHeight: 0.94, margin: '10px 0 0', color: 'var(--st-text)',
               textShadow: '0 4px 30px rgba(0,0,0,0.5)',
             }}>{name}</h1>
-            <div style={{ marginTop: 14, fontSize: 13.5, fontWeight: 650, color: 'rgba(var(--st-text-rgb), 0.78)' }}>
-              {statLine}
+            {spData?.monthlyListeners ? (
+              <div style={{ marginTop: 14, fontSize: 15, fontWeight: 750, color: 'var(--st-text)', textShadow: '0 2px 16px rgba(0,0,0,0.45)', fontVariantNumeric: 'tabular-nums' }}>
+                {fmtCount(spData.monthlyListeners)} monthly listeners
+              </div>
+            ) : null}
+            <div style={{ marginTop: spData?.monthlyListeners ? 5 : 14, fontSize: 13.5, fontWeight: 650, color: 'rgba(var(--st-text-rgb), 0.78)' }}>
+              {spConnected
+                ? (artist.tracks.length
+                  ? `${artist.tracks.length} song${artist.tracks.length === 1 ? '' : 's'} in your library`
+                  : 'Nothing in your library yet')
+                : statLine}
             </div>
           </div>
         </header>
@@ -856,10 +1446,7 @@ export default function ArtistPage({
           background: `linear-gradient(180deg, rgba(${wash},0.88) 0%, rgba(${wash},0.5) 16%, rgba(${wash},0.3) 44%, rgba(${wash},0.24) 100%), rgba(${deep},0.78)`,
         }}>
 
-          {/* Action bar. Sticks to the top of the scroller and takes on a
-              backdrop + the artist's name once the hero is gone — so the
-              controls never leave and you never lose track of whose page
-              you're on. */}
+          {/* Action bar. Sticks once the hero is gone and takes the name. */}
           <div style={{
             position: 'sticky', top: 0, zIndex: 4,
             display: 'flex', alignItems: 'center', gap: 14, padding: '16px 30px',
@@ -868,33 +1455,48 @@ export default function ArtistPage({
             boxShadow: stuck ? 'inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.07)' : 'none',
             transition: 'background 0.2s ease, box-shadow 0.2s ease',
           }}>
-            <button type="button" onClick={() => playAll(topTracks)} title="Play" aria-label="Play"
+            <button type="button" onClick={() => playQueue(false)} disabled={!playable.length}
+              title={playable.length ? 'Play' : 'None of their songs are in your library yet'}
+              aria-label="Play"
               style={{
-                width: 52, height: 52, borderRadius: '50%', border: 'none', cursor: 'pointer', flexShrink: 0,
+                width: 52, height: 52, borderRadius: '50%', border: 'none', flexShrink: 0,
+                cursor: playable.length ? 'pointer' : 'default',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: `rgb(${pageAcc})`, color: accentTextColor(pageAcc),
-                boxShadow: `0 6px 22px rgba(${pageAcc},0.5)`,
+                background: playable.length ? `rgb(${pageAcc})` : 'rgba(var(--st-fg-rgb), 0.12)',
+                color: playable.length ? accentTextColor(pageAcc) : 'rgba(var(--st-fg-rgb), 0.4)',
+                boxShadow: playable.length ? `0 6px 22px rgba(${pageAcc},0.5)` : 'none',
                 transition: 'transform 0.16s cubic-bezier(0.22,0.9,0.3,1)',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.06)'; }}
+              onMouseEnter={(e) => { if (playable.length) e.currentTarget.style.transform = 'scale(1.06)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
               <PlayIcon size={19} />
             </button>
 
-            <ActionBtn title="Shuffle" onClick={() => playAll(artist.tracks, true)}>
-              <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
-            </ActionBtn>
+            {playable.length > 1 ? (
+              <ActionBtn title="Shuffle" onClick={() => playQueue(true)}>
+                <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
+              </ActionBtn>
+            ) : null}
 
-            {/* Following here is the SAME follow the releases feed uses — one
-                concept with two doors, not a second list to keep in sync. */}
             {onToggleFollow ? (
               <PillBtn on={following} onClick={() => onToggleFollow(name)}>
                 {following ? 'Following' : 'Follow'}
               </PillBtn>
             ) : null}
 
+            {/* One click for every popular song you don't have yet. */}
+            {getTrack && missingPopular.length ? (
+              <PillBtn onClick={() => missingPopular.forEach((t) => getTrack(t))}>
+                {`Get ${missingPopular.length} popular song${missingPopular.length === 1 ? '' : 's'}`}
+              </PillBtn>
+            ) : null}
+
             <div style={{ flex: 1 }} />
+            {embedded && onOpenFullPage ? (
+              <PillBtn onClick={onOpenFullPage}>Open full page</PillBtn>
+            ) : null}
             <span style={{
+              display: embedded ? 'none' : undefined,
               fontSize: 17, fontWeight: 850, letterSpacing: '-0.02em', color: 'var(--st-text)',
               opacity: stuck ? 1 : 0, transform: stuck ? 'none' : 'translateY(4px)',
               transition: 'opacity 0.2s ease, transform 0.2s ease', pointerEvents: 'none',
@@ -904,168 +1506,188 @@ export default function ArtistPage({
 
           <div style={{ padding: '0 30px' }}>
 
-            {/* ---- Top tracks ------------------------------------------ */}
-            {topTracks.length ? (
+            {/* ---- Not connected ------------------------------------------ */}
+            {!spConnected ? (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 16, marginTop: 22, padding: '16px 18px',
+                borderRadius: 12, background: 'rgba(var(--st-fg-rgb), 0.05)', border: '1px solid rgba(var(--st-fg-rgb), 0.08)',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 750, color: 'var(--st-text)' }}>
+                    Connect Spotify to see {name}&apos;s page
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 12.5, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>
+                    Popular songs with play counts, the full discography, monthly listeners and similar artists.
+                  </div>
+                </div>
+                {onConnectSpotify ? <PillBtn onClick={onConnectSpotify}>Connect Spotify</PillBtn> : null}
+              </div>
+            ) : null}
+
+            {spConnected && sp.status === 'loading' ? (
+              <>
+                <SectionHead title="Popular" />
+                <div aria-hidden>
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: POP_COLS, gap: 14, alignItems: 'center', padding: '6px 12px' }}>
+                      <span />
+                      <span style={{ width: 44, height: 44, borderRadius: 6, background: 'rgba(var(--st-fg-rgb), 0.07)' }} />
+                      <span style={{ display: 'grid', gap: 6 }}>
+                        <span style={{ height: 11, width: `${58 - i * 7}%`, borderRadius: 4, background: 'rgba(var(--st-fg-rgb), 0.08)' }} />
+                        <span style={{ height: 9, width: '30%', borderRadius: 4, background: 'rgba(var(--st-fg-rgb), 0.05)' }} />
+                      </span>
+                      <span /><span /><span />
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {spConnected && sp.status === 'error' ? (
+              <IssueBanner
+                title={sp.step === 'ratelimit' ? 'Spotify is rate-limiting this account' : sp.step === 'signin' ? 'Your Spotify session ended' : 'Spotify didn\u2019t answer'}
+                detail={[
+                  sp.error,
+                  (popular.length || discSource.length)
+                    ? 'Showing what could still be loaded; play counts, listeners and the About section come back when Spotify does.'
+                    : '',
+                  sp.step === 'ratelimit' && sp.retryAfter && sp.retryAfter <= 180 ? 'This page retries on its own when the limit lifts.' : '',
+                ].filter(Boolean).join(' ')}
+                action={sp.step === 'signin' && onConnectSpotify
+                  ? <PillBtn onClick={onConnectSpotify}>Sign in again</PillBtn>
+                  : <PillBtn onClick={() => setRetry((n) => n + 1)}>Try again</PillBtn>}
+              />
+            ) : null}
+
+            {spConnected && sp.status === 'nomatch' ? (
+              <div style={{ marginTop: 26 }}><Note>Couldn&apos;t find {name} on Spotify.</Note></div>
+            ) : null}
+
+            {/* ---- Popular -------------------------------------------------- */}
+            {popular.length ? (
               <>
                 <SectionHead
-                  title="Your top tracks"
-                  sub={totalPlays ? 'by plays, all time' : 'nothing played yet'}
+                  title="Popular"
+                  sub={[
+                    popularOwned.length ? `${popularOwned.length} of ${popular.length} in your library` : '',
+                    !hasPlays ? 'play counts unavailable right now' : '',
+                  ].filter(Boolean).join(' \u00b7 ') || undefined}
                 />
+                <PopularHeader plays={hasPlays} />
                 <div>
-                  {(showAllTracks ? topTracks : topTracks.slice(0, 5)).map((t, i) => (
-                    <TrackRow
-                      key={t.id} n={i + 1} track={t} art={t.coverArt}
-                      plays={playCounts.get(t.id) || 0}
-                      playing={currentId === t.id} isPlaying={isPlaying} accent={pageAccUI}
-                      onPlay={() => onPlayTrack?.(t, topTracks)} onTogglePlay={onTogglePlay}
+                  {(showAllPopular ? popular : popular.slice(0, 5)).map(({ t, lib }, i) => (
+                    <PopularRow
+                      key={t.spotifyId || i} n={i + 1} t={t} owned={!!lib}
+                      playing={!!lib && currentId === lib.id} isPlaying={isPlaying}
+                      accent={pageAccUI}
+                      dl={dlState?.[`s:${t.spotifyId}`]} progress={dlProgress?.[`s:${t.spotifyId}`]}
+                      onPlay={() => {
+                        if (currentId === lib.id && onTogglePlay) onTogglePlay();
+                        else onPlayTrack?.(lib, popularOwned);
+                      }}
+                      onGet={getTrack ? () => getTrack(t) : () => onJumpToFind?.(`${name} ${t.title}`, 'spotify')}
                     />
                   ))}
                 </div>
-                {topTracks.length > 5 ? (
+                {popular.length > 5 ? (
                   <div style={{ marginTop: 14 }}>
-                    <PillBtn onClick={() => setShowAllTracks((v) => !v)}>
-                      {showAllTracks ? 'Show less' : `Show all ${topTracks.length} songs`}
+                    <PillBtn onClick={() => setShowAllPopular((v) => !v)}>
+                      {showAllPopular ? 'Show less' : `Show ${popular.length - 5} more`}
                     </PillBtn>
                   </div>
                 ) : null}
               </>
             ) : null}
 
-            {/* ---- Albums ---------------------------------------------- */}
-            {albums.length ? (
+            {/* ---- Discography ---------------------------------------------- */}
+            {spConnected && discTabs.length ? (
               <>
-                <SectionHead title="Albums" sub={`${albums.length} in your library`} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '40px 0 16px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.015em', color: 'var(--st-text)' }}>Discography</span>
+                  <div role="tablist" aria-label="Release type" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {discTabs.map(([id, label, n]) => (
+                      <PillBtn key={id} on={discTab === id} onClick={() => setDiscTab(id)}>
+                        {label}<span style={{ marginLeft: 6, opacity: 0.55, fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+                      </PillBtn>
+                    ))}
+                  </div>
+                  {disc.status === 'loading' ? (
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.42)' }}>loading the full catalogue…</span>
+                  ) : null}
+                </div>
                 <CardGrid>
-                  {albums.map((g) => (
+                  {discShown.map((r) => {
+                    const own = ownedRelease(r);
+                    return (
+                      <DiscCard key={r.albumId || r.name} r={r} owned={!!own} accent={pageAcc} opensTracklist={!!onOpenRelease}
+                        onClick={() => {
+                          /* In the search panel every release opens its tracklist
+                             there — owned or not — so you can see what you have and
+                             Get the rest. Playing an owned single instead left no way
+                             to reach the other tracks. */
+                          if (onOpenRelease) { onOpenRelease(r); return; }
+                          if (own) {
+                            /* A one-track record in the library is a loose single,
+                               which has no album page — play it instead. */
+                            if ((own.tracks?.length || 0) === 1) onPlayTrack?.(own.tracks[0], own.tracks);
+                            else onOpenAlbum?.(own.key);
+                          } else {
+                            onJumpToFind?.(`${r.group === 'appears_on' ? '' : `${name} `}${r.name}`.trim(), 'spotify');
+                          }
+                        }} />
+                    );
+                  })}
+                </CardGrid>
+                {discList.length > DISC_PAGE && !discAll ? (
+                  <div style={{ marginTop: 18 }}>
+                    <PillBtn onClick={() => setDiscAll(true)}>{`Show all ${discList.length}`}</PillBtn>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            {spConnected && !discTabs.length && sp.status !== 'loading' && disc.status === 'error' && remoteState !== 'loading' ? (
+              <>
+                <SectionHead title="Discography" />
+                <Note>Couldn&apos;t load their releases{disc.error ? ` (${disc.error})` : ''}.</Note>
+              </>
+            ) : null}
+
+            {/* ---- About ----------------------------------------------------- */}
+            {spData && (spData.biography || spData.monthlyListeners || spData.topCities?.length) ? (
+              <>
+                <SectionHead title="About" />
+                <AboutCard data={spData} image={spData.gallery?.[0] || spData.avatar} accent={pageAccUI} />
+              </>
+            ) : null}
+
+            {/* ---- Fans also like -------------------------------------------- */}
+            {spData?.related?.length ? (
+              <>
+                <SectionHead title="Fans also like" />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(128px, 1fr))', gap: 22 }}>
+                  {spData.related.slice(0, 12).map((r) => (
+                    <RelatedArtist key={r.id} a={r} inLibrary={!!hasArtist?.(r.name)}
+                      onClick={() => (onOpenRelated ? onOpenRelated(r) : onJumpToFind?.(r.name, 'spotify'))} />
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {/* ---- Without Spotify: what you have, so the page isn't empty ---- */}
+            {!spConnected && (albums.length || singles.length) ? (
+              <>
+                <SectionHead title="In your library" sub={statLine} />
+                <CardGrid>
+                  {[...albums, ...singles].map((g) => (
                     <ReleaseCard
                       key={g.key} art={g.art} name={g.name} accent={pageAcc}
                       meta={`${g.year ? `${g.year} · ` : ''}${g.tracks.length} song${g.tracks.length === 1 ? '' : 's'}`}
-                      onClick={() => onOpenAlbum?.(g.key)}
+                      onClick={() => (g.tracks.length > 1 ? onOpenAlbum?.(g.key) : onPlayTrack?.(g.tracks[0], g.tracks))}
                     />
                   ))}
                 </CardGrid>
               </>
-            ) : null}
-
-            {/* ---- Singles & EPs ----------------------------------------
-                The Albums grid hides one-track groups on purpose — they're
-                usually a loose download whose tag carries an album name. On
-                the artist's own page they're part of the catalogue, so this
-                is the one view where they surface. */}
-            {singles.length ? (
-              <>
-                <SectionHead title="Singles &amp; EPs" sub="loose tracks and short releases" />
-                <CardGrid>
-                  {singles.map((g) => (
-                    <ReleaseCard
-                      key={g.key} art={g.art} name={g.name} accent={pageAcc}
-                      meta={g.tracks.length > 1
-                        ? `${g.year ? `${g.year} · ` : ''}${g.tracks.length} songs`
-                        : `${g.year ? `${g.year} · ` : ''}${fmtDur(g.tracks[0]?.duration) || 'Single'}`}
-                      onClick={() => onPlayTrack?.(g.tracks[0], g.tracks)}
-                    />
-                  ))}
-                </CardGrid>
-              </>
-            ) : null}
-
-            {/* ---- Appears on -------------------------------------------
-                Records where this artist is credited but isn't the primary.
-                The grouping splitter throws these credits away; this is where
-                the tail of the string gets a use. */}
-            {appearsOn.length ? (
-              <>
-                <SectionHead title="Appears on" sub="features and collaborations" />
-                <CardGrid>
-                  {appearsOn.map((g) => (
-                    <ReleaseCard
-                      key={g.key} art={g.art} name={g.name} accent={pageAcc}
-                      meta={`${g.artist} · ${g.count} track${g.count === 1 ? '' : 's'}`}
-                      onClick={() => onOpenAlbum?.(g.key)}
-                    />
-                  ))}
-                </CardGrid>
-              </>
-            ) : null}
-
-            {/* ---- Not in your library ----------------------------------
-                Always states its case. Three different situations used to
-                render as one blank space — no Spotify link, still checking,
-                and genuinely nothing missing are very different answers, and
-                silence made a working feature look broken. */}
-            {(() => {
-              const a = api();
-              const canCheck = !!a?.spotifyArtistAlbums;
-              const note = (text) => (
-                <div style={{ padding: '2px 0 4px', fontSize: 12.5, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.38)' }}>
-                  {text}
-                </div>
-              );
-              return (
-                <div ref={missingRef}>
-                  <SectionHead
-                    title="Not in your library"
-                    sub={missing.length
-                      ? `${missing.length} release${missing.length === 1 ? '' : 's'} you don't have`
-                      : undefined}
-                  />
-                  {missing.length ? (
-                    <CardGrid>
-                      {missing.slice(0, 24).map((r) => (
-                        <ReleaseCard
-                          key={r.albumId || r.name} missing art={r.albumArtUrl || null}
-                          name={r.name || 'Untitled'} accent={pageAcc}
-                          meta={[
-                            (r.releaseDate || '').slice(0, 4),
-                            r.totalTracks >= 2 ? `${r.totalTracks} songs` : 'Single',
-                          ].filter(Boolean).join(' · ')}
-                          onClick={() => onJumpToFind?.(`${name} ${r.name || ''}`.trim(), 'spotify')}
-                        />
-                      ))}
-                    </CardGrid>
-                  ) : !canCheck
-                    ? note('Connect Spotify in Settings to see what you\u2019re missing.')
-                    : remoteState === 'loading'
-                      ? note('Checking the rest of their catalogue\u2026')
-                      : profileState === 'loading'
-                        ? note('Looking this artist up\u2026')
-                        : !profile?.id
-                          ? note(`Couldn\u2019t match ${name} on Spotify, so there\u2019s nothing to compare against.`)
-                          : remoteState === 'done' && Array.isArray(remote) && !remote.length
-                            ? note('Spotify lists no releases for this artist.')
-                            : remoteState === 'idle'
-                              ? note('Scroll down to check the rest of their catalogue.')
-                              : note('You have every release Spotify lists for them.')}
-                </div>
-              );
-            })()}
-
-            {/* ---- Empty state ------------------------------------------ */}
-            {!topTracks.length && !albums.length && !singles.length ? (
-              <div style={{ padding: '60px 0', textAlign: 'center' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: 'rgba(var(--st-text-rgb), 0.7)' }}>
-                  Nothing from {name} yet
-                </div>
-                <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.4)' }}>
-                  Search for them in Find to start a collection.
-                </div>
-              </div>
-            ) : null}
-
-            {/* Genres sit at the FOOT of the page, not in the header. They
-                describe the artist rather than help you act on them, and up
-                top they competed with the name for the same glance. */}
-            {genres.length ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 40 }}>
-                {genres.map((g) => (
-                  <span key={g} style={{
-                    fontSize: 11.5, fontWeight: 650, padding: '5px 12px', borderRadius: 999,
-                    background: 'rgba(var(--st-fg-rgb), 0.09)',
-                    border: '1px solid rgba(var(--st-fg-rgb), 0.08)',
-                    color: 'rgba(var(--st-text-rgb), 0.7)',
-                  }}>{g}</span>
-                ))}
-              </div>
             ) : null}
           </div>
         </div>

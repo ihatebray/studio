@@ -1056,3 +1056,63 @@ export async function searchCandidatesForPicker({ artists, title, customQuery, d
     thumbnailUrl: `https://i.ytimg.com/vi/${c.id}/hqdefault.jpg`,
   }));
 }
+
+/* ---------------------------------------------------------------------------
+ * Preview: the SAME YouTube match a Get would download, as a stream URL the
+ * renderer can play directly — so what you audition is what you'd get.
+ * Nothing is written to disk. The resolved URL is cached for 30 minutes
+ * (YouTube's signed URLs live for hours; this just keeps a re-preview
+ * instant without trusting one for too long).
+ * ------------------------------------------------------------------------- */
+const previewCache = new Map();
+
+function streamUrlFor(videoId, ytDlp) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ytDlp, [
+      '-f', 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+      '-g', '--no-playlist', '--no-warnings',
+      '--extractor-args', 'youtube:player_client=android,ios,tv,web',
+      `https://www.youtube.com/watch?v=${videoId}`,
+    ], { windowsHide: true });
+    let out = '';
+    let err = '';
+    proc.stdout?.on('data', (d) => { out += d.toString(); });
+    proc.stderr?.on('data', (d) => { err += d.toString(); });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      const url = out.split(/\r?\n/).map((l) => l.trim()).find((l) => /^https?:\/\//.test(l));
+      if (url) resolve(url);
+      else reject(new Error(code === 0 ? 'no stream URL' : `yt-dlp exited ${code}: ${err.slice(-400)}`));
+    });
+  });
+}
+
+export async function resolvePreviewStream({ artists, title, durationMs = 0, explicit = null }) {
+  const { ytDlp } = getToolPaths();
+  if (!fs.existsSync(ytDlp)) throw new Error('yt-dlp not found. Run: npm run setup:binaries');
+  const key = `${artists}|${title}|${durationMs}`.toLowerCase();
+  const hit = previewCache.get(key);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.data;
+
+  const baseQuery = `${artists} ${title}`.replace(/"/g, "'").trim();
+  const params = {
+    artists, title, targetDurationSec: Number(durationMs) > 0 ? Number(durationMs) / 1000 : 0,
+    query: baseQuery, expectedExplicit: explicit, allowMusicVideo: null,
+  };
+  let candidates = await searchYoutubeCandidates(baseQuery, 8, ytDlp).catch(() => []);
+  let winner = candidates.length ? pickBestCandidate(candidates, params) : null;
+  if (!winner) {
+    const more = await searchYoutubeCandidates(`${baseQuery} Official Audio`, 8, ytDlp).catch(() => []);
+    candidates = [...candidates, ...more];
+    winner = candidates.length ? pickBestCandidate(candidates, params) : null;
+  }
+  /* A preview is an audition, not an import: if nothing clears the tiers,
+     the top search result is still worth hearing. */
+  const pick = winner?.candidate || candidates[0];
+  if (!pick) throw new Error('No match found on YouTube');
+  const url = await streamUrlFor(pick.id, ytDlp);
+  const data = { url, videoId: pick.id, sourceTitle: pick.title, channel: pick.channel || '', exact: !!winner };
+  previewCache.set(key, { at: Date.now(), data });
+  return data;
+}
+

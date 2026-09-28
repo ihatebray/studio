@@ -397,7 +397,7 @@ async function setActivity(payload) {
   const activity = {
     type: 2,                  // 2 = Listening (works for unverified apps as of 2024)
     status_display_type: 1,   // 1 = use `details` as the user's status text
-    name: 'Music',
+    name: '  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
     details: detailsStr,
     state: stateStr,
     instance: false,

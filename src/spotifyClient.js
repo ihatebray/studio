@@ -558,6 +558,8 @@ function mapTrackItems(items) {
     title: t.name,
     artists: (t.artists || []).map((a) => a.name).join(', '),
     album: t.album?.name || '',
+    // The search panel opens a song's album from its row; it needs the ID.
+    albumId: t.album?.id || null,
     albumArtUrl: t.album?.images?.[0]?.url || t.album?.images?.[1]?.url || '',
     durationMs: t.duration_ms || 0,
     spotifyUrl: t.external_urls?.spotify || '',

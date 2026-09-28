@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { PreviewButton, stop as stopPreview } from './previewPlayer.jsx';
 import {
   parseQuery, providerQuery, passesScopes, scoreEntity,
   slskQuality, groupSlskFiles, matchFilesToTracks, trackKey,
@@ -101,7 +102,83 @@ const Ico = {
   check: <path d="M20 6L9 17l-5-5" />,
   spark: <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z" />,
   play: <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />,
+  x: <path d="M6 6l12 12M18 6L6 18" />,
+  clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
 };
+
+/* ---- Scope chips ---------------------------------------------------------
+   The query is two things: committed scope tokens (artist:, album:, year:,
+   is:) shown as chips, and the free text in the field. `raw` — what every
+   other part of this file reads — is just the two joined, so parseQuery and
+   everything downstream see exactly the string they always did.
+
+   Before this, the chips were a READ-ONLY echo of tokens that were still
+   sitting in the input as text, so every scope showed twice, and removing
+   one ran the value through `new RegExp` unescaped: "artist:A$AP", anything
+   with brackets, and every is:new / is:mine (whose chip shows the normalised
+   value, not what was typed) either threw or silently matched nothing. */
+const RECENT_KEY = 'studio:recentSearches';
+const RECENT_MAX = 8;
+const TOKEN_RE = /(^|\s)(artist|album|year|is):("[^"]*"|[^\s"]\S*)(?=\s)/gi;
+const TOKEN_ALL_RE = /(^|\s)(artist|album|year|is):("[^"]*"|[^\s"]\S*)/gi;
+
+const quoteScope = (v) => (/\s/.test(v) ? `"${String(v).replace(/"/g, '')}"` : v);
+
+/** A token parseQuery actually honours — "year:abc" or "is:foo" stay text. */
+function validToken(tok) {
+  return parseQuery(tok).scopes.length > 0;
+}
+/** The key a chip replaces: artist/album/year hold one value, is: stacks. */
+function tokenSlot(tok) {
+  const sc = parseQuery(tok).scopes[0];
+  if (!sc) return tok;
+  return sc.key === 'is' ? `is:${sc.value}` : sc.key;
+}
+/**
+ * Pull scope tokens out of a string. `all` treats every token as finished
+ * (for strings set in code — a seed, a recent search); otherwise a token only
+ * commits once it's followed by whitespace, so "artist:ke" stays editable
+ * text until the space that says it's done.
+ */
+function splitScopes(str, all = false) {
+  const chips = [];
+  const re = all ? TOKEN_ALL_RE : TOKEN_RE;
+  re.lastIndex = 0;
+  const text = String(str || '').replace(re, (whole, lead, key, value) => {
+    const tok = `${key.toLowerCase()}:${value}`;
+    if (!validToken(tok)) return whole;
+    chips.push(tok);
+    return lead;
+  });
+  return { chips, text: all ? text.replace(/\s+/g, ' ').trim() : text.replace(/^\s+/, '').replace(/\s{2,}/g, ' ') };
+}
+function mergeChips(prev, add) {
+  const out = [...prev];
+  for (const tok of add) {
+    const slot = tokenSlot(tok);
+    const at = out.findIndex((t) => tokenSlot(t) === slot);
+    if (at >= 0) out[at] = tok; else out.push(tok);
+  }
+  return out;
+}
+
+function loadRecents() {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).slice(0, RECENT_MAX) : [];
+  } catch { return []; }
+}
+
+/* Starting points for an empty box. Prefix scopes drop the key into the
+   field and wait for a value; the is: ones are complete on their own. */
+const FILTER_HINTS = [
+  ['artist:', 'only this artist'],
+  ['album:', 'only this record'],
+  ['year:', 'drops re-uploads'],
+  ['is:missing', 'hide what you own'],
+  ['is:lossless', 'FLAC and friends'],
+  ['is:owned', 'include what you own'],
+];
 
 function Svg({ d, size = 15, w = 2, children, style }) {
   return (
@@ -173,13 +250,59 @@ export default function InstantSearch({
   /* Navigation out of the palette. */
   onPlayTrack,            // (libraryTrack)
   onOpenArtist,           // (artist)  → push the full profile page
+  /* (artistRef, nav) → the artist view, rendered INSIDE the panel as the
+     artist frame. StudioHome supplies it (it owns the library and download
+     plumbing the view needs); `nav` lets the view move within the panel —
+     another artist, a release, a new search — or leave for the full page. */
+  renderArtist,
+  onOpenLibraryAlbum,     // (libTrack) → your album page, for owned songs Spotify can't place
   onOpenAlbum,            // (album)   → push the full album page (optional)
   seed = '',              // preload the query when something else opens this
   onFilterLibrary,        // (queryString) → narrow the library table and go there
 }) {
   /* ---------------------------------------------------------------- state */
-  const [raw, setRaw] = useState('');
+  // A preview started from the panel ends with the panel.
+  useEffect(() => { if (!open) stopPreview(); }, [open]);
+  const [chips, setChips] = useState([]);
+  const [text, setText] = useState('');
+  const raw = useMemo(() => (chips.length ? `${chips.join(' ')} ${text}` : text), [chips, text]);
+  /* Everything that SETS the query from code (seed, recents, "drop the
+     filters", Shift+Tab) goes through here and gets its scopes split out. */
+  const setRaw = useCallback((full) => {
+    const r = splitScopes(full, true);
+    setChips(r.chips);
+    setText(r.text);
+  }, []);
+  const onTextChange = useCallback((v) => {
+    const r = splitScopes(v, false);
+    if (r.chips.length) {
+      setChips((c) => mergeChips(c, r.chips));
+      setText(r.text);
+    } else {
+      setText(v);
+    }
+  }, []);
+  const removeChip = useCallback((i) => {
+    setChips((c) => c.filter((_, k) => k !== i));
+  }, []);
   const parsed = useMemo(() => parseQuery(raw), [raw]);
+
+  const [recents, setRecents] = useState(loadRecents);
+  const saveRecents = useCallback((next) => {
+    setRecents(next);
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  }, []);
+  /* Recorded when a search is USED (a row acted on), not on every debounce —
+     otherwise "ke", "kes", "kesh" each land in the list. */
+  const rememberQuery = useCallback((q) => {
+    const v = String(q || '').replace(/\s+/g, ' ').trim();
+    if (v.length < 2) return;
+    setRecents((prev) => {
+      const next = [v, ...prev.filter((x) => x.toLowerCase() !== v.toLowerCase())].slice(0, RECENT_MAX);
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   const hasQuery = !!(parsed.text || parsed.artist || parsed.album);
 
   /* Which page of the library band is showing. Reset with the cursor. */
@@ -225,7 +348,11 @@ export default function InstantSearch({
   }, [library, parsed, hasQuery]);
 
   /* "Search anyway" is scoped to the query it was granted for. */
-  const certain = forceFor === raw ? null : localCertainty;
+  /* The certainty gate (skip the network when the query names a song you
+     own, and show only that song) is off: search always searches, and owned
+     songs sit in the Songs list marked as yours rather than above it. */
+  const certain = null;
+  void localCertainty; void forceFor;
   const certainId = certain?.track?.id || '';
 
   /* Each wave lands in its own slot so a slow one can't blank a fast one. */
@@ -289,7 +416,15 @@ export default function InstantSearch({
        artist page — so it replaces whatever was in the box. An empty seed
        leaves the last query alone, which is what re-opening expects. */
     if (seed) { setRaw(seed); setForceFor(''); }
-    const t = setTimeout(() => inputRef.current?.focus(), 20);
+    /* Re-opening keeps the last query, selected — typing replaces it, an
+       arrow key keeps it. Before, the caret landed at the end and a new
+       search meant clearing the old one by hand first. */
+    const t = setTimeout(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      if (!seed) el.select();
+    }, 20);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed]);
@@ -359,9 +494,16 @@ export default function InstantSearch({
           setSpotify((s) => ({ ...s, [field]: Array.isArray(rows) ? rows : [] }));
           settle();
         };
-        const fail = () => {
+        /* Every provider in the chain failed (main.js already tried the Client
+           ID, the signed-in account and iTunes). Say why instead of showing
+           "Nothing matched", which reads as "no such music". */
+        const fail = (e) => {
           if (reqRef.current !== req) return;
           setPhase((p) => ({ ...p, spotify: 'error' }));
+          const msg = String(e?.message || e || '');
+          setErrorNote(/429|rate.?limit/i.test(msg)
+            ? 'Spotify and the fallback providers are rate-limiting searches right now. Wait a minute and try again.'
+            : `Search failed${msg ? `: ${msg.replace(/^Error invoking remote method '[^']+':\s*/, '')}` : ''}.`);
           settle();
         };
 
@@ -853,6 +995,7 @@ export default function InstantSearch({
       return list;
     }
 
+    if (frame?.kind === 'artist' && renderArtist) return []; // the embedded view has no rows
     if (frame?.kind === 'artist') {
       const d = artistData[frame.artist.id] || {};
       /* Merge search results (spotify.albums) with discography for consistency
@@ -979,6 +1122,13 @@ export default function InstantSearch({
     /* Results frame. */
     const list = [];
 
+    /* Empty box: recent searches are the list. Keyboard-reachable like any
+       other row, so ↓ ↵ re-runs the last thing you looked for. */
+    if (!hasQuery) {
+      recents.forEach((q) => list.push({ key: `rc:${q}`, group: 'Recent', kind: 'recent', data: { q } }));
+      return list;
+    }
+
     /* Rung 1. Nothing was searched, so there is nothing else to show — just
        the song, and an explicit way to search anyway. The escape hatch is
        not optional: skipping the network SILENTLY, on the one occasion
@@ -997,8 +1147,9 @@ export default function InstantSearch({
        outranks a catalogue entry for the same thing by definition. The whole
        band is claimed, not just the visible page, or page two's rows turn up
        a second time under Songs. */
-    const banded = new Set(band.rows.map((x) => x.id));
-    band.shown.forEach((s) => list.push({ key: `sg:${s.id}`, group: 'In your library', kind: 'song', data: s }));
+    /* No "In your library" band at the top — results are the catalogue, and
+       the songs you own appear in Songs with a Play verb instead. */
+    const banded = new Set();
 
     artists.forEach((a) => list.push({ key: `ar:${a.id}`, group: 'Artists', kind: 'artist', data: a }));
     albums.forEach((a) => list.push({ key: `al:${a.albumId}`, group: 'Albums & EPs', kind: 'album', data: a }));
@@ -1042,7 +1193,7 @@ export default function InstantSearch({
     return list;
   }, [frame, albumData, albumProbes, artistData, artistTracks, topTracks, discog, spotify.albums,
     expandedTrack, expandedSong, songProbes,
-    artists, albums, songs, folders, hasQuery, parsed, certain, band, alreadyOwned, onFilterLibrary]);
+    artists, albums, songs, folders, hasQuery, parsed, certain, band, alreadyOwned, onFilterLibrary, recents, renderArtist]);
 
   /* Cursor never points past the end, and a re-search puts it back on top. */
   useEffect(() => { setCursor(0); setBandPage(0); }, [raw, stack.length]);
@@ -1099,12 +1250,19 @@ export default function InstantSearch({
     setAlbumData((m) => ({ ...m, [id]: { ...(m[id] || {}), busy: true } }));
     let tracks = [];
     let empty = false;
+    let error = '';
     try {
       const res = await api()?.spotifyGetAlbumTracks?.(id);
       tracks = Array.isArray(res?.tracks) ? res.tracks : [];
       empty = !!res?.empty;
-    } catch { /* the frame renders its empty state */ }
-    setAlbumData((m) => ({ ...m, [id]: { tracks, empty, busy: false } }));
+    } catch (e) {
+      const msg = String(e?.message || e || '');
+      error = /429|rate.?limit/i.test(msg)
+        ? 'Spotify is rate-limiting requests right now, so this tracklist couldn\u2019t load. Try again in a minute.'
+        : 'This tracklist couldn\u2019t load.';
+    }
+    /* Failures aren't cached as "loaded", so opening the record again retries. */
+    setAlbumData((m) => ({ ...m, [id]: error ? { error, busy: false } : { tracks, empty, busy: false } }));
   }, [albumData]);
 
   /**
@@ -1296,7 +1454,7 @@ export default function InstantSearch({
          peer's file or goes through YouTube. */
       if (quality === 'best') probeAlbum(frame.album);
     }
-    if (frame?.kind === 'artist') loadArtist(frame.artist);
+    if (frame?.kind === 'artist' && !renderArtist) loadArtist(frame.artist);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame?.kind, frame?.album?.albumId, frame?.artist?.id, quality]);
 
@@ -1417,13 +1575,58 @@ export default function InstantSearch({
     }
   }, [albumData, alreadyOwned, getTrack]);
 
+  /* A song row's album, opened in the panel. Owned songs PLAY on click, so
+     without this there was no way from search to the rest of a record you
+     have one song from. Spotify's album ID when the row has one (the panel's
+     tracklist, with Get for the rest); otherwise your own album page;
+     otherwise a search for the record. */
+  const openSongAlbum = useCallback((s) => {
+    const sp = s?.spotify;
+    if (sp?.albumId) {
+      push({
+        kind: 'album',
+        album: {
+          albumId: sp.albumId, name: sp.album || '', artists: sp.artists || '',
+          albumArtUrl: sp.albumArtUrl || '', releaseDate: sp.releaseDate || '', totalTracks: null,
+        },
+      });
+      return;
+    }
+    if (s?.libTrack && onOpenLibraryAlbum) { onOpenLibraryAlbum(s.libTrack); onClose?.(); return; }
+    const album = s?.libTrack?.album || sp?.album || '';
+    const artist = String(s?.libTrack?.artist || sp?.artists || '').split(',')[0].trim();
+    if (album) { setStack([]); setRaw(`${artist} ${album}`.trim()); setForceFor(''); }
+  }, [push, onOpenLibraryAlbum, onClose, setRaw]);
+
+  const openSongArtist = useCallback((s) => {
+    const name = String(s?.libTrack?.artist || s?.spotify?.artists || s?.slsk?.artist || '').split(',')[0].trim();
+    if (!name) return;
+    const data = { id: s?.spotify?.primaryArtistId || null, name };
+    if (renderArtist) push({ kind: 'artist', artist: data });
+    else if (onOpenArtist) { onOpenArtist(data); onClose?.(); }
+  }, [push, renderArtist, onOpenArtist, onClose]);
+
   /** A CLICK — do the obvious thing for the row that was clicked. */
   const activate = useCallback((item, mod = false) => {
     if (!item) return;
     const { kind, data } = item;
 
+    if (kind === 'recent') {
+      setRaw(data.q);
+      setForceFor('');
+      inputRef.current?.focus();
+      return;
+    }
+    if (hasQuery) rememberQuery(raw);
+
     if (kind === 'artist') {
-      if (mod) { onOpenArtist?.(data); onClose?.(); return; }
+      /* Artists open their full page — the Spotify-built one — rather than
+         a cut-down frame inside the panel. The in-panel frame is only the
+         fallback when there's no page to open to. */
+      /* The artist view opens right here in the panel when StudioHome
+         provides it; otherwise the full page; otherwise the old frame. */
+      if (renderArtist) { push({ kind: 'artist', artist: data }); return; }
+      if (onOpenArtist) { onOpenArtist(data); onClose?.(); return; }
       push({ kind: 'artist', artist: data });
       return;
     }
@@ -1473,12 +1676,17 @@ export default function InstantSearch({
       }
     }
   }, [push, onOpenArtist, onOpenAlbum, onClose, onPlayTrack, onGetSlskFile, onGetSpotifyTrack,
-    onGetSlskAlbum, alreadyOwned, getTrack, frame, parsed, raw, onFilterLibrary]);
+    onGetSlskAlbum, alreadyOwned, getTrack, frame, parsed, raw, onFilterLibrary, hasQuery, rememberQuery, setRaw, renderArtist]);
 
   /** Right arrow — go deeper, when there is a deeper. */
   const drill = useCallback((item) => {
     if (!item) return;
-    if (item.kind === 'artist') { push({ kind: 'artist', artist: item.data }); return; }
+    if (item.kind === 'artist') {
+      if (renderArtist) { push({ kind: 'artist', artist: item.data }); return; }
+      if (onOpenArtist) { onOpenArtist(item.data); onClose?.(); return; }
+      push({ kind: 'artist', artist: item.data });
+      return;
+    }
     if (item.kind === 'album' || item.kind === 'release') { push({ kind: 'album', album: item.data }); return; }
     if (item.kind === 'albumtrack') {
       const id = frame?.album?.albumId;
@@ -1492,18 +1700,28 @@ export default function InstantSearch({
       /* The Fast-mode escape hatch: one keystroke asks the network about one
          song. The row shows a spinner and the peer list opens underneath —
          a wait you asked for, on a thing you pointed at. */
+      /* Owned songs have no sources to look for — → opens their album. */
+      if (item.data.owned) { openSongAlbum(item.data); return; }
       const id = item.data.id;
       if (expandedSong === id) { setExpandedSong(null); return; }
       setExpandedSong(id);
       probeSong(item.data);
     }
-  }, [push, sourcesFor, expandedTrack, expandedSong, probeSong, probeAlbum, albumProbes, frame]);
+  }, [push, sourcesFor, expandedTrack, expandedSong, probeSong, probeAlbum, albumProbes, frame, onOpenArtist, onClose, renderArtist, openSongAlbum]);
 
   /* ---------------------------------------------------------- keyboard */
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); pop(); return; }
+      /* The embedded artist view is a scrolling page with its own buttons:
+         arrows scroll it and Enter presses what's focused. Only Esc (above)
+         and ← walk back out. */
+      if (frame?.kind === 'artist' && renderArtist) {
+        const tag = e.target?.tagName;
+        if (e.key === 'ArrowLeft' && tag !== 'INPUT' && tag !== 'TEXTAREA') { e.preventDefault(); pop(); }
+        return;
+      }
       if (e.key === 'ArrowDown') { e.preventDefault(); nav.current = true; setCursor((c) => Math.min(items.length - 1, c + 1)); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); nav.current = true; setCursor((c) => Math.max(0, c - 1)); return; }
       if (e.key === 'ArrowRight') {
@@ -1533,10 +1751,16 @@ export default function InstantSearch({
       /* Brief, Instant search palette: Enter plays (acts on) the highlighted
          row — no palette anyone has used behaves otherwise — and filtering
          the library moves to Tab. The footer hints say so. */
+      /* Enter ACTS — plays what you own, gets what you don't, opens an
+         artist or record, runs an action row. It was wired to drill(), the
+         → handler: an owned song on Enter started a Soulseek probe instead
+         of playing, and "Search anyway" / "Filter your library" did nothing
+         at all, because drill() has no branch for action rows. Ctrl/Cmd+Enter
+         leaves for the full artist or album page, same as the ↗ button. */
       if (e.key === 'Enter') {
         if (!current) return;
         e.preventDefault();
-        drill(current);
+        activate(current, e.ctrlKey || e.metaKey);
         return;
       }
       if (e.key === 'Tab') {
@@ -1544,7 +1768,9 @@ export default function InstantSearch({
         // fastest way to say "this name is the artist, search inside it".
         if (e.shiftKey && current?.kind === 'artist') {
           e.preventDefault();
-          setRaw(`artist:${current.data.name} `);
+          // Quoted when it has spaces — `artist:Lil Wayne` scoped to "Lil"
+          // and searched for "Wayne".
+          setRaw(`artist:${quoteScope(current.data.name)}`);
           inputRef.current?.focus();
           return;
         }
@@ -1556,16 +1782,33 @@ export default function InstantSearch({
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, items.length, current, drill, pop, stack.length, expandedTrack, expandedSong,
+  }, [open, items.length, current, drill, activate, setRaw, pop, stack.length, expandedTrack, expandedSong, frame, renderArtist,
     band.pages, band.total, pageBand, onFilterLibrary, parsed, raw, onClose]);
 
   if (!open) return null;
 
   /* ============================================================ rendering */
 
-  const busyNote = phase.spotify === 'busy'
-    ? 'Searching…'
-    : phase.slsk === 'busy' ? 'Checking Soulseek…' : '';
+  const busyNote = phase.spotify === 'busy' ? 'Searching' : '';
+
+  /* What Enter will do to the highlighted row, for the footer. The old hint
+     said "↵ play" over rows Enter would download, open or run. */
+  const enterVerb = (() => {
+    const c = current;
+    if (!c) return null;
+    switch (c.kind) {
+      case 'recent': return 'search';
+      case 'artist': case 'album': case 'release': return 'open';
+      case 'song': return c.data.owned ? 'play' : 'get';
+      case 'albumtrack': return alreadyOwned?.(c.data.track.title, c.data.track.artists || frame?.album?.artists) ? null : 'get';
+      case 'toptrack': return alreadyOwned?.(c.data.title, c.data.artists) ? null : 'get';
+      case 'folder': return 'get all';
+      case 'source': return 'get this file';
+      case 'action': return c.data.action === 'filter' ? 'filter' : 'search';
+      default: return null;
+    }
+  })();
+  const canOpenPage = current && (current.kind === 'album' || current.kind === 'release') && !!onOpenAlbum;
 
   const expandProgress = (() => {
     if (frame?.kind !== 'artist') return null;
@@ -1601,6 +1844,29 @@ export default function InstantSearch({
     };
     const chev = <Svg d={Ico.chevron} size={15} w={2.2} style={{ flexShrink: 0, color: 'rgba(var(--st-fg-rgb),0.3)' }} />;
 
+    if (item.kind === 'recent') {
+      const q = item.data.q;
+      const sc = parseQuery(q);
+      return (
+        <button {...common}>
+          <div className="isx-glyph is-small"><Svg d={Ico.clock} size={15} w={1.8} /></div>
+          <div className="isx-mid isx-recent">
+            {sc.scopes.map((x) => (
+              <span key={`${x.key}:${x.value}`} className="isx-token is-static"><span className="k">{x.key}</span>{x.value}</span>
+            ))}
+            {splitScopes(q, true).text ? <span className="isx-nm">{splitScopes(q, true).text}</span> : null}
+          </div>
+          <span
+            role="button" tabIndex={-1} className="isx-open"
+            onClick={(e) => { e.stopPropagation(); saveRecents(recents.filter((x) => x !== q)); }}
+            title="Remove from recent searches" aria-label={`Remove ${q} from recent searches`}
+          >
+            <Svg d={Ico.x} size={12} w={2.2} />
+          </span>
+        </button>
+      );
+    }
+
     if (item.kind === 'artist') {
       const a = item.data;
       return (
@@ -1614,16 +1880,7 @@ export default function InstantSearch({
               {a.inLibraryCount ? <span className="isx-mi">{a.inLibraryCount} in your library</span> : null}
             </div>
           </div>
-          {/* A click opens the artist INSIDE the panel, so the badge names
-              that; ↗ is the one that leaves for their library page. */}
-          <span className="isx-kb">Open</span>
-          <span
-            role="button" tabIndex={-1} className="isx-open"
-            onClick={(e) => { e.stopPropagation(); activate(item, true); }}
-            title={`Go to ${a.name}'s page`} aria-label={`Go to ${a.name}'s page`}
-          >
-            <Svg size={12} w={2.2}><path d="M7 17L17 7M9 7h8v8" /></Svg>
-          </span>
+          <span className="isx-kb">Artist page</span>
           {chev}
         </button>
       );
@@ -1676,8 +1933,16 @@ export default function InstantSearch({
             <div className="isx-nm">{title}</div>
             <div className="isx-meta">
               {best && !s.owned ? <QualityBadge q={best._q} /> : null}
-              {artist ? <span className="isx-mi">{artist}</span> : null}
-              {album ? <span className="isx-mi">{album}</span> : null}
+              {artist ? (
+                <span className="isx-mi is-link" role="link" tabIndex={-1}
+                  title={`Open ${String(artist).split(',')[0]}`}
+                  onClick={(e) => { e.stopPropagation(); openSongArtist(s); }}>{artist}</span>
+              ) : null}
+              {album ? (
+                <span className="isx-mi is-link" role="link" tabIndex={-1}
+                  title={`Open ${album}`}
+                  onClick={(e) => { e.stopPropagation(); openSongAlbum(s); }}>{album}</span>
+              ) : null}
               {s.networkOnly ? <span className="isx-mi">not on Spotify</span> : null}
               {probe?.busy ? <span className="isx-probing">looking for a better file…</span> : null}
               {probe?.done && !probe.sources.length ? <span className="isx-mi">nobody is sharing this</span> : null}
@@ -1690,7 +1955,16 @@ export default function InstantSearch({
               not-owned gets. No badge explaining why a button is inert,
               because there is no inert button. */}
           {s.owned ? (
-            <span className="isx-playtag"><Svg d={Ico.play} size={11} w={0} /> Play</span>
+            <>
+              {album ? (
+                <span className={`isx-better${on ? ' is-shown' : ''}`} title="Open the album (→)"
+                  onClick={(e) => { e.stopPropagation(); openSongAlbum(s); }}>
+                  Album
+                  <Svg d={Ico.chevron} size={11} w={2.4} />
+                </span>
+              ) : null}
+              <span className="isx-playtag"><Svg d={Ico.play} size={11} w={0} /> Play</span>
+            </>
           ) : (
             <>
               {!probe && !s.networkOnly ? (
@@ -1700,6 +1974,10 @@ export default function InstantSearch({
                   <Svg d={Ico.spark} size={13} w={2} />
                   better?
                 </span>
+              ) : null}
+              {s.spotify ? (
+                <PreviewButton pkey={`pv:${s.spotify.spotifyId || s.id}`} accent="var(--st-acc-rgb)"
+                  track={{ title: s.spotify.title, artists: s.spotify.artists, durationMs: s.spotify.durationMs, explicit: s.spotify.explicit }} />
               ) : null}
               <GetBtn dl={dlState[key]} progress={dlProgress[key]} onGrab={() => activate(item)} />
             </>
@@ -1740,7 +2018,38 @@ export default function InstantSearch({
       return (
         <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}`}>
           <span className="isx-n">{track.trackNumber || item.data.index + 1}</span>
-          <span className={`isx-tt${owned ? ' is-have' : ''}`}>{track.title}</span>
+          {/* Title over credits: the lead artist, then anyone featured. Each
+              name opens that artist in the panel. */}
+          <span className="isx-tcell">
+            <span className={`isx-tt${owned ? ' is-have' : ''}`}>{track.title}</span>
+            {(() => {
+              const names = String(track.artists || frame?.album?.artists || '')
+                .split(',').map((x) => x.trim()).filter(Boolean);
+              if (!names.length) return null;
+              const [lead, ...feat] = names;
+              const link = (n) => (
+                <span key={n} className="isx-tartist" role="link" tabIndex={-1} title={`Open ${n}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (renderArtist) push({ kind: 'artist', artist: { id: null, name: n } });
+                    else if (onOpenArtist) { onOpenArtist({ name: n }); onClose?.(); }
+                  }}>{n}</span>
+              );
+              return (
+                <span className="isx-tcred">
+                  {link(lead)}
+                  {feat.length ? (
+                    <>
+                      <span className="isx-tfeat">feat.</span>
+                      {feat.map((n, k) => (
+                        <React.Fragment key={n}>{k ? ', ' : null}{link(n)}</React.Fragment>
+                      ))}
+                    </>
+                  ) : null}
+                </span>
+              );
+            })()}
+          </span>
           <span className="isx-tq">
             {/* Unprobed shows nothing rather than "not on the network" — we
                 haven't looked, and claiming otherwise is a lie the old copy
@@ -1755,8 +2064,14 @@ export default function InstantSearch({
             {owned
               ? <span className="isx-owned">In library</span>
               : (best || track.spotifyId)
-                ? <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Get"
-                    onGrab={() => getTrack(track, tKey)} />
+                ? (
+                  <>
+                    <PreviewButton pkey={`pv:${track.spotifyId || tKey}`} accent="var(--st-acc-rgb)"
+                      track={{ title: track.title, artists: track.artists || frame?.album?.artists || '', durationMs: track.durationMs, explicit: track.explicit }} />
+                    <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Get"
+                      onGrab={() => getTrack(track, tKey)} />
+                  </>
+                )
                 : null}
           </span>
         </button>
@@ -1879,7 +2194,10 @@ export default function InstantSearch({
         out.push(
           <div className="isx-sec isx-in" key={`sec:${item.group}`}>
             {item.group}
-            {count > 2 && !isBand ? <span className="ct">{count}</span> : null}
+            {item.group === 'Recent' ? (
+              <button type="button" className="isx-secbtn" onClick={() => saveRecents([])}>Clear</button>
+            ) : null}
+            {count > 2 && !isBand && item.group !== 'Recent' ? <span className="ct">{count}</span> : null}
             {isBand && certain
               ? <span className="isx-secnote">you already have this — didn’t search</span> : null}
             {/* A result count, not a pager: the prev/next chevrons and the
@@ -1940,6 +2258,7 @@ export default function InstantSearch({
 
   /* --- the header of a drilled frame ------------------------------------- */
   function renderHero() {
+    if (frame?.kind === 'artist' && renderArtist) return null; // the view has its own hero
     if (frame?.kind === 'album') {
       const a = frame.album;
       const d = albumData[a.albumId] || {};
@@ -2060,6 +2379,25 @@ export default function InstantSearch({
     return null;
   }
 
+  /* Embedded artist view. Everything it does stays in the panel — another
+     artist or a release pushes a frame (so the crumb and Esc walk back), a
+     search replaces the stack — except the explicit "Open full page". */
+  const embedArtist = frame?.kind === 'artist' && !!renderArtist;
+  const artistNav = {
+    openArtist: (a) => push({ kind: 'artist', artist: { id: a.id || null, name: a.name, image: a.image || null } }),
+    openAlbum: (r) => push({
+      kind: 'album',
+      album: {
+        albumId: r.albumId, name: r.name, artists: r.artists || frame?.artist?.name || '',
+        albumArtUrl: r.albumArtUrl || '', releaseDate: r.releaseDate || '', totalTracks: r.totalTracks || null,
+        albumType: r.type || r.group || '',
+      },
+    }),
+    search: (q) => { setStack([]); setRaw(q); setForceFor(''); setTimeout(() => inputRef.current?.focus(), 0); },
+    openPage: onOpenArtist ? () => { onOpenArtist(frame.artist); onClose?.(); } : null,
+    close: onClose,
+  };
+
   const crumb = stack.length ? (
     <div className="isx-crumb">
       <button type="button" className="isx-back" onClick={pop} title="Back (Esc)" aria-label="Back">
@@ -2095,80 +2433,152 @@ export default function InstantSearch({
      which needs no legend. */
   const filterHint = onFilterLibrary && band.total ? [['tab', 'filter the list']] : [];
 
-  const footHints = frame?.kind === 'album'
-    ? [['↑↓', 'move'], ['→', 'choose a source'], ['←', 'back']]
+  const enterHint = enterVerb ? [['↵', enterVerb]] : [];
+  const pageHint = canOpenPage ? [['ctrl ↵', 'open page']] : [];
+  const albumHint = current?.kind === 'song' && current.data?.owned ? [['→', 'album']] : [];
+  const footHints = embedArtist
+    ? [['esc', 'back']]
+    : frame?.kind === 'album'
+    ? [['↑↓', 'move'], ...enterHint, ['→', 'sources'], ['esc', 'back']]
     : frame?.kind === 'artist'
-      ? [['↑↓', 'move'], ['↵', 'open a release'], ['←', 'back']]
-      : certain
-        ? [['↑↓', 'move'], ['↵', 'play'], ['esc', 'close'], ...filterHint]
-        : [
-          ['↑↓', 'move'],
-          ['↵', 'play'],
-          ...filterHint,
-        ];
+      ? [['↑↓', 'move'], ...enterHint, ...pageHint, ['esc', 'back']]
+      : items.length
+        ? [['↑↓', 'move'], ...enterHint, ...albumHint, ...pageHint, ...filterHint]
+        : [];
 
   return (
     <>
       <style>{STYLES}</style>
       <div className="isx-scrim" onClick={onClose} />
-      <div className={`isx-panel${stack.length ? ' is-wide' : ''}`} role="dialog" aria-label="Search">
+      <div className={`isx-panel${stack.length ? ' is-wide' : ''}${embedArtist ? ' is-artist' : ''}`} role="dialog" aria-label="Search">
         {crumb}
 
         {!stack.length ? (
           <div className="isx-top">
-            <Svg d={Ico.search} size={16} w={2.1} style={{ flexShrink: 0, color: 'rgb(var(--st-acc-rgb))' }} />
-            {parsed.scopes.map((s) => (
-              <button key={`${s.key}:${s.value}`} type="button" className="isx-token"
-                title="Remove this filter"
-                onClick={() => setRaw(raw.replace(new RegExp(`\\b${s.key}:"?${s.value}"?\\s*`, 'i'), ''))}>
-                <span className="k">{s.key}</span>{s.value}
-              </button>
-            ))}
-            <input
-              ref={inputRef}
-              className="isx-input"
-              value={raw}
-              onChange={(e) => setRaw(e.target.value)}
-              placeholder="Song, album, artist — or artist: album: year: is:missing"
-              spellCheck={false}
-              aria-label="Search"
-            />
+            {busyNote
+              ? <span className="isx-spin isx-topspin" aria-label="Searching" />
+              : <Svg d={Ico.search} size={17} w={2.1} style={{ flexShrink: 0, color: 'rgba(var(--st-fg-rgb), 0.55)' }} />}
+            <div className="isx-field" onClick={() => inputRef.current?.focus()}>
+              {chips.map((tok, i) => {
+                const sc = parseQuery(tok).scopes[0];
+                if (!sc) return null;
+                return (
+                  <span key={`${tok}:${i}`} className="isx-token">
+                    <span className="k">{sc.key}</span>{sc.value}
+                    <button type="button" className="isx-tokx" title="Remove this filter" aria-label={`Remove ${sc.key} ${sc.value}`}
+                      onClick={(e) => { e.stopPropagation(); removeChip(i); inputRef.current?.focus(); }}>
+                      <Svg d={Ico.x} size={10} w={2.6} />
+                    </button>
+                  </span>
+                );
+              })}
+              <input
+                ref={inputRef}
+                className="isx-input"
+                value={text}
+                onChange={(e) => onTextChange(e.target.value)}
+                onKeyDown={(e) => {
+                  /* Backspace at the very start pulls the last chip back into
+                     the field as text, so it can be edited rather than only
+                     deleted. */
+                  const el = e.currentTarget;
+                  if (e.key === 'Backspace' && chips.length && el.selectionStart === 0 && el.selectionEnd === 0) {
+                    e.preventDefault();
+                    const last = chips[chips.length - 1];
+                    setChips((c) => c.slice(0, -1));
+                    setText(`${last}${text ? ` ${text}` : ''}`);
+                  }
+                }}
+                placeholder={chips.length ? 'Add words…' : 'Search songs, albums, artists'}
+                spellCheck={false}
+                aria-label="Search"
+              />
+            </div>
             {/* Never skip the network silently — the chip is what separates
                 "we decided not to search" from "the search is broken". */}
             {certain ? (
               <span className="isx-have"><Svg d={Ico.check} size={13} w={2.6} />You have this</span>
-            ) : busyNote ? <span className="isx-busy">{busyNote}</span> : null}
+            ) : null}
+            {raw.trim() ? (
+              <button type="button" className="isx-clear" title="Clear" aria-label="Clear search"
+                onClick={() => { setChips([]); setText(''); setForceFor(''); inputRef.current?.focus(); }}>
+                <Svg d={Ico.x} size={12} w={2.4} />
+              </button>
+            ) : null}
+            <button type="button" className="isx-escbtn" onClick={onClose} title="Close (Esc)" aria-label="Close search">esc</button>
           </div>
         ) : null}
 
         {renderHero()}
 
+        {embedArtist ? (
+          <div className="isx-artistbody">
+            {renderArtist(
+              { name: frame.artist.name, spotifyId: frame.artist.id, image: artistImage(frame.artist) },
+              artistNav,
+            )}
+          </div>
+        ) : (
         <div className="isx-body" ref={listRef}>
           {!hasQuery && !stack.length ? (
-            <div className="isx-empty">
-              <div className="isx-emptytitle">Type to search your library and Spotify’s catalogue.</div>
-              <div className="isx-emptyhint">
-                <b>artist:</b> and <b>album:</b> narrow the query before it’s sent.
-                <b> year:</b> cuts re-uploads. <b>is:missing</b> hides what you already own.
-                <br />
+            <div className="isx-start">
+              {items.length ? renderList() : (
+                <div className="isx-intro">
+                  <div className="isx-emptytitle">Search your library and the catalogue</div>
+                  <div className="isx-emptyhint">Songs you own play straight away. Everything else can be fetched from here.</div>
+                </div>
+              )}
+              <div className="isx-sec">Filters</div>
+              <div className="isx-filters">
+                {FILTER_HINTS.map(([tok, desc]) => (
+                  <button key={tok} type="button" className="isx-filter"
+                    onClick={() => {
+                      if (tok.endsWith(':')) {
+                        // A prefix: drop it in and wait for the value.
+                        setText((t) => `${t && !/\s$/.test(t) ? `${t} ` : t}${tok}`);
+                      } else {
+                        setChips((c) => mergeChips(c, [tok]));
+                      }
+                      inputRef.current?.focus();
+                    }}>
+                    <span className="isx-filter-k">{tok}</span>
+                    <span className="isx-filter-d">{desc}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="isx-tip">
                 {quality === 'best'
-                  ? 'Best is on — Soulseek is checked in the background and rows upgrade when it answers.'
-                  : 'Press → on any song to check Soulseek for a lossless copy of that one track.'}
+                  ? 'Best is on: Soulseek is checked in the background and rows upgrade to lossless when it answers.'
+                  : 'Press → on any song to look for a lossless copy of just that track.'}
               </div>
             </div>
           ) : items.length ? (
             renderList()
           ) : phase.spotify === 'busy' || albumData[frame?.album?.albumId]?.busy || artistData[frame?.artist?.id]?.busy ? (
             <div className="isx-empty"><div className="isx-emptyhint">Looking…</div></div>
+          ) : frame?.kind === 'album' ? (
+            <div className="isx-empty">
+              <div className="isx-emptytitle">
+                {albumData[frame.album.albumId]?.error ? 'Couldn\u2019t load this release' : 'No tracks listed for this release'}
+              </div>
+              <div className="isx-emptyhint">{albumData[frame.album.albumId]?.error || 'Spotify returned an empty tracklist.'}</div>
+              {albumData[frame.album.albumId]?.error ? (
+                <button type="button" className="isx-ghost" style={{ marginTop: 12 }}
+                  onClick={() => { setAlbumData((m) => { const n = { ...m }; delete n[frame.album.albumId]; return n; }); loadAlbum(frame.album); }}>
+                  Try again
+                </button>
+              ) : null}
+            </div>
           ) : (
             <div className="isx-empty">
-              <div className="isx-emptytitle">Nothing matched “{parsed.text || parsed.artist || parsed.album}”.</div>
+              <div className="isx-emptytitle">{phase.spotify === 'error' && errorNote ? 'Search didn\u2019t go through' : <>Nothing matched “{parsed.text || parsed.artist || parsed.album}”.</>}</div>
               <div className="isx-emptyhint">
                 {errorNote || 'Try fewer words — peers match on the whole phrase, so a shorter query usually returns more.'}
               </div>
             </div>
           )}
         </div>
+        )}
 
         <div className="isx-foot">
           {footHints.map(([k, label]) => (
@@ -2214,20 +2624,59 @@ const STYLES = `
   transition: width 0.22s cubic-bezier(0.22,1,0.3,1);
   animation: isxIn 0.18s cubic-bezier(0.22,0.9,0.3,1) both; }
 .isx-panel.is-wide { width: min(880px, calc(100vw - 60px)); }
+.isx-mi.is-link { cursor: pointer; border-radius: 3px; }
+.isx-mi.is-link:hover { color: var(--st-text); text-decoration: underline; text-underline-offset: 2px; }
+/* The artist view is a page, so the panel becomes page-sized while it's up:
+   near full width, a fixed height the view scrolls inside. */
+.isx-panel.is-artist { width: min(1120px, calc(100vw - 48px)); top: 56px; height: calc(100vh - 112px); max-height: none; }
+.isx-artistbody { flex: 1; min-height: 0; display: flex; position: relative; }
 @keyframes isxFade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes isxIn { from { opacity: 0; transform: translateX(-50%) translateY(-8px) } to { opacity: 1; transform: translateX(-50%) } }
 
-.isx-top { display: flex; align-items: center; gap: 9px; padding: 15px 16px; flex-shrink: 0;
+.isx-top { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 18px; min-height: 58px; flex-shrink: 0;
   border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.07); }
-.isx-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent;
-  font-family: inherit; font-size: 14.5px; font-weight: 600; color: var(--st-text); }
+/* Chips and the input share one wrapping row, so a long scope list grows the
+   bar downward instead of squeezing the text you're typing to nothing. */
+.isx-field { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; cursor: text; }
+.isx-input { flex: 1; min-width: 120px; border: none; outline: none; background: transparent; padding: 4px 0;
+  font-family: inherit; font-size: 15.5px; font-weight: 600; color: var(--st-text); }
+.isx-topspin { width: 15px; height: 15px; margin: 0 1px; }
+.isx-clear { width: 24px; height: 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: none; cursor: pointer; background: rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.6); }
+.isx-clear:hover { background: rgba(var(--st-fg-rgb), 0.16); color: #fff; }
+.isx-escbtn { flex-shrink: 0; height: 24px; padding: 0 8px; border-radius: 6px; cursor: pointer; font-family: inherit;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; border: 1px solid rgba(var(--st-fg-rgb), 0.12);
+  background: transparent; color: rgba(var(--st-fg-rgb), 0.42); }
+.isx-escbtn:hover { color: #fff; background: rgba(var(--st-fg-rgb), 0.08); }
+.isx-tokx { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin: 0 -3px 0 1px;
+  padding: 0; border: none; border-radius: 4px; cursor: pointer; background: transparent; color: inherit; opacity: 0.6; }
+.isx-tokx:hover { opacity: 1; background: rgba(var(--st-acc-rgb), 0.25); }
+.isx-token.is-static { cursor: default; padding: 2px 7px; font-size: 11px; }
+.isx-recent { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.isx-glyph.is-small { width: 32px; height: 32px; border-radius: 8px; }
+.isx-secbtn { margin-left: auto; border: none; background: none; padding: 0; cursor: pointer; font-family: inherit;
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0; text-transform: none; color: rgba(var(--st-fg-rgb), 0.35); }
+.isx-secbtn:hover { color: #fff; }
+
+/* ---- empty box ---- */
+.isx-start { padding-bottom: 4px; }
+.isx-intro { padding: 22px 12px 8px; }
+.isx-intro .isx-emptyhint { margin-top: 5px; line-height: 1.5; }
+.isx-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 2px 8px 4px; }
+.isx-filter { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding: 9px 11px;
+  border-radius: 10px; cursor: pointer; font-family: inherit; text-align: left;
+  border: 1px solid rgba(var(--st-fg-rgb), 0.07); background: rgba(var(--st-fg-rgb), 0.03); color: inherit;
+  transition: background 0.14s ease, border-color 0.14s ease; }
+.isx-filter:hover { background: rgba(var(--st-acc-rgb), 0.1); border-color: rgba(var(--st-acc-rgb), 0.3); }
+.isx-filter-k { font-size: 12px; font-weight: 750; color: rgb(var(--st-acc-rgb)); }
+.isx-filter-d { font-size: 11px; color: rgba(var(--st-sub-rgb), 0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.isx-tip { padding: 12px 12px 4px; font-size: 11.5px; line-height: 1.5; color: rgba(var(--st-sub-rgb), 0.38); }
 .isx-input::placeholder { color: rgba(var(--st-fg-rgb), 0.28); font-weight: 500; }
 .isx-busy { flex-shrink: 0; font-size: 11px; color: rgba(var(--st-sub-rgb), 0.32); animation: stPulse 1.4s ease infinite; }
-.isx-token { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; cursor: pointer;
-  padding: 4px 9px 4px 8px; border-radius: 7px; font-family: inherit; font-size: 11.5px; font-weight: 700;
+.isx-token { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; max-width: 260px;
+  padding: 4px 7px 4px 8px; border-radius: 7px; white-space: nowrap; overflow: hidden; font-family: inherit; font-size: 11.5px; font-weight: 700;
   background: rgba(var(--st-acc-rgb), 0.16); color: rgb(var(--st-acc-rgb)); border: 1px solid rgba(var(--st-acc-rgb), 0.3); }
 .isx-token .k { opacity: 0.6; font-weight: 800; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
-.isx-token:hover { background: rgba(var(--st-acc-rgb), 0.26); }
 
 .isx-crumb { display: flex; align-items: center; gap: 9px; padding: 11px 14px; flex-shrink: 0;
   border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.07); background: rgba(var(--st-fg-rgb), 0.02); }
@@ -2357,7 +2806,7 @@ const STYLES = `
 .isx-unmatched { margin-left: auto; font-size: 11px; font-weight: 650; color: rgba(240,190,120,0.8); }
 
 /* ---- tracklist ---- */
-.isx-trk { display: grid; grid-template-columns: 26px minmax(0,1fr) auto 48px 104px; gap: 11px; align-items: center;
+.isx-trk { display: grid; grid-template-columns: 26px minmax(0,1fr) auto 48px 138px; gap: 11px; align-items: center;
   width: 100%; padding: 7px 12px; border-radius: 9px; border: none; background: transparent; color: inherit;
   text-align: left; cursor: pointer; font-family: inherit; }
 .isx-trk.is-on { background: rgba(var(--st-acc-rgb), 0.13); }
@@ -2365,11 +2814,18 @@ const STYLES = `
 .isx-n { text-align: center; font-size: 11.5px; color: rgba(var(--st-fg-rgb), 0.32); font-variant-numeric: tabular-nums; }
 .isx-tt { min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isx-tt.is-have { font-weight: 500; color: rgba(var(--st-text-rgb), 0.48); }
+.isx-tcell { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.isx-tcell .isx-tt { display: block; }
+.isx-tcred { min-width: 0; font-size: 11.5px; font-weight: 550; color: rgba(var(--st-sub-rgb), 0.5);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isx-tartist { cursor: pointer; }
+.isx-tartist:hover { color: var(--st-text); text-decoration: underline; text-underline-offset: 2px; }
+.isx-tfeat { margin: 0 4px; color: rgba(var(--st-sub-rgb), 0.35); }
 .isx-tq { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
 .isx-none { font-size: 10.5px; color: rgba(var(--st-sub-rgb), 0.3); white-space: nowrap; }
 .isx-srcct { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px;
   background: rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.4); }
-.isx-ta { text-align: right; display: flex; justify-content: flex-end; }
+.isx-ta { text-align: right; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 
 /* ---- per-peer sources ---- */
 .isx-srcwrap { margin: 2px 12px 8px 49px; }
@@ -2449,8 +2905,9 @@ const STYLES = `
 
 @media (max-width: 820px) {
   .isx-panel, .isx-panel.is-wide { width: calc(100vw - 32px); top: 70px; }
-  .isx-trk { grid-template-columns: 24px minmax(0,1fr) 44px 92px; }
+  .isx-trk { grid-template-columns: 24px minmax(0,1fr) 44px 126px; }
   .isx-tq { display: none; }
+  .isx-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) { .isx-panel, .isx-scrim { animation: none; } }
 `;
