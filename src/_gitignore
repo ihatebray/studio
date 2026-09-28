@@ -1,0 +1,12 @@
+node_modules/
+out/
+.vite/
+bin/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+spotify-credentials.json
+spotify-user-token.json
+.env
+.env.local
