@@ -1,10 +1,9 @@
 /* =========================================================================
  *  studio — the compact-bar visualizer styles
  *
- *  Twelve ways to fill the empty middle of the library bar in compact mode:
- *  seven equalizers (capsules, strings, dots and analyser curves), three
- *  that show the last few seconds scrolling by (the voice, a spectrogram, a
- *  ridgeline), the song's progress, and its rhythm. Every style draws into one small canvas from
+ *  Nine ways to fill the empty middle of the library bar in compact mode:
+ *  seven equalizers (capsules, strings, dots and analyser curves), the song's
+ *  progress, and its rhythm. Every style draws into one small canvas from
  *  the same frame:
  *
  *    f = { ctx, w, h, dpr,           canvas and its size in CSS px
@@ -21,7 +20,7 @@
  *  narrow window never throws.
  * ========================================================================= */
 
-import { BANDS, HISTORY, VOCAL_BANDS, demoLevelSource } from './vizLevels.js';
+import { BANDS, demoLevelSource } from './vizLevels.js';
 
 export const VIZ_STYLES = [
   { id: 'neon', name: 'Neon capsules', note: 'Glowing bars, mirrored from the centre', soft: true },
@@ -31,9 +30,6 @@ export const VIZ_STYLES = [
   { id: 'proq', name: 'Pro-Q curve', note: 'An analyser curve over the spectrum', soft: true },
   { id: 'peakcurve', name: 'Peak curve', note: 'Pro-Q with a falling peak line', soft: true },
   { id: 'layers', name: 'Layered curves', note: 'Three curves at three speeds', soft: true },
-  { id: 'melody', name: 'Vocal line', note: 'The singing as a scrolling strand, on the beat', soft: true },
-  { id: 'waterfall', name: 'Waterfall', note: 'A scrolling spectrogram: voice and drums', soft: true },
-  { id: 'ridges', name: 'Ridgeline', note: 'The last few seconds, stacked in depth', soft: true },
   { id: 'ribbon', name: 'Progress ribbon', note: 'The song end to end; click to seek' },
   { id: 'steps', name: 'Beat steps', note: 'Sixteen steps, one bar of music' },
 ];
@@ -441,241 +437,7 @@ function layers(f) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-/* ======================================================================
- *  Three that show time as well as the moment. They draw from the level
- *  source's history (vizLevels: the last 5 s at 30 Hz), newest on the right.
- * ====================================================================== */
-
-/* ---- Vocal line ----
- * The voice as a strand scrolling right to left: its height is where the
- * singing sits in the vocal range, its weight and brightness how present the
- * voice is. Between phrases it thins to nothing, so the phrasing shows. Under
- * it, a hairline with a tick for every beat, scrolling with it. */
-function melody(f) {
-  const { ctx, w, h, dpr, src, palette, playing } = f;
-  const x1 = w * 0.9;                    // now
-  const x0 = w * 0.08;                   // about four seconds ago
-  const span = Math.min(HISTORY - 1, 120);
-  const step = (x1 - x0) / span;
-  const base = h * 0.8;
-  const top = h * 0.14;
-  const low = h * 0.66;                  // where the lowest sung note sits
-  const col = palette[0];
-  const lift = (c, k) => Math.round(c + (255 - c) * k);
-  const bright = [lift(col[0], 0.55), lift(col[1], 0.55), lift(col[2], 0.55)];
-
-  // hairline and beat ticks
-  ctx.fillStyle = 'rgba(255,255,255,0.16)';
-  ctx.fillRect(x0 * dpr, base * dpr, (x1 - x0) * dpr, 1 * dpr);
-  for (let a = 0; a <= span; a++) {
-    if (!src.histBeat[src.histIndex(a)]) continue;
-    const x = x1 - a * step;
-    const age = a / span;
-    ctx.fillStyle = `rgba(255,255,255,${0.75 * (1 - age * 0.7)})`;
-    ctx.fillRect((x - 0.75) * dpr, (base - 7) * dpr, 1.5 * dpr, 8 * dpr);
-  }
-  // the kick happening now swells the newest tick
-  const beatGlow = Math.max(0, 1 - src.beatPhase() * 3) * (playing ? 1 : 0);
-  if (beatGlow > 0) {
-    ctx.fillStyle = `rgba(255,255,255,${0.9 * beatGlow})`;
-    ctx.fillRect((x1 - 1) * dpr, (base - 10 * beatGlow) * dpr, 2 * dpr, (10 * beatGlow + 1) * dpr);
-  }
-
-  /* The strand: one ribbon, not a chain of segments (whose round ends and
-     glows overlapped into beads). Its centre follows the pitch; its width
-     and, through a horizontal gradient, its brightness follow the voice, so
-     it swells while someone sings and thins to nothing between phrases. */
-  const yOf = (p) => low - p * (low - top);
-  const pts = [];
-  for (let a = span; a >= 0; a -= 2) {
-    const i = src.histIndex(a);
-    pts.push({ x: x1 - a * step, y: yOf(src.histPitch[i]), v: src.histVocal[i], age: a / span });
-  }
-  if (pts.length > 2) {
-    // smooth the centre line a little so steps between notes read as glides
-    for (let k = 1; k < pts.length - 1; k++) pts[k].ys = (pts[k - 1].y + 2 * pts[k].y + pts[k + 1].y) / 4;
-    pts[0].ys = pts[0].y;
-    pts[pts.length - 1].ys = pts[pts.length - 1].y;
-    const half = (p) => 0.3 + 2.2 * p.v;
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x * dpr, (pts[0].ys - half(pts[0])) * dpr);
-    for (const p of pts) ctx.lineTo(p.x * dpr, (p.ys - half(p)) * dpr);
-    for (let k = pts.length - 1; k >= 0; k--) ctx.lineTo(pts[k].x * dpr, (pts[k].ys + half(pts[k])) * dpr);
-    ctx.closePath();
-    const g = ctx.createLinearGradient(x0 * dpr, 0, x1 * dpr, 0);
-    for (const p of pts) {
-      const a = Math.min(1, p.v * 1.3) * (1 - p.age * 0.6);
-      g.addColorStop(Math.min(1, Math.max(0, (p.x - x0) / (x1 - x0))), `rgba(${bright[0]},${bright[1]},${bright[2]},${a})`);
-    }
-    ctx.fillStyle = g;
-    ctx.shadowColor = rgba(col, 0.8);
-    ctx.shadowBlur = 3 * dpr;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  }
-  // where the voice is now
-  const v = src.vocal;
-  if (v > 0.04) {
-    const y = yOf(src.vocalPitch);
-    const r = 1.5 + 2.5 * v;
-    const g = ctx.createRadialGradient(x1 * dpr, y * dpr, 0, x1 * dpr, y * dpr, r * 2.4 * dpr);
-    g.addColorStop(0, `rgba(255,255,255,${0.95 * v + 0.05})`);
-    g.addColorStop(0.4, rgba(col, 0.55 * v));
-    g.addColorStop(1, rgba(col, 0));
-    ctx.fillStyle = g;
-    ctx.fillRect((x1 - r * 2.4) * dpr, (y - r * 2.4) * dpr, r * 4.8 * dpr, r * 4.8 * dpr);
-  }
-}
-
-/* ---- Waterfall ----
- * A scrolling spectrogram: time runs right to left, bass at the bottom,
- * treble at the top, brightness how active each band is (relative to the
- * song, so a droning bass stays dark and the kick lights up). Kicks read as
- * bright pulses along the bottom, a sung line as a streak through the middle.
- * Drawn at one pixel per band per step, then scaled up smoothly. */
-function waterfall(f) {
-  const { ctx, w, h, dpr, src, palette, s } = f;
-  const cols = Math.min(HISTORY, 120);
-  if (!s.img || s.img.width !== cols) {
-    s.canvas = document.createElement('canvas');
-    s.canvas.width = cols;
-    s.canvas.height = BANDS;
-    s.cx = s.canvas.getContext('2d');
-    s.img = s.cx.createImageData(cols, BANDS);
-  }
-  // colour ramp: the cover's second colour for quiet activity, its main
-  // colour for strong, white only for the peaks (kicks, the loudest notes)
-  const lift = (c, k) => c.map((v) => Math.round(v + (255 - v) * k));
-  const stops = [lift(palette[1] || palette[0], 0.1), lift(palette[0], 0.3), [255, 255, 255]];
-  const d = s.img.data;
-  /* Oldest to newest, each band keeps a short afterglow: a hit starts sharp
-     and fades over a few columns, instead of stopping dead. */
-  if (!s.fadeX || s.fadeX.length !== cols) s.fadeX = Float32Array.from({ length: cols }, (_, x) => edge(x / (cols - 1)));
-  const fadeX = s.fadeX;
-  if (!s.carry) s.carry = new Float32Array(BANDS);
-  s.carry.fill(0);
-  for (let a = cols - 1; a >= 0; a--) {
-    const frame = src.histAt(a);
-    const x = cols - 1 - a;
-    for (let b = 0; b < BANDS; b++) {
-      const v = Math.max(frame[b], s.carry[b] * 0.8);
-      s.carry[b] = v;
-      const o = ((BANDS - 1 - b) * cols + x) * 4;
-      let c;
-      if (v < 0.75) {
-        const k = v / 0.75;
-        c = stops[0].map((q, j) => q + (stops[1][j] - q) * k);
-      } else {
-        const k = (v - 0.75) / 0.25;
-        c = stops[1].map((q, j) => q + (stops[2][j] - q) * k);
-      }
-      d[o] = c[0];
-      d[o + 1] = c[1];
-      d[o + 2] = c[2];
-      // quiet activity stays dim; only strong bands come through fully, and
-      // the whole image fades out towards both ends instead of stopping
-      d[o + 3] = Math.round(235 * Math.min(1, v) ** 1.7 * fadeX[x]);
-    }
-  }
-  s.cx.putImageData(s.img, 0, 0);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  const top = h * 0.06;
-  const bottom = h * 0.94;
-  ctx.drawImage(s.canvas, w * 0.06 * dpr, top * dpr, w * 0.88 * dpr, (bottom - top) * dpr);
-}
-
-/* ---- Ridgeline ----
- * The last couple of seconds as stacked spectrum outlines, bass on the left:
- * the newest at the front, older ones further back, higher, narrower and
- * fainter. Each ridge hides the ones behind it. When someone is singing, the
- * vocal stretch of the front ridge is drawn heavier, in the cover's colour. */
-function ridges(f) {
-  const { ctx, w, h, dpr, src, palette } = f;
-  const N = 7;
-  const gapSteps = 7;                    // about a quarter-second between ridges
-  const front = h * 0.92;
-  const depth = h * 0.4;
-  const col = palette[0];
-  const [vLo, vHi] = VOCAL_BANDS;
-  const valueAt = (arr, x) => {
-    const fb = x * (BANDS - 1);
-    const i = Math.floor(fb);
-    const k = fb - i;
-    return arr[i] * (1 - k) + arr[Math.min(BANDS - 1, i + 1)] * k;
-  };
-  for (let r = N - 1; r >= 0; r--) {
-    const arr = r === 0 ? src.levels : src.histAt(r * gapSteps);
-    const back = r / (N - 1);
-    const base = front - back * depth;
-    const inset = w * (0.08 + back * 0.08);
-    const x0 = inset;
-    const x1 = w - inset;
-    const amp = h * 0.62 * (1 - back * 0.4);
-    const pts = [];
-    for (let px = x0; px <= x1; px += 3) {
-      const x = (px - x0) / (x1 - x0);
-      // ends taper to the baseline so each ridge rises out of the ground
-      const taper = Math.sin(Math.PI * Math.min(1, Math.max(0, x))) ** 0.6;
-      pts.push([px, base - valueAt(arr, x) * amp * taper]);
-    }
-    if (pts.length < 3) continue;
-    const trace = () => {
-      ctx.moveTo(pts[0][0] * dpr, pts[0][1] * dpr);
-      for (let i = 1; i < pts.length - 1; i++) {
-        const xc = (pts[i][0] + pts[i + 1][0]) / 2;
-        const yc = (pts[i][1] + pts[i + 1][1]) / 2;
-        ctx.quadraticCurveTo(pts[i][0] * dpr, pts[i][1] * dpr, xc * dpr, yc * dpr);
-      }
-      ctx.lineTo(pts[pts.length - 1][0] * dpr, pts[pts.length - 1][1] * dpr);
-    };
-    // hide what's behind this ridge
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.beginPath();
-    trace();
-    ctx.lineTo(x1 * dpr, (base + 2) * dpr);
-    ctx.lineTo(x0 * dpr, (base + 2) * dpr);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(0,0,0,1)';
-    ctx.fill();
-    ctx.globalCompositeOperation = 'source-over';
-    // the ridge line
-    ctx.beginPath();
-    trace();
-    ctx.strokeStyle = r === 0 ? 'rgba(255,255,255,0.95)' : rgba(col, 0.75 * (1 - back * 0.75));
-    ctx.lineWidth = (r === 0 ? 1.6 : 1.1) * dpr;
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-  }
-  // the voice on the front ridge
-  const v = src.vocal;
-  if (v > 0.05) {
-    const x0 = w * 0.08;
-    const x1 = w - x0;
-    const amp = h * 0.62;
-    const from = vLo / (BANDS - 1);
-    const to = vHi / (BANDS - 1);
-    ctx.beginPath();
-    let first = true;
-    for (let x = from; x <= to + 1e-6; x += 0.01) {
-      const px = x0 + x * (x1 - x0);
-      const taper = Math.sin(Math.PI * x) ** 0.6;
-      const py = front - valueAt(src.levels, x) * amp * taper;
-      if (first) { ctx.moveTo(px * dpr, py * dpr); first = false; } else ctx.lineTo(px * dpr, py * dpr);
-    }
-    const lift = (c) => Math.round(c + (255 - c) * 0.35);
-    ctx.strokeStyle = `rgba(${lift(col[0])},${lift(col[1])},${lift(col[2])},${Math.min(1, 0.4 + v)})`;
-    ctx.lineWidth = (1.6 + 2 * v) * dpr;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.shadowColor = rgba(col, 0.9);
-    ctx.shadowBlur = (1.5 + 2.5 * v) * dpr;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-  }
-}
-
-const DRAW = { neon, capsuleq, strings, dots, proq, peakcurve, layers, melody, waterfall, ridges, ribbon, steps };
+const DRAW = { neon, capsuleq, strings, dots, proq, peakcurve, layers, ribbon, steps };
 
 export function drawViz(style, f) {
   const fn = DRAW[style];

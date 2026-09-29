@@ -222,66 +222,123 @@ function CompactVisualizer({
   );
 }
 
-/* ---- Settings: one tile per style, each with a small live preview ---- */
+/* ---- Settings: a dropdown and one live preview ----
+ * One canvas and one stand-in song, not one per style: a grid of animated
+ * tiles each running its own analysis made Settings lag. The preview shows
+ * the chosen style, or the one under the pointer while the list is open, and
+ * only animates while it's on screen. */
 
-function TilePreview({ style, animate, palette }) {
+function Preview({ style, palette }) {
   const ref = useRef(null);
+  const demo = useRef(null);
   useEffect(() => {
     const canvas = ref.current;
-    if (!canvas) return undefined;
-    const r = canvas.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const w = Math.max(1, Math.round(r.width));
-    const h = Math.max(1, Math.round(r.height));
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    const src = demoSource();
+    if (!canvas || style === 'off') return undefined;
+    if (!demo.current) {
+      demo.current = demoSource();
+      // a few seconds in, so the preview starts mid-song rather than at rest
+      for (let i = 0; i < 150; i++) demo.current.update(1 / 60);
+    }
+    const src = demo.current;
     const s = {};
     let t = 0;
-    const frameOf = (dt) => {
+    let raf = 0;
+    let visible = true;
+    let size = { w: 1, h: 1, dpr: 1 };
+    const fit = () => {
+      const r = canvas.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      size = { w: Math.max(1, Math.round(r.width)), h: Math.max(1, Math.round(r.height)), dpr };
+      canvas.width = size.w * dpr;
+      canvas.height = size.h * dpr;
+    };
+    const paint = (dt) => {
       src.update(dt);
       t += dt;
-      drawViz(style, { ctx: canvas.getContext('2d'), w, h, dpr, src, t, dt, playing: true, palette, progress: (t / 90) % 1, hover: null, shape: null, s });
+      drawViz(style, { ctx: canvas.getContext('2d'), ...size, src, t, dt, playing: true, palette, progress: (t / 90) % 1, hover: null, shape: null, s });
     };
-    // Warm the demo up so a still tile shows the style mid-song, not at rest,
-    // with a few seconds of history for the styles that scroll.
-    for (let i = 0; i < 240; i++) frameOf(1 / 60);
-    if (!animate || reduceMotion()) return undefined;
-    let raf = 0;
     let last = performance.now();
-    const loop = (now) => { frameOf(Math.min(0.05, Math.max(0, (now - last) / 1000))); last = now; raf = requestAnimationFrame(loop); };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [style, animate, palette]);
+    const loop = (now) => {
+      raf = 0;
+      paint(Math.min(0.05, Math.max(0, (now - last) / 1000)));
+      last = now;
+      if (visible && !document.hidden) raf = requestAnimationFrame(loop);
+    };
+    const kick = () => { if (!raf && visible && !document.hidden && !reduceMotion()) { last = performance.now(); raf = requestAnimationFrame(loop); } };
+    fit();
+    paint(1 / 60);
+    const ro = new ResizeObserver(() => { fit(); paint(1 / 60); });
+    ro.observe(canvas);
+    const io = new IntersectionObserver(([e]) => { visible = e.isIntersecting; kick(); });
+    io.observe(canvas);
+    document.addEventListener('visibilitychange', kick);
+    kick();
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      io.disconnect();
+      document.removeEventListener('visibilitychange', kick);
+    };
+  }, [style, palette]);
+  if (style === 'off') {
+    return <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.55)' }}>The space stays empty</span>;
+  }
   return <canvas ref={ref} aria-hidden style={{ ...canvasStyleFor(style), height: 34 }} />;
 }
 
 export function CompactVizPicker({ value, onPick, palette, accent, coverColours = true }) {
-  const [hot, setHot] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [hover, setHover] = useState(null);
+  const wrap = useRef(null);
   const pal = useMemo(() => vizPalette(palette, accent, coverColours), [palette, accent, coverColours]);
-  const tiles = [{ id: 'off', name: 'Off', note: 'Leave the space empty' }, ...VIZ_STYLES];
+  const options = useMemo(() => [{ id: 'off', name: 'Off', note: 'Leave the space empty' }, ...VIZ_STYLES], []);
+  const current = options.find((o) => o.id === value) || options[0];
+  const shown = open && hover ? hover : current.id;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  useEffect(() => { if (!open) setHover(null); }, [open]);
+
   return (
-    <div role="radiogroup" aria-label="Compact bar visualizer"
-      style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 8, width: '100%' }}>
-      {tiles.map((t) => {
-        const on = value === t.id;
-        return (
-          <button key={t.id} type="button" role="radio" aria-checked={on} onClick={() => onPick(t.id)}
-            onMouseEnter={() => setHot(t.id)} onMouseLeave={() => setHot((h) => (h === t.id ? null : h))}
-            onFocus={() => setHot(t.id)} onBlur={() => setHot((h) => (h === t.id ? null : h))}
-            style={{
-              display: 'grid', gap: 6, padding: 8, borderRadius: 10, cursor: 'pointer', textAlign: 'left', font: 'inherit',
-              border: `1px solid ${on ? 'rgba(var(--st-fg-rgb), 0.55)' : 'rgba(var(--st-fg-rgb), 0.08)'}`,
-              background: on ? 'rgba(var(--st-fg-rgb), 0.08)' : 'transparent', color: 'var(--st-text)',
-            }}>
-            <span style={{ display: 'block', height: 34, borderRadius: 7, background: 'rgba(var(--st-acc-rgb), 0.32)', overflow: 'hidden' }}>
-              {t.id === 'off' ? null : <TilePreview style={t.id} animate={on || hot === t.id} palette={pal} />}
-            </span>
-            <span style={{ fontSize: 12.5, fontWeight: 650 }}>{t.name}</span>
-            <span style={{ fontSize: 11.5, lineHeight: 1.35, color: 'rgba(var(--st-sub-rgb), 0.6)' }}>{t.note}</span>
-          </button>
-        );
-      })}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', flexWrap: 'wrap' }}>
+      <div ref={wrap} style={{ position: 'relative', flexShrink: 0 }}>
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}
+          aria-label={`Compact bar visualizer: ${current.name}`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, height: 34, padding: '0 12px', minWidth: 180,
+            borderRadius: 8, border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 600,
+            background: 'rgba(var(--st-fg-rgb), 0.08)', color: 'var(--st-text)',
+          }}>
+          <span style={{ flex: 1, textAlign: 'left' }}>{current.name}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+        {open ? (
+          <div role="listbox" aria-label="Compact bar visualizer" className="sth-libsortmenu"
+            style={{ left: 0, right: 'auto', minWidth: 250 }} onMouseLeave={() => setHover(null)}>
+            {options.map((o) => (
+              <button key={o.id} type="button" role="option" aria-selected={o.id === value}
+                className={`sth-libsortitem${o.id === value ? ' is-on' : ''}`}
+                onMouseEnter={() => setHover(o.id)} onFocus={() => setHover(o.id)}
+                onClick={() => { onPick(o.id); setOpen(false); }}>
+                <span style={{ display: 'block' }}>{o.name}</span>
+                <span style={{ display: 'block', fontSize: 11.5, fontWeight: 500, color: 'rgba(var(--st-fg-rgb), 0.45)', marginTop: 1 }}>{o.note}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <span style={{
+        flex: 1, minWidth: 200, height: 34, borderRadius: 8, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(var(--st-acc-rgb), 0.32)',
+      }}>
+        <Preview style={shown} palette={pal} />
+      </span>
     </div>
   );
 }

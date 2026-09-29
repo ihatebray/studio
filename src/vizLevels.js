@@ -25,11 +25,9 @@
  *      adaptive threshold. Their spacing gives the tempo; onsets far from the
  *      next expected beat (off-beat snares, fills) don't move the count, and
  *      a short gap in the drums is bridged at the same tempo.
- *   4. Voice: how much is happening in the vocal range (about 250 Hz to
- *      3.5 kHz) once sustained accompaniment is floored away, smoothed so
- *      drum hits don't read as singing, plus a rough pitch height (where in
- *      that range the energy sits).
- *   5. History: a few seconds of all of the above, for the styles that scroll.
+ *   4. Smooth motion: levels ease up and down (a little slower down than up),
+ *      and each band is blended lightly with its neighbours so bars don't
+ *      jitter against each other.
  * ========================================================================= */
 
 export const BANDS = 24;
@@ -37,10 +35,9 @@ const LOW_HZ = 40;
 const HIGH_HZ = 16000;
 export const bandHz = (k) => LOW_HZ * (HIGH_HZ / LOW_HZ) ** (k / BANDS);
 
-/* The vocal range, as band indices (inclusive). */
+/* The vocal range, as band indices (inclusive): the stand-in song sings here. */
 const VOCAL_LO = (() => { let b = 0; while (b < BANDS && bandHz(b) < 250) b++; return b; })();
 const VOCAL_HI = (() => { let b = BANDS - 1; while (b > 0 && bandHz(b + 1) > 3600) b--; return b; })();
-export const VOCAL_BANDS = [VOCAL_LO, VOCAL_HI];
 const BASS_HI = 5;                           // bands 0–5: roughly 40–110 Hz
 
 /* ---- tuning (see the tests in the Studio notes for how these were set) ---- */
@@ -60,8 +57,6 @@ const FLOOR_EASE_S = 0.2;     // the floor glides to that minimum
 const FLOOR_SLOT_S = 1 / 20;  // resolution of the sliding window
 const CEIL_DOWN_S = 4;        // ceiling holds recent peaks for a few seconds
 const HELPER_DELAY_S = 0.045; // helper runs ahead by its device buffer (~2048 frames)
-const HISTORY_HZ = 30;
-export const HISTORY = 150;   // 5 s at 30 Hz
 
 /* ---- helper frames (Spotify) --------------------------------------------- */
 
@@ -148,6 +143,7 @@ export class LevelSource {
     subscribeHelper();
     this.norm = new Float32Array(BANDS);     // where each band sits in its own range, 0–1
     this.levels = new Float32Array(BANDS);   // smoothed, what the styles draw
+    this._smooth = new Float32Array(BANDS);
     this.floor = new Float32Array(BANDS).fill(-70);
     // per band: the minimum of each 50 ms slot over the last few seconds
     this._slots = Array.from({ length: BANDS }, (_, b) => new Float32Array(Math.ceil((b <= BASS_HI ? FLOOR_WINDOW_BASS_S : FLOOR_WINDOW_S) / FLOOR_SLOT_S)).fill(0));
@@ -159,13 +155,6 @@ export class LevelSource {
     this.loud = 0;
     this.bass = 0;
     this.highs = 0;
-    // voice
-    this.vocal = 0;          // presence, 0–1
-    this.vocalPitch = 0.5;   // where the melody sits in this song's range, 0 (low) – 1 (high)
-    this._vocalSmooth = 0;
-    this._pitchRaw = (VOCAL_LO + VOCAL_HI) / 2;
-    this._pitchLo = this._pitchRaw - 1;
-    this._pitchHi = this._pitchRaw + 1;
     // beats
     this.beats = 0;
     this.beatAt = 0;         // seconds (performance clock) of the last beat
@@ -177,14 +166,6 @@ export class LevelSource {
     this._odfDev = 0.02;
     this._lastOnset = -1;
     this._quietFor = 0;
-    // history, newest at head-1
-    this.hist = new Float32Array(HISTORY * BANDS);
-    this.histVocal = new Float32Array(HISTORY);
-    this.histPitch = new Float32Array(HISTORY).fill(0.5);
-    this.histBeat = new Uint8Array(HISTORY);
-    this.histHead = 0;
-    this._histAcc = 0;
-    this._beatSinceHist = false;
     this._lastFrame = null;
     this._frameGap = 1 / 60;
     this._punch = 0;
@@ -254,19 +235,28 @@ export class LevelSource {
     // A detected kick punches the bass bars: in a heavy mix the kick only
     // lifts the low bands a few dB over the drone, and this makes every one
     // read. It only fires on onsets, so quiet passages stay quiet.
-    this._punch *= 1 - ease(dt, 0.1);
+    this._punch *= 1 - ease(dt, 0.13);
     if (this.onset > 0) this._punch = Math.max(this._punch, 0.35 + 0.4 * this.onset);
 
-    // what the styles draw: quick to rise, quick enough to fall that a
-    // stopped instrument is gone in a fraction of a second
-    const up = ease(dt, 0.03);
-    const down = ease(dt, playing ? 0.11 : 0.2);
-    let loud = 0;
+    // 4. what the styles draw. Eased both ways (up a touch quicker than
+    // down, so a hit still lands on time and falls away smoothly), still
+    // quick enough that a stopped instrument is gone in about half a second.
+    const up = ease(dt, 0.045);
+    const down = ease(dt, playing ? 0.16 : 0.22);
+    const sm = this._smooth;
     for (let b = 0; b < BANDS; b++) {
       const punch = b <= BASS_HI ? this._punch * (1 - b / (BASS_HI + 2)) : 0;
       const target = Math.min(1, this.norm[b] + punch);
-      this.levels[b] += (target - this.levels[b]) * (target > this.levels[b] ? up : down);
-      if (this.levels[b] < 0.004) this.levels[b] = 0;
+      sm[b] += (target - sm[b]) * (target > sm[b] ? up : down);
+      if (sm[b] < 0.004) sm[b] = 0;
+    }
+    // Blend each band lightly with its neighbours: bars move as a surface
+    // rather than jittering against each other.
+    let loud = 0;
+    for (let b = 0; b < BANDS; b++) {
+      const l = sm[Math.max(0, b - 1)];
+      const r = sm[Math.min(BANDS - 1, b + 1)];
+      this.levels[b] = 0.2 * l + 0.6 * sm[b] + 0.2 * r;
       loud += this.levels[b] * (1 - (b / BANDS) * 0.4);
     }
     this.loud = Math.min(1, loud / (BANDS * 0.55));
@@ -277,40 +267,6 @@ export class LevelSource {
     for (let b = BANDS - 4; b < BANDS; b++) highs += this.levels[b];
     this.highs = highs / 4;
 
-    // 4. voice
-    let vs = 0;
-    let vmax = 0;
-    for (let b = VOCAL_LO; b <= VOCAL_HI; b++) {
-      vs += this.norm[b];
-      if (this.norm[b] > vmax) vmax = this.norm[b];
-    }
-    const vocalNow = vs / (VOCAL_HI - VOCAL_LO + 1);
-    // Sustained, not struck: slow-ish attack keeps a snare's 50 ms burst from
-    // reading as a sung line, the release keeps a phrase joined up.
-    this._vocalSmooth += (vocalNow - this._vocalSmooth) * ease(dt, vocalNow > this._vocalSmooth ? 0.09 : 0.22);
-    this.vocal = Math.max(0, Math.min(1, (this._vocalSmooth - 0.08) / 0.42));
-    /* Pitch height: a voice's lowest strong band is close to the note being
-       sung (its fundamental); the bands above it are its harmonics. Refined
-       between neighbouring bands, then placed within this song's own recent
-       range, so every song's melody uses the whole height. */
-    if (vmax > 0.12 && this.vocal > 0.05) {
-      let b = VOCAL_LO;
-      while (b < VOCAL_HI && this.norm[b] < vmax * 0.55) b++;
-      const l = b > VOCAL_LO ? this.norm[b - 1] : 0;
-      const r = b < VOCAL_HI ? this.norm[b + 1] : 0;
-      const c = this.norm[b];
-      const off = c > 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (r - l) / Math.max(1e-3, c + Math.max(l, r)))) : 0;
-      const raw = b + off;
-      this._pitchRaw += (raw - this._pitchRaw) * ease(dt, 0.08);
-      if (this._pitchRaw < this._pitchLo) this._pitchLo = this._pitchRaw;
-      else this._pitchLo += (this._pitchRaw - this._pitchLo) * ease(dt, 8);
-      if (this._pitchRaw > this._pitchHi) this._pitchHi = this._pitchRaw;
-      else this._pitchHi += (this._pitchRaw - this._pitchHi) * ease(dt, 8);
-      const span = Math.max(2, this._pitchHi - this._pitchLo);
-      const mid = (this._pitchHi + this._pitchLo) / 2;
-      this.vocalPitch = Math.max(0, Math.min(1, 0.5 + (this._pitchRaw - mid) / span));
-    }
-
     // bridging gaps in the drums
     if (this.loud < 0.03) this._quietFor += dt; else this._quietFor = 0;
     // Bridge a short gap in the drums at the known tempo, for up to 8 beats;
@@ -318,19 +274,6 @@ export class LevelSource {
     if (playing && this.tempoConfidence >= 0.5 && this._quietFor < 1.5
       && t - this._lastOnset < this.period * 8 && t - this.beatAt > this.period * 1.3) {
       this._beat(this.beatAt + this.period);
-    }
-
-    // 5. history: only while music is coming in, so a pause freezes it
-    if (db) this._histAcc += dt;
-    if (db && this._histAcc >= 1 / HISTORY_HZ) {
-      this._histAcc %= 1 / HISTORY_HZ;
-      const h = this.histHead;
-      this.hist.set(this.norm, h * BANDS);
-      this.histVocal[h] = this.vocal;
-      this.histPitch[h] = this.vocalPitch;
-      this.histBeat[h] = this._beatSinceHist ? 1 : 0;
-      this._beatSinceHist = false;
-      this.histHead = (h + 1) % HISTORY;
     }
   }
 
@@ -401,7 +344,6 @@ export class LevelSource {
   _beat(at) {
     this.beats += 1;
     this.beatAt = at;
-    this._beatSinceHist = true;
   }
 
   /** 0–1 through the current beat. */
@@ -409,15 +351,6 @@ export class LevelSource {
     return Math.min(0.999, Math.max(0, (now / 1000 - this.beatAt) / (this.period || 0.5)));
   }
 
-  /** Band values from `ago` history steps back (0 = newest). */
-  histAt(ago) {
-    const i = (this.histHead - 1 - ago + HISTORY * 4) % HISTORY;
-    return this.hist.subarray(i * BANDS, i * BANDS + BANDS);
-  }
-
-  histIndex(ago) {
-    return (this.histHead - 1 - ago + HISTORY * 4) % HISTORY;
-  }
 }
 
 /* ---- a stand-in song, for the Settings previews and the tests --------------
