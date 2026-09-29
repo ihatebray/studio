@@ -311,7 +311,7 @@ pub async fn artist(session: &Session, id: &str, country: &str) -> Result<Value,
     Ok(json!({ "albums": albums, "topTracks": top_tracks }))
 }
 
-fn date_of(a: &AlbumMessage) -> String {
+pub(crate) fn date_of(a: &AlbumMessage) -> String {
     let Some(d) = a.date.as_ref() else { return String::new() };
     match (d.year(), d.month(), d.day()) {
         (0, _, _) => String::new(),
@@ -322,7 +322,7 @@ fn date_of(a: &AlbumMessage) -> String {
 }
 
 /// Extended metadata for `uris`, as (uri, protobuf bytes), in one request.
-async fn extended(session: &Session, uris: &[String], kind: ExtensionKind) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub(crate) async fn extended(session: &Session, uris: &[String], kind: ExtensionKind) -> Result<Vec<(String, Vec<u8>)>, String> {
     if uris.is_empty() {
         return Ok(Vec::new());
     }
@@ -353,12 +353,12 @@ async fn extended(session: &Session, uris: &[String], kind: ExtensionKind) -> Re
         .collect())
 }
 
-fn base62(gid: &[u8]) -> Option<String> {
+pub(crate) fn base62(gid: &[u8]) -> Option<String> {
     SpotifyId::from_raw(gid).ok()?.to_base62().ok()
 }
 
 /// The image closest to `want` (by size class), as an i.scdn.co URL.
-fn image_url(images: &[Image], want: ImageSize) -> Option<String> {
+pub(crate) fn image_url(images: &[Image], want: ImageSize) -> Option<String> {
     let rank = |s: ImageSize| match s {
         ImageSize::SMALL => 0i32,
         ImageSize::DEFAULT => 1,

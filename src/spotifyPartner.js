@@ -73,6 +73,10 @@ const OPERATIONS = {
   // Search, the way the web player (and Sonora) do it: one request answers
   // songs, albums and artists at once, on the web player's own budget.
   searchDesktop: 'query',
+  // My Spotify's Home, as Sonora reads it: Spotify's own home feed and
+  // Your Library, both from the web player, not the Web API.
+  home: 'query',
+  libraryV3: 'query',
 };
 
 /* ------------------------------------------------------------ file store */
@@ -110,6 +114,8 @@ class StepError extends Error {
    waited up to 10s and then retried forever, which on a long limit was a
    page stuck on "loading" with no error at all. */
 const RATE_ABSORB_S = 4;
+/* A request Spotify never answers must fail, not leave a page loading forever. */
+const REQUEST_TIMEOUT_MS = 20_000;
 function retryAfterOf(res) {
   const v = Number(res.headers.get('retry-after'));
   return Number.isFinite(v) && v > 0 ? v : 30;
@@ -563,6 +569,7 @@ async function send(op, variables, hash, version) {
   const [token, ctoken] = await Promise.all([accessToken(), getClientToken()]);
   const res = await fetch(PATHFINDER, {
     method: 'POST',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
@@ -628,7 +635,9 @@ export function webApiRateLimit() {
 export async function webApi(p, attempt = 0, method = 'GET') {
   if (webApiBlockedUntil > Date.now()) throw rateLimited((webApiBlockedUntil - Date.now()) / 1000);
   const token = await accessToken();
-  const res = await fetch(p.startsWith('http') ? p : `${WEB_API}${p}`, { method, headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch(p.startsWith('http') ? p : `${WEB_API}${p}`, {
+    method, headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   if (res.status === 429) {
     const wait = retryAfterOf(res);
     if (wait <= RATE_ABSORB_S && attempt === 0) {
@@ -1008,6 +1017,71 @@ export async function artistAlbumsFast(artistId) {
   }
   const all = await artistDiscography(artistId);
   return all.filter((r) => r.group === 'album' || r.group === 'single').map((r) => toRow(r, r.group));
+}
+
+/* ------------------------------------------- Home feed and Your Library
+ * Parsed the way Sonora reads them (pathfinder/browse.rs, library.rs). Items
+ * come out as { kind, id, name, sub, image }, kind being playlist, album,
+ * artist or liked. */
+
+function libraryCard(uri, d) {
+  if (!d) return null;
+  switch (d.__typename) {
+    case 'Playlist': return {
+      kind: 'playlist', id: idOf(uri || d.uri), name: d.name || '',
+      sub: `Playlist${d.ownerV2?.data?.name ? ` · ${d.ownerV2.data.name}` : ''}`,
+      image: img(d.images?.items?.[0]?.sources, 300),
+    };
+    case 'Album': {
+      const artists = nameList(d.artists);
+      return { kind: 'album', id: idOf(uri || d.uri), name: d.name || '', sub: `Album${artists ? ` · ${artists}` : ''}`, image: img(d.coverArt?.sources, 300) };
+    }
+    case 'Artist': return {
+      kind: 'artist', id: idOf(uri || d.uri), name: d.profile?.name || '', sub: 'Artist',
+      image: img(d.visuals?.avatarImage?.sources, 300),
+    };
+    case 'PseudoPlaylist': return /collection(:tracks)?$/.test(uri || d.uri || '') ? {
+      kind: 'liked', id: 'liked', name: d.name || 'Liked Songs',
+      sub: Number(d.count) > 0 ? `${Number(d.count).toLocaleString()} songs` : 'Your liked songs',
+      image: img(d.image?.sources, 300), count: Number(d.count) || null,
+    } : null;
+    default: return null;
+  }
+}
+const cardOk = (c) => c && c.id && c.name;
+
+/** Spotify's own home feed: `{ recents, shelves: [{ title, items }] }`. */
+export async function homeFeed() {
+  const data = await query('home', {
+    homeEndUserIntegration: 'INTEGRATION_WEB_PLAYER',
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    sp_t: '', facet: '', sectionItemsLimit: 12, includeEpisodeContentRatingsV2: false,
+  });
+  const sections = data?.home?.sectionContainer?.sections?.items || [];
+  let recents = [];
+  const shelves = [];
+  for (const sec of sections) {
+    const kind = sec?.data?.__typename;
+    const items = (sec?.sectionItems?.items || []).map((it) => libraryCard(it?.uri, it?.content?.data)).filter(cardOk);
+    if (kind === 'HomeShortsSectionData' && !recents.length) recents = items;
+    else if (kind === 'HomeGenericSectionData' && items.length) {
+      shelves.push({ title: sec.data?.title?.transformedLabel || '', items });
+    }
+  }
+  if (!recents.length && !shelves.length) throw new StepError('query', 'the home feed had nothing Studio can show');
+  return { recents, shelves };
+}
+
+/** Your Library, most recently played first: playlists, albums, artists
+ *  and Liked Songs, in one request. */
+export async function libraryItems() {
+  const data = await query('libraryV3', {
+    filters: [], order: 'Recents', textFilter: '', features: ['LIKED_SONGS'],
+    limit: 100, offset: 0, flatten: false, expandedFolders: [], folderUri: null, includeFoldersWhenFlattening: true,
+  });
+  const page = data?.me?.libraryV3;
+  const items = (page?.items || []).map((row) => libraryCard(row?.item?._uri || row?.item?.data?.uri, row?.item?.data)).filter(cardOk);
+  return { items, total: page?.totalCount || items.length };
 }
 
 /* ------------------------------------------------ Save (stream, no file) */

@@ -14,6 +14,7 @@
 import { partnerState, trackById, trackByIdPathfinder, findTrack, likeTracks } from './spotifyPartner.js';
 import { spotifyCredentialsConfigured, spotifyGetTrack, spotifySearchTracks } from './spotifyClient.js';
 import { itunesCrossCheck } from './itunesClient.js';
+import { helperTracks } from './spotifyPlayer.js';
 import { upsertTracks, idsForFilePaths, loadAllTracks } from './libraryDb.js';
 
 export const SPOTIFY_PATH_PREFIX = 'spotify:track:';
@@ -42,6 +43,7 @@ function notReady() {
  * the first source that has it:
  *
  *   1. the row the Save came from (search, artist page, album, chart…)
+ *   1b. the playback helper's session (librespot metadata): no Web API quota
  *   2. Spotify Web API, through the signed-in account
  *   3. Spotify's web-player API (Pathfinder): separate rate limit
  *   4. Spotify Web API through the Client ID in Settings, if one is set:
@@ -69,6 +71,8 @@ async function describe(id, meta, hints = null) {
   };
   take(meta);
   const sources = [
+    // The helper's session first: no Web API quota behind it.
+    ['helper', async () => (await helperTracks([id]))?.[0] || null],
     ['web api', () => trackById(id)],
     ['web player', () => trackByIdPathfinder(id)],
     ['client id', () => (spotifyCredentialsConfigured() ? spotifyGetTrack(id) : null)],

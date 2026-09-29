@@ -36,7 +36,7 @@ function useFeed(key) {
 
   const load = useCallback(async (force) => {
     const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    const fetcher = key === 'home' ? api?.spotifyFeedHome : api?.spotifyFeedReleases;
+    const fetcher = { home: api?.spotifyFeedHome, releases: api?.spotifyFeedReleases, extras: api?.spotifyFeedExtras }[key];
     if (!fetcher) { setState({ data: null, error: { step: 'unavailable', error: 'Spotify isn’t available in this build.' } }); return; }
     setLoading(true);
     // Paint last session's copy while the fresh one is fetched.
@@ -103,7 +103,8 @@ async function loadCollection(item) {
     }
     case 'playlist': return unwrap(await api.spotifyFeedPlaylist(item.id));
     case 'liked': return unwrap(await api.spotifyFeedLiked());
-    case 'artist': return unwrap(await api.spotifyPartnerTopTracks(item.id));
+    // Through main's artist route (the helper's session first).
+    case 'artist': return unwrap(await api.spotifyArtistTopTracks(item.id, item.name));
     default: return [];
   }
 }
@@ -463,14 +464,16 @@ function CollectionPanel({ item, bridge, onClose }) {
       <aside className="msp-panel" aria-label={item.name}>
         <div className="msp-panel-head">
           <span className="bg" style={{ backgroundImage: item.image ? `url("${item.image}")` : 'none' }} />
-          <Art src={item.image} round={item.kind === 'artist'} />
+          {item.kind === 'liked' ? <LikedArt size={40} /> : <Art src={item.image} round={item.kind === 'artist'} />}
           <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 2 }}>
             <span className="st-eyebrow" style={{ color: 'rgba(255,255,255,0.65)' }}>
               {item.kind === 'artist' ? 'Top songs' : item.kind === 'liked' ? 'Collection' : item.label || item.kind}
             </span>
             <span className="ttl">{item.name}</span>
             <span className="sub">
-              {item.sub}{rows?.length ? ` · ${rows.length} songs · ${Math.round(total / 60000)} min` : ''}
+              {item.kind === 'liked'
+                ? `${item.sub || ''}${rows?.length && item.count > rows.length ? ` · newest ${rows.length} here` : ''}`
+                : `${item.sub || ''}${rows?.length ? ` · ${rows.length} songs · ${Math.round(total / 60000)} min` : ''}`}
             </span>
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <button type="button" className="st-btn st-btn-primary st-btn-sm" disabled={!rows?.length}
@@ -521,13 +524,32 @@ function HomeSkeleton() {
 }
 
 export function SpotifyHome({ bridge }) {
-  const { data, error, loading, refresh, limitedUntil } = useFeed('home');
+  const { data: core, error, loading, refresh, limitedUntil } = useFeed('home');
+  // What only the Web API has: optional, shown when it comes.
+  const { data: extra, refresh: refreshExtras } = useFeed('extras');
   const [panel, openPanel, closePanel] = usePanel();
 
-  const fan = (data?.onRepeat || []).filter((t) => t.albumArtUrl);
-  const fanArt = [...new Map(fan.map((t) => [t.albumArtUrl, t])).values()].slice(0, 4);
+  /* One view of both. The core (Spotify's home feed and Your Library) is
+     the page; the extras (on repeat, recently played, all time, top
+     artists) slot in when the Web API isn't rate-limiting. */
+  const data = core ? {
+    ...core,
+    user: { name: extra?.user?.name || core.user?.name || '', image: extra?.user?.image || null },
+    onRepeat: extra?.onRepeat || [],
+    recentTracks: extra?.recentTracks || [],
+    allTime: extra?.allTime || [],
+    topArtists: extra?.topArtists?.length ? extra.topArtists : (core.artists || []).map((a) => ({ id: a.id, name: a.name, image: a.image, genres: [] })),
+    jumpBackIn: core.recents || [],
+    savedAlbums: core.albums || [],
+    likedCount: core.liked?.count ?? null,
+  } : null;
+
+  const fan = (data?.onRepeat?.length ? data.onRepeat.map((t) => t.albumArtUrl) : (data?.jumpBackIn || []).map((i) => i.image)).filter(Boolean);
+  const fanArt = [...new Set(fan)].slice(0, 4);
   const heroArtists = [...new Set((data?.onRepeat || []).flatMap((t) => t.artists.split(', ')))].slice(0, 3);
   const name = data?.user?.name ? data.user.name.split(' ')[0] : '';
+  const heroItem = data && !data.onRepeat.length ? data.jumpBackIn[0] : null;
+  const refreshAll = () => { refresh(); refreshExtras(); };
 
   const openItem = (it) => {
     if (it.kind === 'artist' && bridge.onOpenArtist) { bridge.onOpenArtist({ name: it.name, spotifyId: it.id, image: it.image }); return; }
@@ -548,7 +570,7 @@ export function SpotifyHome({ bridge }) {
               <h1 className="st-page-title">{greeting()}{name ? `, ${name}` : ''}</h1>
             </div>
             <div className="msp-head-side">
-              <RefreshButton loading={loading} onClick={refresh} at={data?.fetchedAt} />
+              <RefreshButton loading={loading} onClick={refreshAll} at={data?.fetchedAt} />
               {data?.user?.image ? <Art src={data.user.image} round style={{ width: 34, height: 34 }} /> : null}
             </div>
           </header>
@@ -560,44 +582,56 @@ export function SpotifyHome({ bridge }) {
 
           {data ? (
             <>
-              {/* ---- In rotation ---- */}
-              {data.onRepeat?.length ? (
+              {/* ---- In rotation (or, without the Web API, where you left off) ---- */}
+              {data.onRepeat.length || heroItem ? (
                 <section className="msp-hero">
-                  <span className="msp-hero-bg" style={{ backgroundImage: fanArt[0] ? `url("${fanArt[0].albumArtUrl}")` : 'none' }} />
+                  <span className="msp-hero-bg" style={{ backgroundImage: fanArt[0] ? `url("${fanArt[0]}")` : 'none' }} />
                   <div className="msp-fan" aria-hidden>
-                    {fanArt.slice().reverse().map((t, i, arr) => {
+                    {fanArt.slice().reverse().map((u, i, arr) => {
                       const k = arr.length - 1 - i; // 0 = front
-                      return <Art key={t.albumArtUrl} src={t.albumArtUrl} style={{ left: 12 + k * 14, zIndex: 10 - k, '--r': `${(k - 1.5) * 5}deg`, '--dx': `${(k - 1.5) * 8}px`, opacity: 1 - k * 0.12 }} />;
+                      return <Art key={u} src={u} round={heroItem?.kind === 'artist' && k === 0} style={{ left: 12 + k * 14, zIndex: 10 - k, '--r': `${(k - 1.5) * 5}deg`, '--dx': `${(k - 1.5) * 8}px`, opacity: 1 - k * 0.12 }} />;
                     })}
                   </div>
-                  <div className="msp-hero-copy">
-                    <span className="st-eyebrow">In rotation this month</span>
-                    <span className="msp-hero-title">Your top {data.onRepeat.length}, right now</span>
-                    <span className="msp-hero-sub">
-                      {heroArtists.join(', ')}{heroArtists.length ? ' and more. ' : ''}The songs you keep coming back to, straight from your Spotify.
-                    </span>
-                    <div className="msp-hero-actions">
-                      <button type="button" className="st-btn st-btn-primary st-btn-lg" onClick={() => bridge.playRows(data.onRepeat, 0)}>{Icon.play(14)} Play</button>
-                      <button type="button" className="st-btn st-btn-lg msp-btn-glass" onClick={() => bridge.playRows(data.onRepeat, 0, { shuffle: true })}>{Icon.shuffle(15)} Shuffle</button>
+                  {data.onRepeat.length ? (
+                    <div className="msp-hero-copy">
+                      <span className="st-eyebrow">In rotation this month</span>
+                      <span className="msp-hero-title">Your top {data.onRepeat.length}, right now</span>
+                      <span className="msp-hero-sub">
+                        {heroArtists.join(', ')}{heroArtists.length ? ' and more. ' : ''}The songs you keep coming back to, straight from your Spotify.
+                      </span>
+                      <div className="msp-hero-actions">
+                        <button type="button" className="st-btn st-btn-primary st-btn-lg" onClick={() => bridge.playRows(data.onRepeat, 0)}>{Icon.play(14)} Play</button>
+                        <button type="button" className="st-btn st-btn-lg msp-btn-glass" onClick={() => bridge.playRows(data.onRepeat, 0, { shuffle: true })}>{Icon.shuffle(15)} Shuffle</button>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="msp-hero-copy">
+                      <span className="st-eyebrow">Pick up where you left off</span>
+                      <span className="msp-hero-title">{heroItem.name}</span>
+                      <span className="msp-hero-sub">{heroItem.sub}</span>
+                      <div className="msp-hero-actions">
+                        <button type="button" className="st-btn st-btn-primary st-btn-lg" onClick={() => playItem(heroItem)}>{Icon.play(14)} Play</button>
+                        <button type="button" className="st-btn st-btn-lg msp-btn-glass" onClick={() => openItem(heroItem)}>{heroItem.kind === 'artist' ? 'Open artist' : 'Tracklist'}</button>
+                      </div>
+                    </div>
+                  )}
                   <div className="msp-hero-stats">
                     {data.likedCount != null ? <div className="msp-stat"><b>{data.likedCount.toLocaleString()}</b><span>Liked songs</span></div> : null}
-                    <div className="msp-stat"><b>{data.playlists.length}{data.playlists.length >= 24 ? '+' : ''}</b><span>Playlists</span></div>
-                    <div className="msp-stat"><b>{data.topArtists.length}</b><span>Artists in rotation</span></div>
+                    <div className="msp-stat"><b>{data.playlists.length}{data.playlists.length >= 100 ? '+' : ''}</b><span>Playlists</span></div>
+                    <div className="msp-stat"><b>{data.topArtists.length}</b><span>{extra?.topArtists?.length ? 'Artists in rotation' : 'Artists you follow'}</span></div>
                   </div>
                 </section>
               ) : null}
 
               {/* ---- Jump back in ---- */}
-              {data.jumpBackIn?.length ? (
+              {data.jumpBackIn?.length > (heroItem ? 1 : 0) ? (
                 <section className="msp-sec">
                   <SectionHead title="Jump back in" meta="Where you left off" />
                   <div className="msp-jump">
-                    {data.jumpBackIn.map((it) => (
+                    {data.jumpBackIn.slice(heroItem ? 1 : 0, heroItem ? 9 : 8).map((it) => (
                       <div key={`${it.kind}:${it.id}`} className="msp-jumptile" role="button" tabIndex={0}
                         onClick={() => openItem(it)} onKeyDown={(e) => { if (e.key === 'Enter') openItem(it); }}>
-                        <Art src={it.image} />
+                        {it.kind === 'liked' ? <LikedArt size={24} /> : <Art src={it.image} />}
                         <span style={{ minWidth: 0 }}>
                           <span className="nm" style={{ display: 'block' }}>{it.name}</span>
                           <span className="sb" style={{ display: 'block' }}>{it.sub}</span>
@@ -632,10 +666,28 @@ export function SpotifyHome({ bridge }) {
                 </div>
               ) : null}
 
+              {/* ---- Spotify's own shelves (Made For You, mixes…) ---- */}
+              {(data.shelves || []).map((sh, n) => (
+                <section key={`${sh.title}:${n}`} className="msp-sec">
+                  <SectionHead title={sh.title || 'For you'} />
+                  <div className="msp-grid is-clip">
+                    {sh.items.map((it) => (it.kind === 'artist' ? (
+                      <button key={`${it.kind}:${it.id}`} type="button" className="msp-tile is-artist" onClick={() => openItem(it)}>
+                        <Art src={it.image} round />
+                        <span style={{ minWidth: 0, width: '100%' }}>
+                          <span className="nm" style={{ display: 'block' }}>{it.name}</span>
+                          <span className="sb" style={{ display: 'block' }}>Artist</span>
+                        </span>
+                      </button>
+                    ) : <CoverTile key={`${it.kind}:${it.id}`} item={it} onOpen={openItem} onPlay={playItem} liked={it.kind === 'liked'} />))}
+                  </div>
+                </section>
+              ))}
+
               {/* ---- Artists ---- */}
               {data.topArtists?.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="Your artists right now" />
+                  <SectionHead title={extra?.topArtists?.length ? 'Your artists right now' : 'Artists you follow'} />
                   <div className="msp-grid is-small is-clip">
                     {data.topArtists.map((a) => (
                       <button key={a.id} type="button" className="msp-tile is-artist"
@@ -655,10 +707,9 @@ export function SpotifyHome({ bridge }) {
               {data.playlists?.length ? (
                 <section className="msp-sec">
                   <SectionHead title="Your playlists" meta={data.likedCount ? `${data.likedCount.toLocaleString()} liked songs` : null} />
-                  <div className="msp-grid">
-                    {data.likedCount ? (
-                      <CoverTile item={{ kind: 'liked', id: 'liked', name: 'Liked Songs', sub: `${data.likedCount.toLocaleString()} songs` }}
-                        onOpen={openItem} onPlay={playItem} liked />
+                  <div className="msp-grid is-clip" style={{ '--rows': 3 }}>
+                    {data.liked ? (
+                      <CoverTile item={{ ...data.liked, image: null }} onOpen={openItem} onPlay={playItem} liked />
                     ) : null}
                     {data.playlists.map((p) => <CoverTile key={p.id} item={p} onOpen={openItem} onPlay={playItem} />)}
                   </div>
@@ -668,12 +719,10 @@ export function SpotifyHome({ bridge }) {
               {/* ---- Saved albums ---- */}
               {data.savedAlbums?.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="Recently saved albums" />
-                  <div className="msp-grid">
+                  <SectionHead title="Albums in your library" meta="Most recently played first" />
+                  <div className="msp-grid is-clip" style={{ '--rows': 2 }}>
                     {data.savedAlbums.map((a) => (
-                      <CoverTile key={a.albumId}
-                        item={{ kind: 'album', id: a.albumId, name: a.name, sub: a.artists, image: a.albumArtUrl, label: typeLabel(a) }}
-                        onOpen={openItem} onPlay={playItem} />
+                      <CoverTile key={a.id} item={a} onOpen={openItem} onPlay={playItem} />
                     ))}
                   </div>
                 </section>
@@ -702,7 +751,7 @@ export function SpotifyHome({ bridge }) {
                 </section>
               ) : null}
 
-              {!data.onRepeat?.length && !data.recentTracks?.length && !data.playlists?.length ? (
+              {!data.onRepeat?.length && !data.jumpBackIn?.length && !data.shelves?.length && !data.playlists?.length ? (
                 <Note icon={Icon.spotify(24)} title="Nothing here yet"
                   body="Play some music on Spotify (here or anywhere) and this page fills in with your rotation, artists and playlists." />
               ) : null}
@@ -712,6 +761,18 @@ export function SpotifyHome({ bridge }) {
       </div>
       {panel ? <CollectionPanel item={panel} bridge={bridge} onClose={closePanel} /> : null}
     </div>
+  );
+}
+
+/** Liked Songs' cover: the accent, with a heart. */
+function LikedArt({ size = 44, children }) {
+  return (
+    <Art style={{ background: 'linear-gradient(135deg, rgb(var(--accent-rgb)), rgba(var(--accent-rgb),0.25))' }}>
+      <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-ink)' }}>
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M12 21s-7.5-4.6-9.6-9.2C1 8.6 3 5 6.6 5c2.1 0 3.6 1.2 4.4 2.4C11.8 6.2 13.3 5 15.4 5 19 5 21 8.6 19.6 11.8 17.5 16.4 12 21 12 21z" /></svg>
+      </span>
+      {children}
+    </Art>
   );
 }
 

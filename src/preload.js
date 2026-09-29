@@ -202,6 +202,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /* My Spotify pages (spotifyFeed.js). Each resolves { ok, data | error }. */
   spotifyFeedPeek: (key) => ipcRenderer.invoke('spotifyFeed:peek', key),
   spotifyFeedHome: (force) => ipcRenderer.invoke('spotifyFeed:home', force),
+  spotifyFeedExtras: (force) => ipcRenderer.invoke('spotifyFeed:extras', force),
   spotifyFeedReleases: (force) => ipcRenderer.invoke('spotifyFeed:releases', force),
   spotifyFeedPlaylist: (id) => ipcRenderer.invoke('spotifyFeed:playlist', id),
   spotifyFeedLiked: () => ipcRenderer.invoke('spotifyFeed:liked'),

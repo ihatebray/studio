@@ -22,6 +22,10 @@
 //!   {"cmd":"search","req":1,"q":"…"}          catalogue search (search.rs)
 //!   {"cmd":"album","req":2,"id":"…"}          an album's tracklist
 //!   {"cmd":"artist","req":3,"id":"…"}         an artist's releases and top songs
+//!   {"cmd":"releases","req":4,"days":60}      new releases from followed artists (library.rs)
+//!   {"cmd":"playlist","req":5,"id":"…"}       a playlist's songs
+//!   {"cmd":"liked","req":6}                   Liked Songs
+//!   {"cmd":"tracks","req":7,"ids":["…"]}      song details
 //!   {"cmd":"quit"}
 //!
 //! Events (stdout):
@@ -55,6 +59,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+mod library;
 mod output;
 mod search;
 mod spectrum;
@@ -103,11 +108,20 @@ enum Command {
     /// An album's tracklist / an artist's releases and top songs, the same way.
     Album { req: u64, id: String },
     Artist { req: u64, id: String },
+    /// Your Spotify over the session (library.rs), not the Web API.
+    Releases { req: u64, #[serde(default = "sixty")] days: u32 },
+    Playlist { req: u64, id: String },
+    Liked { req: u64 },
+    Tracks { req: u64, ids: Vec<String> },
     Quit,
 }
 
 fn yes() -> bool {
     true
+}
+
+fn sixty() -> u32 {
+    60
 }
 
 struct Engine {
@@ -269,7 +283,8 @@ async fn main() {
                 let Some(e) = engine.as_ref() else {
                     // A request gets its own reply; the player's error event is for playback.
                     match &other {
-                        Command::Search { req, .. } | Command::Album { req, .. } | Command::Artist { req, .. } => {
+                        Command::Search { req, .. } | Command::Album { req, .. } | Command::Artist { req, .. }
+                        | Command::Releases { req, .. } | Command::Playlist { req, .. } | Command::Liked { req } | Command::Tracks { req, .. } => {
                             send(json!({ "event": "answer", "req": req, "ok": false, "error": "not signed in" }));
                         }
                         _ => send(json!({ "event": "error", "message": "not signed in" })),
@@ -297,6 +312,10 @@ async fn main() {
                         let country = s.country();
                         search::artist(&s, &id, &country).await
                     }),
+                    Command::Releases { req, days } => answer(req, e.session.clone(), move |s| async move { library::releases(&s, days).await }),
+                    Command::Playlist { req, id } => answer(req, e.session.clone(), move |s| async move { library::playlist(&s, &id).await }),
+                    Command::Liked { req } => answer(req, e.session.clone(), move |s| async move { library::liked(&s).await }),
+                    Command::Tracks { req, ids } => answer(req, e.session.clone(), move |s| async move { library::tracks(&s, &ids).await }),
                     Command::Play => e.player.play(),
                     Command::Pause => e.player.pause(),
                     Command::Stop => {

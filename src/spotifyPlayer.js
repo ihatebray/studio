@@ -293,7 +293,7 @@ const requests = new Map(); // req → { resolve, reject, timer }
 let requestSeq = 0;
 const REQUEST_TIMEOUT_MS = 12_000;
 
-function helperRequest(cmd) {
+function helperRequest(cmd, timeoutMs = REQUEST_TIMEOUT_MS) {
   if (!spotifyHelperInstalled()) return Promise.reject(new Error('The Spotify helper isn’t built.'));
   const st = partnerState();
   if (!st.connected || st.canStream === false) return Promise.reject(new Error('Spotify isn’t signed in for playback.'));
@@ -303,7 +303,7 @@ function helperRequest(cmd) {
     const timer = setTimeout(() => {
       requests.delete(req);
       reject(new Error('the Spotify helper didn’t answer in time'));
-    }, REQUEST_TIMEOUT_MS);
+    }, timeoutMs);
     requests.set(req, { resolve, reject, timer });
     const r = command({ ...cmd, req });
     if (r && r.ok === false) {
@@ -324,6 +324,12 @@ export function helperSearch(q) {
 export const helperAlbum = (id) => helperRequest({ cmd: 'album', id: String(id) });
 /** `{ albums, topTracks }` for an artist. */
 export const helperArtist = (id) => helperRequest({ cmd: 'artist', id: String(id) });
+/** `{ releases, artistsChecked, artistsTotal }`: the followed artists' last `days`. */
+export const helperReleases = (days = 60) => helperRequest({ cmd: 'releases', days }, 60_000);
+/** A playlist's songs / Liked Songs / songs by id, in the pages' track shape. */
+export const helperPlaylist = (id) => helperRequest({ cmd: 'playlist', id: String(id) }, 30_000);
+export const helperLiked = () => helperRequest({ cmd: 'liked' }, 30_000);
+export const helperTracks = (ids) => helperRequest({ cmd: 'tracks', ids: (ids || []).map(String) });
 
 export function stopHelper() {
   quitting = true;
