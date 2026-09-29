@@ -29,6 +29,7 @@
 //!   {"event":"ended","id":"…"}  {"event":"stopped","id":"…"}
 //!   {"event":"unavailable","id":"…","throttled":bool,"denied":bool,"reason":"…"}
 //!   {"event":"track","id":"…","durationMs":n}   metadata loaded
+//!   {"event":"levels","v":[24 × 0–100]}         band levels of what's playing, ~30/s
 //!   {"event":"error","message":"…"}
 
 use std::path::PathBuf;
@@ -47,6 +48,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 mod output;
+mod spectrum;
 use output::{Cue, CuedSink, Silence};
 
 /// Spotify's desktop client ID — the same one Studio signs in with, so the
@@ -331,6 +333,18 @@ fn start_player(session: Session, volume: f32) -> Engine {
                 emit(json!({ "event": "error", "message": message }));
                 Box::new(Silence)
             }
+        }
+    });
+
+    // Band levels for Studio's visualizer, ~30 a second, and only while a
+    // packet is actually playing (nothing is published while paused). The
+    // thread ends with the engine: it holds only a weak reference.
+    let weak = Arc::downgrade(&cue.levels);
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(33));
+        let Some(levels) = weak.upgrade() else { break };
+        if let Some(v) = levels.take() {
+            emit(json!({ "event": "levels", "v": v }));
         }
     });
 

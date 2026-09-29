@@ -26,6 +26,8 @@ use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
 use rodio::buffer::SamplesBuffer;
 use rodio::Source;
 
+use crate::spectrum::{Analyser, Levels, BANDS};
+
 /// Packets queued before a write waits. This paces librespot's decoder to
 /// real time (~0.5 s at the packet sizes librespot produces); it no longer
 /// sets how long a pause or skip takes, because those don't wait for it.
@@ -50,6 +52,8 @@ pub struct Cue {
     /// Track the player is being moved to; only its announcement arms.
     expect: Arc<Mutex<Option<String>>>,
     stale: Arc<AtomicU8>,
+    /// Band levels of the packet playing now (spectrum.rs).
+    pub levels: Arc<Levels>,
 }
 
 impl Cue {
@@ -113,6 +117,9 @@ struct Chunk {
     born: u32,
     generation: Arc<AtomicU32>,
     live: Arc<AtomicUsize>,
+    /// This packet's band levels, published when its first sample plays.
+    bands: Option<[u8; BANDS]>,
+    levels: Arc<Levels>,
 }
 
 impl Iterator for Chunk {
@@ -120,6 +127,9 @@ impl Iterator for Chunk {
     fn next(&mut self) -> Option<f32> {
         if self.generation.load(Ordering::Relaxed) != self.born {
             return None;
+        }
+        if let Some(b) = self.bands.take() {
+            self.levels.publish(&b);
         }
         self.samples.next()
     }
@@ -153,6 +163,7 @@ pub struct CuedSink {
     cue: Cue,
     live: Arc<AtomicUsize>,
     volume: f32,
+    analyser: Analyser,
 }
 
 impl CuedSink {
@@ -168,7 +179,7 @@ impl CuedSink {
         sink.pause();
         let volume = cue.volume();
         sink.set_volume(volume);
-        Ok(Self { sink, _stream: stream, cue, live: Arc::default(), volume })
+        Ok(Self { sink, _stream: stream, cue, live: Arc::default(), volume, analyser: Analyser::new(SAMPLE_RATE) })
     }
 
     fn follow_volume(&mut self) {
@@ -201,12 +212,15 @@ impl Sink for CuedSink {
         }
         let samples = packet.samples().map_err(|e| SinkError::OnWrite(e.to_string()))?;
         let samples = converter.f64_to_f32(samples);
+        let bands = self.analyser.feed(&samples, NUM_CHANNELS as usize);
         self.live.fetch_add(1, Ordering::Relaxed);
         self.sink.append(Chunk {
             samples: SamplesBuffer::new(NUM_CHANNELS as rodio::ChannelCount, SAMPLE_RATE, samples),
             born: self.cue.generation.load(Ordering::Relaxed),
             generation: self.cue.generation.clone(),
             live: self.live.clone(),
+            bands: Some(bands),
+            levels: self.cue.levels.clone(),
         });
         // Pace the decoder. A paused device doesn't drain, but librespot
         // doesn't write while paused, so this can't hold a command up for
@@ -276,8 +290,12 @@ mod tests {
             born: cue.generation.load(Ordering::Relaxed),
             generation: cue.generation.clone(),
             live: live.clone(),
+            bands: Some([7; BANDS]),
+            levels: cue.levels.clone(),
         };
+        assert!(cue.levels.take().is_none(), "nothing published before it plays");
         assert_eq!(chunk.next(), Some(0.5));
+        assert_eq!(cue.levels.take(), Some([7; BANDS]), "published as it starts playing");
         cue.clear(None);
         assert_eq!(chunk.next(), None);
         drop(chunk);

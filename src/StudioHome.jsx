@@ -24,6 +24,8 @@ import ArtistPage from './ArtistPage.jsx';
 import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPlayer.jsx';
 import ArtistGrid from './ArtistGrid.jsx';
 import { hoverPreload } from './spotifyMediaElement.js';
+import { CompactVizContext, CompactVizSlot, CompactVizPicker, COMPACT_VIZ_KEY } from './CompactVisualizer.jsx';
+import { VIZ_IDS } from './compactVizStyles.js';
 import { NewReleases, HomeRail, HOME_CSS } from './HomeReleases.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
 
@@ -381,6 +383,9 @@ export default function StudioHome({
                          // lyrics state. Every editor mount reports here.
   currentTime = 0,       // playback position in seconds, for synced-lyric highlight
   onSeek,                // (seconds) → App: scrub playback
+  duration = 0,          // current track length in seconds (compact visualizer)
+  analyserRef = null,    // App's Web Audio analyser, for local files
+  onNeedAnalyser,        // () → App builds the analyser if it isn't yet
   shuffleOn = false,
   repeat = 'off',
   onToggleShuffle,
@@ -502,6 +507,11 @@ export default function StudioHome({
     setShowPlayCounts((v) => { const n = !v; try { localStorage.setItem('studio:showPlayCounts', n ? 'on' : 'off'); } catch { /* ignore */ } return n; });
   }, []);
   /* Settings → Layout → List density. Row height for every song table. */
+  /* Compact bar visualizer (CompactVisualizer.jsx): 'off' or a style id. */
+  const [compactViz, setCompactViz] = useState(() => {
+    try { const v = localStorage.getItem(COMPACT_VIZ_KEY); return v && (v === 'off' || VIZ_IDS.has(v)) ? v : 'off'; } catch { return 'off'; }
+  });
+  const pickCompactViz = useCallback((v) => { setCompactViz(v); try { localStorage.setItem(COMPACT_VIZ_KEY, v); } catch { /* ignore */ } }, []);
   const [listDensity, setListDensity] = useState(() => { try { return localStorage.getItem('studio:listDensity') || 'default'; } catch { return 'default'; } });
   const pickListDensity = useCallback((v) => { setListDensity(v); try { localStorage.setItem('studio:listDensity', v); } catch { /* ignore */ } }, []);
   /* Compact mode. The content card takes the whole window (10px gutters) and
@@ -2853,10 +2863,17 @@ export default function StudioHome({
   // Anything that owns Esc (or the letter keys) while fullscreen is up.
   npFullBlockers.current = !!(rowMenu || plPicker || coverZoom || editingTrack || lyricSel || lyricShareOpen);
 
+  const compactVizCtx = useMemo(() => ({
+    enabled: compactMode, style: compactViz,
+    analyserRef, onNeedAnalyser, currentTrack, isPlaying, currentTime, duration, onSeek,
+    palette: npWashTheme?.palette || null, accent: rawAccent,
+  }), [compactMode, compactViz, analyserRef, onNeedAnalyser, currentTrack, isPlaying, currentTime, duration, onSeek, npWashTheme, rawAccent]);
+
   return (
     /* Flat black behind everything. The radial gradient that used to lift the
        top of the window read as a seam once the content became its own panel —
        the panel floated on a lighter patch instead of on the shell. */
+    <CompactVizContext.Provider value={compactVizCtx}>
     <div className={compactMode ? 'sth-root is-compact' : 'sth-root'} style={{
       position: 'absolute', inset: 0, overflow: 'hidden',
       /* Every themed colour resolves from these four. Defined once on the root
@@ -5647,6 +5664,9 @@ ${HOME_CSS}
                         <SetSeg label="Window layout" value={compactMode ? 'compact' : 'standard'} onPick={(v) => pickCompactMode(v === 'compact')}
                           options={[['standard', 'Standard'], ['compact', 'Compact']]} />
                       </SetRow>
+                      <SetRow title="Compact bar visualizer" note="Fills the empty middle of the library bar in compact mode. Follows local files and Saved Spotify songs alike, and stays still when paused or when reduced motion is on.">
+                        <CompactVizPicker value={compactViz} onPick={pickCompactViz} palette={npWashTheme?.palette} accent={rawAccent} />
+                      </SetRow>
                       <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits about half again as many rows on screen.">
                         <SetSeg label="List density" value={listDensity} onPick={pickListDensity}
                           options={[['compact', 'Compact'], ['default', 'Default'], ['roomy', 'Roomy']]} />
@@ -7316,6 +7336,7 @@ ${HOME_CSS}
         }}
       />
     </div>
+    </CompactVizContext.Provider>
   );
 }
 
@@ -10272,7 +10293,7 @@ function LibHeader({
 
       {!hasControls ? (
         <>
-          <span style={{ flex: 1, minWidth: 8 }} />
+          <CompactVizSlot />
           <LibFilterTag filter={filter} onFilter={onFilter} label={searchPlaceholder} />
           {/* Also on the single-tier branch. Albums and Artists pass no
               playback or sort handlers and so take this path — without it,
@@ -10306,7 +10327,8 @@ function LibHeader({
           </button>
         ) : null}
 
-        <span style={{ flex: 1, minWidth: 8 }} />
+        {/* The empty middle; in compact mode, the visualizer if one is picked. */}
+        <CompactVizSlot />
 
         <LibFilterTag filter={filter} onFilter={onFilter} label={searchPlaceholder} />
         {onPickSort ? (

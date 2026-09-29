@@ -1706,6 +1706,21 @@ export default function App() {
     }
   }, [isPlaying, beatReactive, gainBoost, transitionMode, ensureAnalyser]);
 
+  /* The compact-bar visualizer asks for the analyser when a local file plays
+     and nothing else has built it. Built mid-song, the context can start
+     suspended and would silence the track, so resume it here, and carry the
+     saved boost over just as the effect above does. */
+  const needAnalyser = useCallback(() => {
+    if (analyserRef.current) return;
+    ensureAnalyser();
+    const ctx = audioCtxRef.current;
+    const gainNode = gainNodeRef.current;
+    if (gainNode && ctx) {
+      try { gainNode.gain.setTargetAtTime(gainBoost, ctx.currentTime, 0.03); } catch { gainNode.gain.value = gainBoost; }
+    }
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+  }, [ensureAnalyser, gainBoost]);
+
   // Ambient idle-timer. The "idle" definition and delay both come from
   // user settings:
   //   - 'off'    → never engages
@@ -3659,6 +3674,7 @@ export default function App() {
         onSetVolume={setVolume}
         beatReactive={beatReactive}
         analyserRef={analyserRef}
+        onNeedAnalyser={needAnalyser}
         ensureAnalyser={ensureAnalyser}
         nowPlayingSliderStyle={nowPlayingSliderStyle}
         fullscreenLyricsMode={fullscreenLyricsMode}

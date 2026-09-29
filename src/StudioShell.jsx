@@ -76,6 +76,7 @@ export default function StudioShell({
   // Audio-reactive visuals
   beatReactive = false,
   analyserRef = null,
+  onNeedAnalyser,
   ensureAnalyser,
   // Overlay display settings (owned by App.jsx, persisted there)
   nowPlayingSliderStyle = 'circle',
@@ -365,6 +366,9 @@ export default function StudioShell({
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <StudioHome
         library={library}
+        duration={duration}
+        analyserRef={analyserRef}
+        onNeedAnalyser={onNeedAnalyser}
         onResetStats={onResetStats}
         /* TEMPORARY — surfaces "Replay setup" in Settings → Connections. */
         onReplayOnboarding={replayOnboarding}
