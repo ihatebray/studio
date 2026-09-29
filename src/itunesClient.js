@@ -118,6 +118,40 @@ function canonicalArtistName(s) {
  */
 const JUNK_COLLECTION = /various artists|now that'?s what|karaoke|tribute|made famous|originally performed|in the style of|workout|cover version|covers? of|instrumental versions?|as made popular|hit crew|ringtone/i;
 
+/**
+ * Releases that carry a song without being where it came from: DJ mixes,
+ * label samplers and the year's-hits playlists iTunes sells as albums. Only
+ * the metadata match uses this. Search and the artist pages still list them.
+ */
+const MIX_COLLECTION = /\bdj mix\b|\bmixed by\b|\b(?:continuous|non[- ]?stop) mix\b|\bmegamix\b|\bplaylist\b|\bmix ?tape vol|\b(?:19|20)\d\d hits\b|\bhits (?:of )?(?:19|20)\d\d\b|\bhits of the (?:\d0s|year)\b|\bbest of (?:19|20)\d\d\b|\bsummer (?:hits|vibes)\b|\b(?:chill|party|gym|study|road ?trip) (?:vibes|hits|mix|songs)\b|\bpresents\b.*\b(?:vol|volume)\b|\bministry of sound\b|\bclub (?:hits|anthems)\b|\bmashup\b|\bsped up\b|\bslowed\b/i;
+
+/** Mixed edits of a song, cut to fit a DJ mix ("Song (Mixed)"). */
+const MIXED_EDIT = /[([](?:mixed|mix ?cut)[)\]]/i;
+
+/** The artist's own catalogue repackaged: a real release, but never the
+ *  one a song first came out on, so its cover is the wrong one to show. */
+const REPACKAGE = /\bgreatest hits\b|\bbest of\b|\bthe (?:very best|essential|definitive|ultimate)\b|\banthology\b|\bthe collection\b|\bhits collection\b|\bsingles collection\b|\bthe singles\b|\bthe highlights\b|\bgold\b$/i;
+
+/** The first-billed artist of a credit ("Drake, Future & Young Thug" →
+ *  "Drake"), which is who the release belongs to. A comma followed by "The"
+ *  is part of the name ("Tyler, The Creator"), not a second artist. */
+function primaryArtist(s) {
+  const parts = String(s || '')
+    .split(/\s*(?:;|\/|&|\+|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\bvs\.?|\bx\b)\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const byComma = (parts[0] || '').split(/\s*,\s*/).filter(Boolean);
+  if (byComma.length > 1 && /^the\b/i.test(byComma[1])) return `${byComma[0]}, ${byComma[1]}`;
+  return byComma[0] || '';
+}
+
+/** Whether two artist credits share a significant (3+ character) word. */
+function artistsOverlap(a, b) {
+  const want = new Set(normalize(a).split(' ').filter((t) => t.length >= 3));
+  if (!want.size) return false;
+  return normalize(b).split(' ').some((t) => t.length >= 3 && want.has(t));
+}
+
 /* ---------------------------------------------------------------------------
  *  Request layer: coalescing, caching, throttling
  *
@@ -395,6 +429,8 @@ function scoreCandidate(cand, target) {
   // Hard rejections first.
   if (cand.kind && cand.kind !== 'song') return -Infinity;
   if (JUNK_COLLECTION.test(cand.collectionName || '')) return -Infinity;
+  if (MIX_COLLECTION.test(cand.collectionName || '') && !MIX_COLLECTION.test(target.album || '')) return -Infinity;
+  if (MIXED_EDIT.test(cand.trackName || '') && !MIXED_EDIT.test(target.title || '')) return -Infinity;
 
   const candTitle = normalize(cand.trackName);
   const candArtist = normalize(cand.artistName);
@@ -469,6 +505,26 @@ function scoreCandidate(cand, target) {
     }
   }
 
+  // Whose release it is. iTunes gives a compilation its own album artist
+  // ("Various Artists", a label, a DJ) while each track keeps the real
+  // artist, so the artist check above can't see a playlist-style album. A
+  // release by the song's own artist is where its cover comes from; one by
+  // someone else only wins when the artist has nothing better, such as a
+  // song that was only ever on a soundtrack.
+  const owner = cand.collectionArtistName || '';
+  if (!owner || normalize(owner) === candArtist) score += 4;
+  else if (/various/i.test(owner) || !artistsOverlap(target.artist || cand.artistName, owner)) score -= 14;
+  if (target.primaryArtist && artistsOverlap(target.primaryArtist, owner || cand.artistName)) score += 2;
+
+  // Found by walking the artist's own albums rather than by text search.
+  if (cand._fromCatalog) score += 3;
+
+  // A best-of carries the song under a different cover than the release it
+  // came out on, and very long collections are usually box sets or
+  // samplers.
+  if (REPACKAGE.test(cand.collectionName || '') && !REPACKAGE.test(target.album || '')) score -= 4;
+  if (cand.trackCount > 40) score -= 3;
+
   // Prefer albums over singles (a "single" release often has a slightly
   // different master than the album version the user likely has).
   if (cand.collectionType === 'Album') score += 1;
@@ -484,6 +540,11 @@ function scoreCandidate(cand, target) {
   if (cand.trackExplicitness === 'explicit') score += 2;
 
   return score;
+}
+
+function releaseTime(cand) {
+  const t = new Date(cand.releaseDate || 0).getTime();
+  return Number.isFinite(t) && t > 0 ? t : Infinity;
 }
 
 /**
@@ -1117,7 +1178,9 @@ export async function itunesCrossCheck(target) {
 
   const catalogPromise = (async () => {
     if (!artist) return [];
-    const words = artist.split(/\s+/).filter(Boolean);
+    // Only the first-billed artist: "Drake, Future" as one name resolves
+    // to nobody, or to whoever iTunes thinks "drake future" is.
+    const words = primaryArtist(artist).split(/\s+/).filter(Boolean);
     const a = await resolveArtist(words);
     if (!a?.artistId) return [];
     const { tracks } = await fetchArtistDiscography(a.artistId, { maxAlbumsForTracks: 12 });
@@ -1128,20 +1191,26 @@ export async function itunesCrossCheck(target) {
 
   // Merge + dedupe by trackId.
   const byId = new Map();
-  for (const r of [...textResults, ...catalog]) {
-    if (!r.trackId || byId.has(r.trackId)) continue;
-    byId.set(r.trackId, r);
+  for (const r of catalog) {
+    if (r.trackId && !byId.has(r.trackId)) byId.set(r.trackId, { ...r, _fromCatalog: true });
+  }
+  for (const r of textResults) {
+    if (r.trackId && !byId.has(r.trackId)) byId.set(r.trackId, r);
   }
   const candidates = Array.from(byId.values());
   if (!candidates.length) return null;
 
+  const want = {
+    title, artist, primaryArtist: primaryArtist(artist), album: target.album, durationMs: target.durationMs,
+  };
   let best = null;
   let bestScore = -Infinity;
   for (const cand of candidates) {
-    const s = scoreCandidate(cand, {
-      title, artist, album: target.album, durationMs: target.durationMs,
-    });
-    if (s > bestScore) { bestScore = s; best = cand; }
+    const s = scoreCandidate(cand, want);
+    // On a tie, the earlier release: that's the original, not a reissue.
+    if (s > bestScore || (s === bestScore && best && releaseTime(cand) < releaseTime(best))) {
+      bestScore = s; best = cand;
+    }
   }
 
   // Confidence floor: require a minimum score so we never apply a

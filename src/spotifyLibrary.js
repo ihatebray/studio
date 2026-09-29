@@ -75,7 +75,11 @@ async function describe(id, meta, hints = null) {
     ['itunes', async () => {
       take(hints);
       if (blank(merged.title)) return null;
-      const m = await itunesCrossCheck({ title: merged.title, artist: merged.artists, durationMs: Number(merged.durationMs) || 0 });
+      const m = await itunesCrossCheck({
+        title: merged.title, artist: merged.artists,
+        album: blank(merged.album) ? '' : merged.album,
+        durationMs: Number(merged.durationMs) || 0,
+      });
       return m && { ...m, album: itunesAlbum(m.album), spotifyId: undefined };
     }],
   ];
