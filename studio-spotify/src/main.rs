@@ -19,6 +19,9 @@
 //!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"stop"}
 //!   {"cmd":"seek","positionMs":12345}
 //!   {"cmd":"volume","value":0.8}              0.0 – 1.0
+//!   {"cmd":"search","req":1,"q":"…"}          catalogue search (search.rs)
+//!   {"cmd":"album","req":2,"id":"…"}          an album's tracklist
+//!   {"cmd":"artist","req":3,"id":"…"}         an artist's releases and top songs
 //!   {"cmd":"quit"}
 //!
 //! Events (stdout):
@@ -30,6 +33,8 @@
 //!   {"event":"unavailable","id":"…","throttled":bool,"denied":bool,"transient":bool,"reason":"…"}
 //!   {"event":"track","id":"…","durationMs":n}   metadata loaded
 //!   {"event":"levels","v":[24 × 0–100]}         band levels of what's playing, ~30/s
+//!   {"event":"answer","req":1,"ok":true,"data":…}   reply to search / album / artist
+//!                                             or "ok":false,"error":"…"
 //!   {"event":"error","message":"…"}
 
 use std::path::PathBuf;
@@ -49,6 +54,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 mod output;
+mod search;
 mod spectrum;
 use output::{Cue, CuedSink, Silence};
 
@@ -89,6 +95,12 @@ enum Command {
     Stop,
     Seek { #[serde(rename = "positionMs")] position_ms: u32 },
     Volume { value: f64 },
+    /// Answered with a "search" event carrying the same `req`, from a task of
+    /// its own so playback commands aren't held up behind it.
+    Search { req: u64, q: String },
+    /// An album's tracklist / an artist's releases and top songs, the same way.
+    Album { req: u64, id: String },
+    Artist { req: u64, id: String },
     Quit,
 }
 
@@ -203,7 +215,13 @@ async fn main() {
             }
             other => {
                 let Some(e) = engine.as_ref() else {
-                    send(json!({ "event": "error", "message": "not signed in" }));
+                    // A request gets its own reply; the player's error event is for playback.
+                    match &other {
+                        Command::Search { req, .. } | Command::Album { req, .. } | Command::Artist { req, .. } => {
+                            send(json!({ "event": "answer", "req": req, "ok": false, "error": "not signed in" }));
+                        }
+                        _ => send(json!({ "event": "error", "message": "not signed in" })),
+                    }
                     continue;
                 };
                 match other {
@@ -221,6 +239,12 @@ async fn main() {
                             e.player.preload(uri);
                         }
                     }
+                    Command::Search { req, q } => answer(req, e.session.clone(), move |s| async move { search::search(&s, &q).await }),
+                    Command::Album { req, id } => answer(req, e.session.clone(), move |s| async move { search::album(&s, &id).await }),
+                    Command::Artist { req, id } => answer(req, e.session.clone(), move |s| async move {
+                        let country = s.country();
+                        search::artist(&s, &id, &country).await
+                    }),
                     Command::Play => e.player.play(),
                     Command::Pause => e.player.pause(),
                     Command::Stop => {
@@ -241,6 +265,21 @@ async fn main() {
         e.player.stop();
         e.session.shutdown();
     }
+}
+
+/// Run a metadata request in a task of its own, so playback commands aren't
+/// held up behind it, and reply with an "answer" event carrying its `req`.
+fn answer<F, Fut>(req: u64, session: Session, job: F)
+where
+    F: FnOnce(Session) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<Value, String>> + Send + 'static,
+{
+    tokio::spawn(async move {
+        emit(match job(session).await {
+            Ok(data) => json!({ "event": "answer", "req": req, "ok": true, "data": data }),
+            Err(error) => json!({ "event": "answer", "req": req, "ok": false, "error": error }),
+        });
+    });
 }
 
 /// One protocol line to stdout. Written and flushed under the stdout lock so

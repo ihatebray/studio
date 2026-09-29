@@ -2548,7 +2548,9 @@ version = "0.1.0"
 dependencies = [
  "librespot-core",
  "librespot-playback",
+ "librespot-protocol",
  "log",
+ "protobuf",
  "rodio",
  "serde",
  "serde_json",

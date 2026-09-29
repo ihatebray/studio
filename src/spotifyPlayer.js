@@ -84,6 +84,15 @@ function onLine(line) {
       last = { id: ev.id, state: ev.event === 'position' || ev.event === 'seeked' ? last.state : ev.event, positionMs: ev.positionMs || 0 };
       broadcast(ev);
       return;
+    case 'answer': {
+      const p = requests.get(ev.req);
+      if (!p) return;
+      requests.delete(ev.req);
+      clearTimeout(p.timer);
+      if (ev.ok) p.resolve(ev.data);
+      else p.reject(new Error(ev.error || 'the Spotify helper couldn’t answer'));
+      return;
+    }
     case 'ended': case 'stopped': case 'unavailable':
       last = { id: ev.id, state: ev.event, positionMs: last.positionMs };
       broadcast(ev);
@@ -217,6 +226,48 @@ export function prepareForReload() {
   write({ cmd: 'stop' });
   return false;
 }
+
+/* ---- metadata requests ------------------------------------------------------
+ * Search, album tracklists and artist discographies, answered by the helper
+ * over its signed-in librespot session (studio-spotify/src/search.rs), the
+ * way Sonora does it: Spotify's client endpoints, not the Web API, so none of
+ * the Web API's or the Client ID's rate limits. Starts the helper if it isn't
+ * running (the first request then waits for the sign-in). */
+const requests = new Map(); // req → { resolve, reject, timer }
+let requestSeq = 0;
+const REQUEST_TIMEOUT_MS = 12_000;
+
+function helperRequest(cmd) {
+  if (!spotifyHelperInstalled()) return Promise.reject(new Error('The Spotify helper isn’t built.'));
+  const st = partnerState();
+  if (!st.connected || st.canStream === false) return Promise.reject(new Error('Spotify isn’t signed in for playback.'));
+  return new Promise((resolve, reject) => {
+    requestSeq += 1;
+    const req = requestSeq;
+    const timer = setTimeout(() => {
+      requests.delete(req);
+      reject(new Error('the Spotify helper didn’t answer in time'));
+    }, REQUEST_TIMEOUT_MS);
+    requests.set(req, { resolve, reject, timer });
+    const r = command({ ...cmd, req });
+    if (r && r.ok === false) {
+      clearTimeout(timer);
+      requests.delete(req);
+      reject(new Error(r.error));
+    }
+  });
+}
+
+/** `{ tracks, albums, artists }` for a query. */
+export function helperSearch(q) {
+  const query = String(q || '').trim();
+  if (!query) return Promise.resolve({ tracks: [], albums: [], artists: [] });
+  return helperRequest({ cmd: 'search', q: query });
+}
+/** `{ album, artists, albumArtUrl, tracks }`, as spotify:albumTracks returns. */
+export const helperAlbum = (id) => helperRequest({ cmd: 'album', id: String(id) });
+/** `{ albums, topTracks }` for an artist. */
+export const helperArtist = (id) => helperRequest({ cmd: 'artist', id: String(id) });
 
 export function stopHelper() {
   quitting = true;

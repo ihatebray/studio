@@ -149,7 +149,7 @@ import * as twitchOverlay from './twitchOverlay.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
-import { registerSpotifyPlayerIpc, prepareForReload } from './spotifyPlayer.js';
+import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import {
@@ -166,6 +166,44 @@ import {
    search (Pathfinder), one request for all three result kinds, shared by
    the three searches InstantSearch sends per query. The routes below it
    (Client ID, public Web API) are the ones with small rate budgets. */
+/* Search through the playback helper's librespot session, as Sonora does
+   (studio-spotify/src/search.rs): the search context plus one batched
+   metadata read, on the client's own endpoints rather than any Web API
+   quota. The three searches per query share one helper call. */
+const helperSearches = new Map(); // lowercased query → { at, promise }
+async function viaHelper(kind, q) {
+  if (!partnerState().connected) return null;
+  const key = String(q || '').trim().toLowerCase();
+  let hit = helperSearches.get(key);
+  if (!hit || Date.now() - hit.at > 10 * 60 * 1000) {
+    hit = { at: Date.now(), promise: helperSearch(q) };
+    helperSearches.set(key, hit);
+    hit.promise.catch(() => helperSearches.delete(key));
+    if (helperSearches.size > 300) helperSearches.delete(helperSearches.keys().next().value);
+  }
+  try {
+    const rows = (await hit.promise)?.[kind];
+    return Array.isArray(rows) && rows.length ? rows : null;
+  } catch (e) {
+    console.warn(`[search:${kind}] helper route failed:`, e?.message || e);
+    return null;
+  }
+}
+
+/* An artist's releases and top songs come back from the helper together; the
+   search panel asks for both at once, so they share one request. */
+const helperArtists = new Map(); // id → { at, promise }
+function helperArtistCached(id) {
+  let hit = helperArtists.get(id);
+  if (!hit || Date.now() - hit.at > 60 * 60 * 1000) {
+    hit = { at: Date.now(), promise: helperArtist(id) };
+    helperArtists.set(id, hit);
+    hit.promise.catch(() => helperArtists.delete(id));
+    if (helperArtists.size > 200) helperArtists.delete(helperArtists.keys().next().value);
+  }
+  return hit.promise;
+}
+
 async function viaPathfinder(kind, q) {
   if (!partnerState().connected) return null;
   try {
@@ -1292,6 +1330,8 @@ ipcMain.handle('spotify:searchArtists', async (_event, q) => {
     return Array.isArray(rows) ? rows : [];
   };
 
+  const hs = await viaHelper('artists', query);
+  if (hs) return remember(hs);
   const pf = await viaPathfinder('artists', query);
   if (pf) return remember(pf);
 
@@ -1339,6 +1379,10 @@ ipcMain.handle('spotify:artistTopTracks', async (_event, id, name) => {
     return rows;
   }
   if (partnerState().connected) {
+    try {
+      const rows = (await helperArtistCached(id)).topTracks || [];
+      if (rows.length) { setArtistTopTracksCache(cacheKey, rows); return rows; }
+    } catch (e) { console.warn('[spotify:artistTopTracks] helper route failed:', e?.message || e); }
     try {
       const rows = await artistTopTracksFast(id);
       if (rows.length) { setArtistTopTracksCache(cacheKey, rows); return rows; }
@@ -1508,6 +1552,10 @@ ipcMain.handle('spotify:artistAlbums', async (_event, id) => {
   const hit = artistAlbumsCache.get(id);
   if (hit && Date.now() - hit.at < ARTIST_ALBUMS_TTL_MS) return hit.data;
   if (partnerState().connected) {
+    try {
+      const rows = (await helperArtistCached(id)).albums || [];
+      if (rows.length) { artistAlbumsCache.set(id, { at: Date.now(), data: rows }); return rows; }
+    } catch (e) { console.warn('[spotify:artistAlbums] helper route failed:', e?.message || e); }
     try {
       const rows = await artistAlbumsFast(id);
       if (rows.length) { artistAlbumsCache.set(id, { at: Date.now(), data: rows }); return rows; }
@@ -2812,6 +2860,8 @@ ipcMain.handle('spotify:search', async (event, query) => {
   if (!q) return [];
   const cached = getSearchCache('tracks', q);
   if (cached) return cached;
+  const hs = await viaHelper('tracks', q);
+  if (hs) { setSearchCache('tracks', q, hs); return hs; }
   const pf = await viaPathfinder('tracks', q);
   if (pf) { setSearchCache('tracks', q, pf); return pf; }
   // Spotify → Deezer. Deezer is the fallback because it needs no auth,
@@ -2849,6 +2899,8 @@ ipcMain.handle('spotify:searchAlbums', async (event, query) => {
   if (!q) return [];
   const cached = getSearchCache('albums', q);
   if (cached) return cached;
+  const hs = await viaHelper('albums', q);
+  if (hs) { setSearchCache('albums', q, hs); return hs; }
   const pf = await viaPathfinder('albums', q);
   if (pf) { setSearchCache('albums', q, pf); return pf; }
   if (spotifyCredentialsConfigured()) {
@@ -2891,7 +2943,11 @@ ipcMain.handle('spotify:albumTracks', async (event, albumId) => {
      Either way a failure in one doesn't blank the tracklist. */
   let data = null;
   if (partnerState().connected) {
-    try { data = await partnerAlbumTracks(id); } catch (e) { console.warn('[spotify:albumTracks] account route failed:', e?.message || e); }
+    // The helper's session first (no Web API quota), then the account's Web API.
+    try { data = await helperAlbum(id); } catch (e) { console.warn('[spotify:albumTracks] helper route failed:', e?.message || e); }
+    if (!data?.tracks?.length) {
+      try { data = await partnerAlbumTracks(id); } catch (e) { console.warn('[spotify:albumTracks] account route failed:', e?.message || e); }
+    }
   }
   if (!data?.tracks?.length) {
     try { data = await spotifyGetAlbumTracks(id); } catch (e) {
