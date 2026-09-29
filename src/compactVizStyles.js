@@ -21,7 +21,7 @@
 import { BANDS } from './vizLevels.js';
 
 export const VIZ_STYLES = [
-  { id: 'neon', name: 'Neon capsules', note: "Rounded bars in the cover's colours", soft: true },
+  { id: 'neon', name: 'Neon capsules', note: "Glowing bars in the cover's colours", soft: true },
   { id: 'proq', name: 'Pro-Q curve', note: 'An analyser curve over the spectrum', soft: true },
   { id: 'ribbon', name: 'Progress ribbon', note: 'The song end to end; click to seek' },
   { id: 'steps', name: 'Beat steps', note: 'Sixteen steps, one bar of music' },
@@ -70,9 +70,10 @@ function rrect(ctx, x, y, w, h, r) {
 
 /* ---- Neon capsules ----
  * Wide rounded bars mirrored from the centre line, bass in the middle, in the
- * cover's colours. No glow around them (it read as fog on the bar); the light
- * is inside each capsule instead: brightest at its centre line, deepening
- * towards its tips, and brighter overall on loud hits. */
+ * cover's colours, lit from inside (brightest along the centre line) with a
+ * tight glow. The glow stays narrower than the gap between capsules: a wide
+ * one (it used to reach 16px) ran neighbouring halos together into a haze
+ * over the whole bar. */
 function neon(f) {
   const { ctx, w, h, dpr, src, palette } = f;
   const span = w * 0.8;
@@ -98,10 +99,13 @@ function neon(f) {
     grad.addColorStop(0.5, core);
     grad.addColorStop(1, tip);
     ctx.fillStyle = grad;
+    ctx.shadowColor = `rgba(${lift(r, 0.3)},${lift(g, 0.3)},${lift(b, 0.3)},${(0.45 + 0.35 * L) * a})`;
+    ctx.shadowBlur = Math.min(gap * 0.65, 2 + 2.5 * L) * dpr;
     ctx.beginPath();
     rrect(ctx, (x0 + i * (bw + gap)) * dpr, (mid - half) * dpr, bw * dpr, half * 2 * dpr, (bw / 2) * dpr);
     ctx.fill();
   }
+  ctx.shadowBlur = 0;
 }
 
 /* ---- Pro-Q curve ----
