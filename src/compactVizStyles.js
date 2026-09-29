@@ -21,7 +21,7 @@
 import { BANDS } from './vizLevels.js';
 
 export const VIZ_STYLES = [
-  { id: 'neon', name: 'Neon capsules', note: "Glowing bars in the cover's colours", soft: true },
+  { id: 'neon', name: 'Neon capsules', note: "Rounded bars in the cover's colours", soft: true },
   { id: 'proq', name: 'Pro-Q curve', note: 'An analyser curve over the spectrum', soft: true },
   { id: 'ribbon', name: 'Progress ribbon', note: 'The song end to end; click to seek' },
   { id: 'steps', name: 'Beat steps', note: 'Sixteen steps, one bar of music' },
@@ -69,8 +69,10 @@ function rrect(ctx, x, y, w, h, r) {
 }
 
 /* ---- Neon capsules ----
- * Wide rounded bars mirrored from the centre line, bass in the middle, each
- * glowing in the cover's colours; the glow blooms on loud hits. */
+ * Wide rounded bars mirrored from the centre line, bass in the middle, in the
+ * cover's colours. No glow around them (it read as fog on the bar); the light
+ * is inside each capsule instead: brightest at its centre line, deepening
+ * towards its tips, and brighter overall on loud hits. */
 function neon(f) {
   const { ctx, w, h, dpr, src, palette } = f;
   const span = w * 0.8;
@@ -85,15 +87,21 @@ function neon(f) {
     const L = mirrored(src, x);
     const half = Math.max(bw / 2, L * (mid - 3));
     const [r, g, b] = mix(palette, x);
-    const lift = (c) => Math.round(c + (255 - c) * 0.5);
-    ctx.shadowColor = `rgba(${r},${g},${b},${0.5 + 0.5 * L})`;
-    ctx.shadowBlur = (4 + 12 * L) * dpr;
-    ctx.fillStyle = `rgba(${lift(r)},${lift(g)},${lift(b)},${(0.55 + 0.45 * L) * (0.35 + 0.65 * edge(x))})`;
+    const lift = (c, k) => Math.round(c + (255 - c) * k);
+    const a = (0.6 + 0.4 * L) * (0.35 + 0.65 * edge(x));
+    const y0 = (mid - half) * dpr;
+    const y1 = (mid + half) * dpr;
+    const grad = ctx.createLinearGradient(0, y0, 0, y1);
+    const tip = `rgba(${lift(r, 0.25)},${lift(g, 0.25)},${lift(b, 0.25)},${a})`;
+    const core = `rgba(${lift(r, 0.55 + 0.3 * L)},${lift(g, 0.55 + 0.3 * L)},${lift(b, 0.55 + 0.3 * L)},${a})`;
+    grad.addColorStop(0, tip);
+    grad.addColorStop(0.5, core);
+    grad.addColorStop(1, tip);
+    ctx.fillStyle = grad;
     ctx.beginPath();
     rrect(ctx, (x0 + i * (bw + gap)) * dpr, (mid - half) * dpr, bw * dpr, half * 2 * dpr, (bw / 2) * dpr);
     ctx.fill();
   }
-  ctx.shadowBlur = 0;
 }
 
 /* ---- Pro-Q curve ----
