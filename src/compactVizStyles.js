@@ -365,7 +365,7 @@ function ripple(f) {
     ctx.strokeStyle = rgba(col, a);
     ctx.lineWidth = (2.2 - 1.4 * k) * dpr;
     ctx.beginPath();
-    ctx.ellipse(cx * dpr, mid * dpr, rad * dpr, Math.min(rad, mid - 6) * 0.62 * dpr, 0, 0, 7);
+    ctx.ellipse(cx * dpr, mid * dpr, Math.max(0.1, rad) * dpr, Math.max(0.1, Math.min(rad, mid - 6) * 0.62) * dpr, 0, 0, 7);
     ctx.stroke();
   }
   const core = 3 + 6 * (playing ? src.bass : 0);
@@ -415,7 +415,18 @@ export function drawViz(style, f) {
   const fn = DRAW[style];
   if (!fn) return;
   f.ctx.clearRect(0, 0, f.w * f.dpr, f.h * f.dpr);
-  fn(f);
+  // One bad frame must not stop the loop (and with it the visualizer) for
+  // good: skip it, reset the style's state, and carry on.
+  try {
+    fn(f);
+  } catch (err) {
+    console.warn('[compact viz]', style, err?.message || err);
+    for (const k of Object.keys(f.s)) delete f.s[k];
+    f.ctx.restore?.();
+    f.ctx.shadowBlur = 0;
+    f.ctx.globalAlpha = 1;
+    f.ctx.globalCompositeOperation = 'source-over';
+  }
 }
 
 /** Whether a paused style still has something moving (sparks, rings). */

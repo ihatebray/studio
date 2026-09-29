@@ -128,7 +128,8 @@ function CompactVisualizer({
     e.last = performance.now();
     e.pausedFor = 0;
     const frame = (now) => {
-      const dt = Math.min(0.05, (now - e.last) / 1000);
+      // rAF's timestamp can sit a hair before `last`; never step backwards.
+      const dt = Math.min(0.05, Math.max(0, (now - e.last) / 1000));
       e.last = now;
       draw(dt);
       const L = live.current;
@@ -250,7 +251,7 @@ function TilePreview({ style, animate, palette }) {
     if (!animate || reduceMotion()) return undefined;
     let raf = 0;
     let last = performance.now();
-    const loop = (now) => { frameOf(Math.min(0.05, (now - last) / 1000)); last = now; raf = requestAnimationFrame(loop); };
+    const loop = (now) => { frameOf(Math.min(0.05, Math.max(0, (now - last) / 1000))); last = now; raf = requestAnimationFrame(loop); };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, [style, animate, palette]);
