@@ -4405,13 +4405,14 @@ ${HOME_CSS}
         {/* Column 3: mirrors column 1's width, so whatever sits here can't
             pull the search off centre. */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, minWidth: 0, WebkitAppRegion: 'no-drag' }}>
+          <ReloadButton />
           <button
             type="button"
             onClick={() => pickSection('settings')}
             title="Settings"
             aria-label="Settings"
             style={{
-              width: 34, height: 34, borderRadius: 10, border: 'none', cursor: 'pointer', marginLeft: 'auto',
+              width: 34, height: 34, borderRadius: 10, border: 'none', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               background: section === 'settings' ? 'rgba(var(--st-fg-rgb), 0.09)' : 'transparent',
               color: section === 'settings' ? '#fff' : 'rgba(var(--st-fg-rgb), 0.5)',
@@ -10106,6 +10107,46 @@ function SpotifyPlaybackCheck({ needsReauth, onReauth }) {
         </>
       ) : null}
     </div>
+  );
+}
+
+/** Top bar, beside Settings: pick up changes without quitting the app. The
+ *  main process decides how much that takes (main.js, reloadApp): a window
+ *  reload for screen changes, a full restart when the main process was
+ *  rebuilt. Shift+click always restarts. Ctrl+R / Ctrl+Shift+R do the same. */
+function ReloadButton() {
+  const [busy, setBusy] = useState(false);
+  const [hover, setHover] = useState(false);
+  const api = typeof window !== 'undefined' ? window.electronAPI : null;
+  if (!api?.appReload) return null;
+  const run = (e) => {
+    if (busy) return;
+    setBusy(true);
+    api.appReload({ full: e.shiftKey }).catch(() => setBusy(false));
+  };
+  return (
+    <button
+      type="button"
+      onClick={run}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title="Reload (Ctrl+R) · Shift+click to restart Studio (Ctrl+Shift+R)"
+      aria-label="Reload Studio"
+      style={{
+        width: 34, height: 34, borderRadius: 10, border: 'none', cursor: busy ? 'progress' : 'pointer', marginLeft: 'auto',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: hover ? 'rgba(var(--st-fg-rgb), 0.07)' : 'transparent',
+        color: hover || busy ? '#fff' : 'rgba(var(--st-fg-rgb), 0.5)',
+        transition: 'background 0.16s ease, color 0.16s ease',
+      }}
+    >
+      <style>{'@keyframes sthReloadSpin { to { transform: rotate(360deg); } }'}</style>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        style={{ animation: busy ? 'sthReloadSpin 0.7s linear infinite' : 'none' }}>
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+        <polyline points="21 3 21 9 15 9" />
+      </svg>
+    </button>
   );
 }
 

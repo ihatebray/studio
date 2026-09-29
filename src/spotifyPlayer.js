@@ -17,6 +17,7 @@
  * ========================================================================= */
 
 import { spawn } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { app, BrowserWindow } from 'electron';
 import { getSpotifyHelperPath, spotifyHelperInstalled } from './binPaths.js';
@@ -31,6 +32,7 @@ let restarts = 0;
 let restartTimer = null;
 let quitting = false;
 let intentionalStop = false;
+let spawnedFrom = 0;    // the helper binary's mtime when it was started
 let last = { id: null, state: 'idle', positionMs: 0 }; // for late subscribers
 
 function broadcast(payload) {
@@ -126,6 +128,7 @@ function start() {
   lastError = null;
   setStatus('starting');
   const cacheDir = path.join(app.getPath('userData'), 'spotify-player');
+  spawnedFrom = helperMtime();
   proc = spawn(getSpotifyHelperPath(), [cacheDir], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 
   let buf = '';
@@ -190,6 +193,29 @@ function command(cmd) {
   queue.push(cmd);
   if (!proc) { restarts = 0; start(); }
   return { ok: true, queued: true };
+}
+
+function helperMtime() {
+  try { return fs.statSync(getSpotifyHelperPath()).mtimeMs; } catch { return 0; }
+}
+
+/** The window is about to reload (the in-app reload button). The page that
+ *  was driving playback is going away, so stop the sound; and if the helper
+ *  binary has been rebuilt since it started, restart it so the new build is
+ *  what plays next. Returns true when the helper is being restarted. */
+export function prepareForReload() {
+  if (!proc) return false;
+  queue = [];
+  if (helperMtime() > spawnedFrom) {
+    intentionalStop = true;
+    write({ cmd: 'quit' });
+    const p = proc;
+    setTimeout(() => { try { p.kill(); } catch { /* gone */ } }, 1500);
+    setTimeout(() => { restarts = 0; warmUp(); }, WARM_START_DELAY_MS);
+    return true;
+  }
+  write({ cmd: 'stop' });
+  return false;
 }
 
 export function stopHelper() {

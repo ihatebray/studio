@@ -149,7 +149,7 @@ import * as twitchOverlay from './twitchOverlay.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
-import { registerSpotifyPlayerIpc } from './spotifyPlayer.js';
+import { registerSpotifyPlayerIpc, prepareForReload } from './spotifyPlayer.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import { registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch } from './spotifyPartner.js';
 
@@ -454,9 +454,68 @@ function createWindow() {
     if (k === 'f12' || (mod && input.shift && k === 'i')) {
       mainWindow.webContents.toggleDevTools();
       event.preventDefault();
+    } else if (mod && k === 'r') {
+      // Same as the reload button: Ctrl+R reloads what changed,
+      // Ctrl+Shift+R restarts the whole app.
+      event.preventDefault();
+      reloadApp(mainWindow.webContents, { full: input.shift });
     }
   });
 }
+
+/* =========================================================================
+ *  Reload / restart (the button beside Settings, Ctrl+R, Ctrl+Shift+R)
+ *
+ *  Does the least that picks up what changed:
+ *    - only the screens changed → reload the window (Vite serves the new
+ *      code), restarting the Spotify helper too if its binary was rebuilt;
+ *    - the main process or preload was rebuilt (under `npm start` Forge
+ *      rebuilds them on save but keeps running the old ones) → restart the
+ *      whole app. `full` forces that.
+ * ========================================================================= */
+const fileMtime = (p) => { try { return fs.statSync(p).mtimeMs; } catch { return 0; } };
+const bootMtimes = { main: fileMtime(__filename), preload: fileMtime(resolvePreloadPath()) };
+let restarting = false;
+
+function mainProcessRebuilt() {
+  return fileMtime(__filename) > bootMtimes.main || fileMtime(resolvePreloadPath()) > bootMtimes.preload;
+}
+
+function restartApp() {
+  if (restarting) return;
+  restarting = true;
+  const trigger = process.env.STUDIO_RESTART_FILE;
+  if (!app.isPackaged && trigger) {
+    /* Under `npm start`: ask Forge to restart us, as typing "rs" in its
+       terminal does (vite.main.config.mjs watches this file). Relaunching
+       ourselves would end Forge, and the dev server with it. Forge stops
+       the old process with SIGTERM, which skips the quit events, so they
+       run here first: the library database is saved, the helper stopped. */
+    const noop = { preventDefault() {} };
+    app.emit('before-quit', noop);
+    app.emit('will-quit', noop);
+    try {
+      fs.writeFileSync(trigger, String(Date.now()));
+      return;
+    } catch (e) {
+      console.warn('[reload] could not ask Forge to restart:', String(e?.message || e));
+    }
+  }
+  app.relaunch();
+  app.exit(0);
+}
+
+function reloadApp(contents, { full = false } = {}) {
+  if (full || mainProcessRebuilt()) {
+    restartApp();
+    return { mode: 'restart' };
+  }
+  const helper = prepareForReload();
+  contents.reloadIgnoringCache();
+  return { mode: 'reload', helper };
+}
+
+ipcMain.handle('app:reload', (e, opts) => reloadApp(e.sender, opts || {}));
 
 app.whenReady().then(async () => {
   protocol.handle('studio-media', handleStudioMediaRequest);

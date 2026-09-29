@@ -91,6 +91,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('update:status', listener);
   },
   appGetVersion: () => ipcRenderer.invoke('app:getVersion'),
+  /** Reload what changed (window, Spotify helper) or, with full / a rebuilt
+   *  main process, restart the app. Resolves { mode: 'reload' | 'restart' }. */
+  appReload: (opts) => ipcRenderer.invoke('app:reload', opts),
   // "What's new" overlay support
   whatsnewGetLastSeen: () => ipcRenderer.invoke('whatsnew:getLastSeen'),
   whatsnewSetLastSeen: (version) => ipcRenderer.invoke('whatsnew:setLastSeen', version),
