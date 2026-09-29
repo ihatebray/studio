@@ -18,7 +18,7 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { LevelSource, shapeFor, SHAPE_SLOTS } from './vizLevels.js';
-import { VIZ_STYLES, drawViz, stillMoving, demoSource } from './compactVizStyles.js';
+import { VIZ_STYLES, SOFT_EDGE, drawViz, stillMoving, demoSource } from './compactVizStyles.js';
 import { spotifyIdOf } from './spotifyMediaElement.js';
 
 export const CompactVizContext = createContext(null);
@@ -27,10 +27,15 @@ export const COMPACT_VIZ_KEY = 'studio:compactViz';
 const reduceMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 /* Every style fades out on all four sides, so nothing ever meets a hard edge. */
-const MASK = 'linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent), linear-gradient(180deg, transparent, #000 20%, #000 80%, transparent)';
-const canvasStyle = {
-  width: '100%', height: '100%', display: 'block',
-  WebkitMaskImage: MASK, WebkitMaskComposite: 'source-in', maskImage: MASK, maskComposite: 'intersect',
+const maskFor = (top) => `linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent), linear-gradient(180deg, transparent, #000 ${top}%, #000 ${100 - top}%, transparent)`;
+/* The equalizer styles stay inside their space by construction, so they keep
+   the side fades but only a slight one top and bottom, and use the height. */
+const canvasStyleFor = (style) => {
+  const mask = maskFor(SOFT_EDGE.has(style) ? 6 : 20);
+  return {
+    width: '100%', height: '100%', display: 'block',
+    WebkitMaskImage: mask, WebkitMaskComposite: 'source-in', maskImage: mask, maskComposite: 'intersect',
+  };
 };
 
 /** Cover colours as [r,g,b], lifted towards white so they read on the
@@ -73,15 +78,6 @@ function CompactVisualizer({
   if (lastTime.current.value !== currentTime) lastTime.current = { value: currentTime, at: performance.now() };
   live.current = { style, isPlaying, currentTrack, duration, pal, onNeedAnalyser, analyserRef };
 
-  const coverSrc = currentTrack?.coverArt || null;
-  const cover = useMemo(() => {
-    if (!coverSrc) return null;
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = coverSrc;
-    return img;
-  }, [coverSrc]);
-  live.current.cover = cover;
 
   const engine = useRef(null);
   if (!engine.current) {
@@ -115,7 +111,7 @@ function CompactVisualizer({
     }
     drawViz(L.style, {
       ctx: canvas.getContext('2d'), w: e.w, h: e.h, dpr: e.dpr, src: e.src,
-      t: e.t, dt, playing: !!L.isPlaying, palette: L.pal, cover: L.cover,
+      t: e.t, dt, playing: !!L.isPlaying, palette: L.pal,
       progress, hover: e.hover, shape, s: e.s,
     });
   }, []);
@@ -134,7 +130,7 @@ function CompactVisualizer({
       draw(dt);
       const L = live.current;
       e.pausedFor = L.isPlaying ? 0 : e.pausedFor + dt;
-      const settled = !L.isPlaying && e.pausedFor > 1.5 && e.src.loud < 0.005 && !stillMoving(L.style, e.s);
+      const settled = !L.isPlaying && e.pausedFor > 1.5 && e.src.loud < 0.005 && !stillMoving();
       if (settled || document.hidden) { e.running = false; return; }
       e.raf = requestAnimationFrame(frame);
     };
@@ -172,12 +168,6 @@ function CompactVisualizer({
   // Anything that changes the picture restarts the loop if it had settled.
   useEffect(() => { engine.current.s = {}; kick(); }, [style, kick]);
   useEffect(() => { kick(); }, [isPlaying, currentTrack?.id, pal, currentTime, kick]);
-  useEffect(() => {
-    if (!cover) return undefined;
-    const onLoad = () => kick();
-    cover.addEventListener('load', onLoad);
-    return () => cover.removeEventListener('load', onLoad);
-  }, [cover, kick]);
 
   /* Progress ribbon: hover shows the time, click or arrow keys seek. */
   const scrub = style === 'ribbon' && duration > 0 && onSeek;
@@ -202,8 +192,8 @@ function CompactVisualizer({
       e.preventDefault();
       onSeek(Math.min(duration, Math.max(0, currentTime + step)));
     },
-    style: { ...canvasStyle, cursor: 'pointer' },
-  } : { 'aria-hidden': true, style: canvasStyle };
+    style: { ...canvasStyleFor(style), cursor: 'pointer' },
+  } : { 'aria-hidden': true, style: canvasStyleFor(style) };
 
   return (
     <span className="sth-cviz" style={{ flex: 1, minWidth: 60, alignSelf: 'stretch', margin: '0 14px', position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -244,7 +234,7 @@ function TilePreview({ style, animate, palette }) {
     const frameOf = (dt) => {
       src.update(dt);
       t += dt;
-      drawViz(style, { ctx: canvas.getContext('2d'), w, h, dpr, src, t, dt, playing: true, palette, cover: null, progress: (t / 90) % 1, hover: null, shape: null, s });
+      drawViz(style, { ctx: canvas.getContext('2d'), w, h, dpr, src, t, dt, playing: true, palette, progress: (t / 90) % 1, hover: null, shape: null, s });
     };
     // Warm the demo up so a still tile shows the style mid-song, not at rest.
     for (let i = 0; i < 90; i++) frameOf(1 / 60);
@@ -255,7 +245,7 @@ function TilePreview({ style, animate, palette }) {
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, [style, animate, palette]);
-  return <canvas ref={ref} aria-hidden style={{ ...canvasStyle, height: 34 }} />;
+  return <canvas ref={ref} aria-hidden style={{ ...canvasStyleFor(style), height: 34 }} />;
 }
 
 export function CompactVizPicker({ value, onPick, palette, accent }) {
