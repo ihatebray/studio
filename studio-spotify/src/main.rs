@@ -12,7 +12,8 @@
 //! credentials, so no audio is cached either.
 //!
 //! Commands (stdin):
-//!   {"cmd":"auth","token":"<access token>"}   sign in (token optional once cached)
+//!   {"cmd":"auth","token":"<access token>","preferCached":true}
+//!                                             sign in (saved sign-in first when preferCached)
 //!   {"cmd":"load","id":"<track id>","play":true,"positionMs":0,"cut":true}
 //!   {"cmd":"preload","id":"<track id>"}
 //!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"stop"}
@@ -58,7 +59,15 @@ const ACCOUNT_WAIT: Duration = Duration::from_secs(4);
 #[derive(Deserialize)]
 #[serde(tag = "cmd", rename_all = "camelCase")]
 enum Command {
-    Auth { token: Option<String> },
+    /// `preferCached`: connect with the reusable sign-in librespot saved
+    /// last time, as Sonora does after its first login, and use `token` only
+    /// if there is none or it's refused. Without it, `token` is used (a fresh
+    /// sign-in in Settings, possibly to another account).
+    Auth {
+        token: Option<String>,
+        #[serde(default, rename = "preferCached")]
+        prefer_cached: bool,
+    },
     /// `cut: false` is a natural advance after "ended": the old track's
     /// tail is still in the output queue and plays out into the new one.
     /// Anything else (a skip, a click) cuts the old audio off at once.
@@ -146,12 +155,12 @@ async fn main() {
 
         match cmd {
             Command::Quit => break,
-            Command::Auth { token } => {
+            Command::Auth { token, prefer_cached } => {
                 if let Some(old) = engine.take() {
                     old.player.stop();
                     old.session.shutdown();
                 }
-                match connect(cache_dir.clone(), token).await {
+                match connect(cache_dir.clone(), token, prefer_cached).await {
                     Ok((session, account)) => {
                         let e = start_player(session.clone(), volume);
                         send(json!({
@@ -231,39 +240,34 @@ fn track_uri(id: &str) -> Option<SpotifyUri> {
     SpotifyUri::from_uri(&uri).ok()
 }
 
-/// Connects with the token Studio passes, or — with no token — the reusable
-/// credentials librespot cached last time. Returns the account type.
-async fn connect(cache_dir: Option<PathBuf>, token: Option<String>) -> Result<(Session, String), (&'static str, String)> {
+/// Connects with the token Studio passes, or the reusable credentials
+/// librespot cached last time (first, when `prefer_cached`). Returns the
+/// account type.
+async fn connect(cache_dir: Option<PathBuf>, token: Option<String>, prefer_cached: bool) -> Result<(Session, String), (&'static str, String)> {
     // Credentials only: the audio and volume slots are None, so nothing
     // else is ever written.
-    let cache = match &cache_dir {
+    let open_cache = || match &cache_dir {
         Some(dir) => Cache::new(Some(dir.as_path()), None, None, None).ok(),
         None => None,
     };
-    let credentials = match token.filter(|t| !t.trim().is_empty()) {
-        Some(t) => Credentials::with_access_token(t),
-        None => match cache.as_ref().and_then(|c| c.credentials()) {
-            Some(c) => c,
-            None => return Err(("expired", "No saved sign-in — sign in to Spotify in Settings.".into())),
-        },
-    };
+    let token = token.filter(|t| !t.trim().is_empty());
+    let cached = open_cache().and_then(|c| c.credentials());
 
-    let config = SessionConfig { client_id: CLIENT_ID.to_string(), ..Default::default() };
-    let session = Session::new(config, cache);
-    if let Err(e) = session.connect(credentials, true).await {
-        let msg = e.to_string();
-        let lower = msg.to_lowercase();
-        let kind = if lower.contains("bad credentials") || lower.contains("token") || lower.contains("auth") {
-            "expired"
-        } else if lower.contains("premium") {
-            "premium"
-        } else if lower.contains("dns") || lower.contains("connect") || lower.contains("timed out") {
-            "network"
-        } else {
-            "refused"
-        };
-        return Err((kind, msg));
-    }
+    let session = match (prefer_cached, cached, token) {
+        (true, Some(saved), token) => match session_with(open_cache(), saved).await {
+            Ok(s) => s,
+            Err(refused) => match token {
+                Some(t) => {
+                    eprintln!("studio-spotify: saved sign-in refused ({}), using Studio's token", refused.1);
+                    session_with(open_cache(), Credentials::with_access_token(t)).await?
+                }
+                None => return Err(refused),
+            },
+        },
+        (_, _, Some(t)) => session_with(open_cache(), Credentials::with_access_token(t)).await?,
+        (_, Some(saved), None) => session_with(open_cache(), saved).await?,
+        (_, None, None) => return Err(("expired", "No saved sign-in — sign in to Spotify in Settings.".into())),
+    };
 
     // Account type arrives just after connecting. Anything but premium can
     // sign in but will never play, so say so up front instead of failing
@@ -282,6 +286,28 @@ async fn connect(cache_dir: Option<PathBuf>, token: Option<String>) -> Result<(S
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// One connect attempt. librespot saves the reusable credentials Spotify
+/// hands back (store = true), which is what `preferCached` uses next time.
+async fn session_with(cache: Option<Cache>, credentials: Credentials) -> Result<Session, (&'static str, String)> {
+    let config = SessionConfig { client_id: CLIENT_ID.to_string(), ..Default::default() };
+    let session = Session::new(config, cache);
+    if let Err(e) = session.connect(credentials, true).await {
+        let msg = e.to_string();
+        let lower = msg.to_lowercase();
+        let kind = if lower.contains("bad credentials") || lower.contains("token") || lower.contains("auth") {
+            "expired"
+        } else if lower.contains("premium") {
+            "premium"
+        } else if lower.contains("dns") || lower.contains("connect") || lower.contains("timed out") {
+            "network"
+        } else {
+            "refused"
+        };
+        return Err((kind, msg));
+    }
+    Ok(session)
 }
 
 fn start_player(session: Session, volume: f32) -> Engine {

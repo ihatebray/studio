@@ -91,6 +91,12 @@ function onLine(line) {
   }
 }
 
+/* Sign-ins. Like Sonora: a fresh token only when the Settings sign-in just
+   changed (it may be another account); every other start reconnects with the
+   reusable sign-in librespot saved, and falls back to the token if Spotify
+   refuses that. */
+let freshSignIn = false;
+
 async function signIn() {
   setStatus('signingIn');
   const st = partnerState();
@@ -106,7 +112,8 @@ async function signIn() {
   }
   let token = null;
   try { token = await getAccessToken(); } catch { /* fall back to the helper's cached credentials */ }
-  write({ cmd: 'auth', token });
+  write({ cmd: 'auth', token, preferCached: !freshSignIn });
+  freshSignIn = false;
 }
 
 function start() {
@@ -229,9 +236,13 @@ export function registerSpotifyPlayerIpc(ipcMain) {
 
   /* Follow the Settings sign-in: a new sign-in re-authenticates a running
      helper; signing out stops playback and the helper with it. */
-  onPartnerChange((st) => {
+  onPartnerChange(() => {
+    // The stored sign-in, not the event: a cancelled or failed sign-in
+    // reports connected:false while the previous sign-in is still there.
+    const st = partnerState();
     if (st?.connected) {
       lastError = null;
+      freshSignIn = true;
       if (proc) signIn();
       else {
         if (status === 'error') setStatus('stopped');

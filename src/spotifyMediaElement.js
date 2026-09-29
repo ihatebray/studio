@@ -41,24 +41,38 @@ let currentId = null;
    needs the key more), and for a while after any refusal. */
 let loadInFlight = false;
 let quietUntil = 0;
+let lastPreloadAt = 0;
+const failedPreloads = new Set();   // never asked for again this session
 const QUIET_AFTER_THROTTLE_MS = 60_000;
+const PRELOAD_GAP_MS = 1500;
+
+/* Load pacing, Sonora's numbers. Skips closer together than SKIP_DEBOUNCE
+   load only once the skipping stops, so tapping next five times asks for one
+   key, not five; after a load fails the next one waits KEY_COOLDOWN. */
+const SKIP_DEBOUNCE_MS = 250;
+const KEY_COOLDOWN_MS = 1000;
+let lastLoadAt = 0;
+let blockedUntil = 0;
 
 /** Ask the helper to fetch a Saved track ahead. No-op for local files, the
- *  playing track, or the one already preloaded. */
+ *  playing track, the one already preloaded, or one whose preload failed. */
 export function preloadStreamed(track) {
   const id = spotifyIdOf(track) || (typeof track === 'string' ? track : null);
-  if (!id || id === preloaded || id === currentId) return;
-  if (loadInFlight || Date.now() < quietUntil) return;
+  if (!id || id === preloaded || id === currentId || failedPreloads.has(id)) return;
+  const now = Date.now();
+  if (loadInFlight || now < quietUntil || now - lastPreloadAt < PRELOAD_GAP_MS) return;
   const api = typeof window !== 'undefined' ? window.electronAPI : null;
   if (!api?.spotifyPlayerPreload) return;
   preloaded = id;
+  lastPreloadAt = now;
   api.spotifyPlayerPreload(id)?.catch?.(() => { if (preloaded === id) preloaded = null; });
 }
 
 export const HOVER_PRELOAD_MS = 200;
 
-/** onMouseEnter / onMouseLeave for a track row: preload after a short rest,
- *  so sweeping the pointer across a list doesn't fetch every row. */
+/** onMouseEnter / onMouseLeave for a row's play button / number cell (not
+ *  the whole row, as in Sonora): preload after a short rest there, so moving
+ *  the pointer around a list doesn't fetch anything. */
 let hoverTimer = null;
 const cancelHover = () => { clearTimeout(hoverTimer); hoverTimer = null; };
 /* One pointer, one pending hover: the timer lives here rather than per row,
@@ -72,9 +86,10 @@ export function hoverPreload(track) {
 }
 
 const TICK_MS = 250;
-/* Retries after a throttled refusal: 1, 2, 4, 8, 16 s, then give up until
-   the user presses play. */
-const THROTTLE_RETRIES = 5;
+/* Retries after a throttled refusal, as Sonora: 2, 4, 8, 16, 30, 30 s, then
+   wait for the user to press play. */
+const THROTTLE_RETRIES = 6;
+const throttleWait = (n) => Math.min(30_000, 2000 * 2 ** (n - 1));
 
 export class SpotifyMediaElement extends EventTarget {
   constructor(api) {
@@ -94,6 +109,7 @@ export class SpotifyMediaElement extends EventTarget {
     this._tick = null;
     this._throttles = 0;     // throttled refusals in a row for this track
     this._retry = null;      // pending retry after one
+    this._send = null;       // load held back by the skip debounce / cooldown
     this._off = api?.onSpotifyPlayerEvent?.((ev) => this._onEvent(ev)) || null;
   }
 
@@ -146,8 +162,7 @@ export class SpotifyMediaElement extends EventTarget {
     this._seamless = this._ended;
     this.id = String(id || '') || null;
     currentId = this.id;
-    clearTimeout(this._retry);
-    this._retry = null;
+    this._cancelTimers();
     this._throttles = 0;
     // Loading consumes the helper's preload slot either way.
     preloaded = null;
@@ -174,22 +189,44 @@ export class SpotifyMediaElement extends EventTarget {
     this._ended = false;
     if (wasPaused) this._emit('play');
     if (this._pending) {
-      const { positionMs } = this._pending;
-      const cut = !this._seamless;
-      this._pending = null;
-      this._seamless = false;
-      // The helper's mixer starts at 50% and forgets on restart, so every
-      // fresh load carries the current volume ahead of it.
-      this.api?.spotifyPlayerVolume?.(this._volume)?.catch?.(() => {});
-      loadInFlight = true;
-      return this._call(() => this.api.spotifyPlayerLoad(this.id, { play: true, positionMs, cut }));
+      const now = Date.now();
+      const wait = Math.max(blockedUntil - now, now - lastLoadAt < SKIP_DEBOUNCE_MS ? SKIP_DEBOUNCE_MS : 0);
+      lastLoadAt = now;
+      clearTimeout(this._send);
+      if (wait > 0) {
+        // A newer loadTrack/pause/unload cancels this, so a burst of skips
+        // sends only the track the user lands on.
+        this._send = setTimeout(() => { this._send = null; if (!this._paused) this._sendLoad(); }, wait);
+        return Promise.resolve();
+      }
+      return this._sendLoad();
     }
     return this._call(() => this.api.spotifyPlayerPlay());
   }
 
-  pause() {
+  _sendLoad() {
+    if (!this.id || !this._pending) return Promise.resolve();
+    const { positionMs } = this._pending;
+    const cut = !this._seamless;
+    this._pending = null;
+    this._seamless = false;
+    lastLoadAt = Date.now();
+    // The helper's mixer starts at 50% and forgets on restart, so every
+    // fresh load carries the current volume ahead of it.
+    this.api?.spotifyPlayerVolume?.(this._volume)?.catch?.(() => {});
+    loadInFlight = true;
+    return this._call(() => this.api.spotifyPlayerLoad(this.id, { play: true, positionMs, cut }));
+  }
+
+  _cancelTimers() {
     clearTimeout(this._retry);
+    clearTimeout(this._send);
     this._retry = null;
+    this._send = null;
+  }
+
+  pause() {
+    this._cancelTimers();
     if (this._paused) return;
     this._freeze();
     this._paused = true;
@@ -202,8 +239,7 @@ export class SpotifyMediaElement extends EventTarget {
     const had = this.id && !this._pending;
     currentId = null;
     loadInFlight = false;
-    clearTimeout(this._retry);
-    this._retry = null;
+    this._cancelTimers();
     this._freeze();
     this._stopTick();
     this.id = null;
@@ -236,7 +272,10 @@ export class SpotifyMediaElement extends EventTarget {
     if (ev.event === 'unavailable') {
       // Any refusal, even of a preload, means Spotify wants fewer requests.
       if (ev.throttled) quietUntil = Date.now() + QUIET_AFTER_THROTTLE_MS;
-      if (ev.id === preloaded) preloaded = null;
+      if (ev.id === preloaded) {
+        preloaded = null;
+        if (!ev.throttled) failedPreloads.add(ev.id);
+      }
     }
     if (!this.id || ev.id !== this.id || this._pending) return;
     const pos = typeof ev.positionMs === 'number' ? ev.positionMs / 1000 : null;
@@ -324,7 +363,7 @@ export class SpotifyMediaElement extends EventTarget {
         this._fail('Spotify is turning playback down for now (too many requests). Wait a minute, then press play.', 'throttled');
         return;
       }
-      const wait = 1000 * 2 ** (this._throttles - 1);
+      const wait = throttleWait(this._throttles);
       this._freeze();
       this._stopTick();
       this._running = false;
@@ -337,6 +376,7 @@ export class SpotifyMediaElement extends EventTarget {
       }, wait);
       return;
     }
+    blockedUntil = Date.now() + KEY_COOLDOWN_MS;
     this._fail(`Spotify couldn’t play this track${reason}.`, 'unavailable');
   }
 
