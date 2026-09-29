@@ -30,6 +30,65 @@ export function useToast() {
   return useContext(ToastContext);
 }
 
+/* ── Notification history ───────────────────────────────────────
+ *
+ * Toasts go away; this doesn't. Every warning and error (and anything that
+ * comes with an explanation) is kept here with its time, for the bell in the
+ * top bar (Notifications.jsx). The same notice again within a few minutes
+ * bumps the existing entry's time and count rather than adding a row.
+ */
+
+const LOG_KEY = 'studio:notifications';
+const LOG_MAX = 100;
+const LOG_MERGE_MS = 5 * 60 * 1000;
+
+function readLog() {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOG_KEY) || 'null');
+    if (v && Array.isArray(v.items)) return { items: v.items.slice(0, LOG_MAX), seenAt: Number(v.seenAt) || 0 };
+  } catch { /* ignore */ }
+  return { items: [], seenAt: 0 };
+}
+let log = readLog();
+const logSubs = new Set();
+function setLog(next) {
+  log = next;
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(log)); } catch { /* ignore */ }
+  logSubs.forEach((fn) => fn());
+}
+
+/** Keep a notice in the history. `title` is what the toast said. */
+export function recordNotice({ key, kind = 'info', title, detail = '', source = '', at = Date.now() }) {
+  if (!title) return;
+  const k = key || `${kind}:${title}`;
+  const i = log.items.findIndex((n) => n.key === k && at - n.at < LOG_MERGE_MS);
+  let items;
+  if (i >= 0) {
+    const prev = log.items[i];
+    const bumped = { ...prev, title, detail: detail || prev.detail, kind, at, count: (prev.count || 1) + 1 };
+    items = [bumped, ...log.items.slice(0, i), ...log.items.slice(i + 1)];
+  } else {
+    items = [{ id: `${at}-${Math.random().toString(36).slice(2, 7)}`, key: k, kind, title, detail, source, at, count: 1 }, ...log.items];
+  }
+  setLog({ ...log, items: items.slice(0, LOG_MAX) });
+}
+
+export function markNoticesSeen() { if (log.items[0]?.at > log.seenAt) setLog({ ...log, seenAt: Date.now() }); }
+export function clearNotices() { setLog({ items: [], seenAt: Date.now() }); }
+export function removeNotice(id) { setLog({ ...log, items: log.items.filter((n) => n.id !== id) }); }
+
+/** { items, seenAt, unread } — newest first. */
+export function useNotices() {
+  const snap = useSyncExternalStore((fn) => { logSubs.add(fn); return () => logSubs.delete(fn); }, () => log);
+  return { ...snap, unread: snap.items.filter((n) => n.at > snap.seenAt).length };
+}
+
+/** Ask the top bar to open the notifications panel (a toast was clicked). */
+export const OPEN_NOTICES_EVENT = 'studio:open-notices';
+export function openNotices() {
+  try { window.dispatchEvent(new Event(OPEN_NOTICES_EVENT)); } catch { /* ignore */ }
+}
+
 /* ── Bus (state owner — called once in App.jsx) ─────────────── */
 
 export function useToastBus() {
@@ -46,6 +105,11 @@ export function useToastBus() {
     const dedupeKey = opts.dedupeKey || `${kind}:${message}`;
     const durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : DEFAULT_DURATION_MS;
     const action = opts.action || null;
+    // The why, for the notifications panel; the toast itself stays short.
+    const detail = opts.detail ? String(opts.detail) : '';
+    if (opts.log !== false && (kind === 'error' || kind === 'warning' || detail || opts.log)) {
+      recordNotice({ key: opts.dedupeKey, kind, title: message, detail, source: opts.source || '' });
+    }
 
     let resultId = null;
     setToasts((prev) => {
@@ -57,7 +121,7 @@ export function useToastBus() {
         resultId = existing.id;
         const updated = {
           ...existing,
-          message, kind, action, durationMs,
+          message, kind, action, durationMs, detail,
           revision: (existing.revision || 0) + 1,
           createdAt: Date.now(),
         };
@@ -72,7 +136,7 @@ export function useToastBus() {
       const toast = {
         id: resultId,
         dedupeKey,
-        message, kind, action, durationMs,
+        message, kind, action, durationMs, detail,
         revision: 0,
         createdAt: Date.now(),
       };
@@ -515,6 +579,9 @@ function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, on
         <div className="st-toast-msg">{toast.message}</div>
         {toast.action ? (
           <button type="button" className="st-toast-act" onClick={handleAction}>{toast.action.label}</button>
+        ) : toast.detail ? (
+          /* The full explanation lives in the notifications panel. */
+          <button type="button" className="st-toast-act" onClick={() => { openNotices(); dismiss(); }}>Why?</button>
         ) : null}
         <button type="button" className="st-toast-x" onClick={() => dismiss()} title="Dismiss" aria-label="Dismiss">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">

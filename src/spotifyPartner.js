@@ -37,6 +37,7 @@ import http from 'http';
 import crypto from 'crypto';
 import os from 'os';
 import { app, BrowserWindow, shell } from 'electron';
+import { notice, waitWords } from './notices.js';
 
 const CLIENT_ID = '65b708073fc0480ea92a077233ca87bd';
 const REDIRECT_PORT = 8989;
@@ -580,6 +581,12 @@ async function send(op, variables, hash, version) {
   if (res.status === 429) {
     const wait = retryAfterOf(res);
     pathfinderBlockedUntil = Date.now() + wait * 1000;
+    notice({
+      key: 'spotify-pathfinder-limit', kind: 'warning', source: 'Spotify',
+      title: 'Spotify is rate-limiting artist pages',
+      detail: `Monthly listeners, play counts and artist overviews pause for ${waitWords(wait)}. Pages you've already opened still show; Studio tries again after the wait.`,
+      repeatAfterMs: Math.min(wait * 1000, 30 * 60 * 1000),
+    });
     throw rateLimited(wait);
   }
   const body = await res.json().catch(() => null);
@@ -629,6 +636,12 @@ export async function webApi(p, attempt = 0, method = 'GET') {
       return webApi(p, 1, method);
     }
     webApiBlockedUntil = Math.max(webApiBlockedUntil, Date.now() + wait * 1000);
+    notice({
+      key: 'spotify-webapi-limit', kind: 'warning', source: 'Spotify',
+      title: 'Spotify is rate-limiting your account data',
+      detail: `Spotify asked Studio to wait ${waitWords(wait)} before reading your account again. Until then, My Spotify (Home, New Releases), playlists and some Save details show what Studio already has. Playback and search keep working, and Studio picks up again by itself.`,
+      repeatAfterMs: Math.min(wait * 1000, 30 * 60 * 1000),
+    });
     throw rateLimited(wait);
   }
   if (res.status === 401) throw new StepError('signin', 'Spotify rejected the session (401)');

@@ -26,6 +26,7 @@ import { hoverPreload, spotifyIdOf } from './spotifyMediaElement.js';
 import { CompactVizContext, CompactVizSlot, CompactVizPicker, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from './compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases } from './MySpotify.jsx';
+import NotificationsButton from './Notifications.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
 
 /* =========================================================================
@@ -4272,6 +4273,7 @@ export default function StudioHome({
             pull the search off centre. */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, minWidth: 0, WebkitAppRegion: 'no-drag' }}>
           <ReloadButton />
+          <NotificationsButton />
           <button
             type="button"
             onClick={() => pickSection('settings')}

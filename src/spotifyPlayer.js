@@ -21,6 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import { app, BrowserWindow } from 'electron';
 import { getSpotifyHelperPath, spotifyHelperInstalled } from './binPaths.js';
+import { notice } from './notices.js';
 import { getAccessToken, partnerState, onPartnerChange } from './spotifyPartner.js';
 
 let proc = null;
@@ -79,6 +80,15 @@ function onLine(line) {
       lastError = { kind: ev.kind, message: ev.message };
       queue = [];
       setStatus('error');
+      notice({
+        key: `helper-auth-${ev.kind}`, kind: 'error', source: 'Playback',
+        title: ev.kind === 'premium' ? 'Spotify playback needs Premium' : 'Spotify playback couldn’t sign in',
+        detail: {
+          premium: 'Spotify only lets Premium accounts stream to other apps. Saved Spotify songs won’t play until the account in Settings → Connections is Premium.',
+          expired: 'The Spotify sign-in expired. Sign in again in Settings → Connections; saved Spotify songs play again right after.',
+          network: `Studio couldn’t reach Spotify (${ev.message}). Check your connection; it tries again when you press play.`,
+        }[ev.kind] || `Spotify refused the sign-in (${ev.message}). Try signing in again in Settings → Connections.`,
+      });
       return;
     case 'loading': case 'playing': case 'paused': case 'position': case 'seeked':
       last = { id: ev.id, state: ev.event === 'position' || ev.event === 'seeked' ? last.state : ev.event, positionMs: ev.positionMs || 0 };
@@ -132,6 +142,12 @@ function start() {
   if (!spotifyHelperInstalled()) {
     lastError = { kind: 'missing', message: 'The Spotify helper isn’t built yet. Run: npm run setup:spotify' };
     setStatus('error');
+    notice({
+      key: 'helper-missing', kind: 'error', source: 'Playback',
+      title: 'The Spotify helper isn’t installed',
+      detail: 'Saved Spotify songs and Spotify search need the studio-spotify helper. Build it with npm run setup:spotify in the Studio folder, then restart Studio.',
+      repeatAfterMs: 60 * 60 * 1000,
+    });
     return;
   }
   lastError = null;
@@ -170,6 +186,11 @@ function start() {
     if (restarts >= 6) {
       lastError = { kind: 'crash', message: `The Spotify helper keeps exiting (code ${code}).` };
       setStatus('error');
+      notice({
+        key: 'helper-crash', kind: 'error', source: 'Playback',
+        title: 'Spotify playback stopped working',
+        detail: `The playback helper crashed six times in a row (exit code ${code}), so Studio stopped restarting it. Rebuild it with npm run setup:spotify and restart Studio; the terminal shows the helper's own error lines.`,
+      });
       return;
     }
     const wait = Math.min(30_000, 1000 * 2 ** restarts);

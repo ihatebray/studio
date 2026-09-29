@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { app } from 'electron';
+import { notice, waitWords } from './notices.js';
 
 function credPath() {
   return path.join(app.getPath('userData'), 'spotify-credentials.json');
@@ -395,6 +396,12 @@ async function spotifyGet(urlStr, attempt = 0) {
       return spotifyGet(urlStr, attempt + 1);
     }
     clientBlockedUntil = Date.now() + waitMs;
+    notice({
+      key: 'spotify-client-limit', kind: 'warning', source: 'Spotify',
+      title: 'Your Spotify developer app is rate-limited',
+      detail: `Spotify shut out the Client ID set in Settings for ${waitWords(waitMs / 1000)} (Developer Mode apps get a small allowance). Studio stops using it until then; search and details come from your signed-in account and Apple Music instead.`,
+      repeatAfterMs: Math.min(waitMs, 60 * 60 * 1000),
+    });
   }
 
   const text = await res.text();

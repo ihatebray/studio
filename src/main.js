@@ -151,6 +151,7 @@ import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
+import { notice } from './notices.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import {
   registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch,
@@ -185,7 +186,16 @@ async function viaHelper(kind, q) {
     const rows = (await hit.promise)?.[kind];
     return Array.isArray(rows) && rows.length ? rows : null;
   } catch (e) {
-    console.warn(`[search:${kind}] helper route failed:`, e?.message || e);
+    const why = String(e?.message || e);
+    console.warn(`[search:${kind}] helper route failed:`, why);
+    notice({
+      key: 'helper-search', kind: 'info', source: 'Search',
+      title: 'Search is using a slower route',
+      detail: /signed in/i.test(why)
+        ? 'Spotify search normally runs through the playback helper, which isn’t signed in yet, so results came from Spotify’s Web API or Apple Music. Sign in under Settings → Connections if this keeps happening.'
+        : `Spotify search normally runs through the playback helper, which couldn’t answer (${why}), so results came from Spotify’s Web API or Apple Music. Those routes have tighter rate limits.`,
+      repeatAfterMs: 15 * 60 * 1000,
+    });
     return null;
   }
 }
@@ -249,9 +259,31 @@ registerSpotifyFeedIpc(ipcMain);
 ipcMain.handle('library:saveSpotify', async (_e, meta) => {
   try {
     const res = await saveSpotifyTrack(meta);
+    const title = res?.track?.title || meta?.title || 'The song';
     // Saved while every metadata source was refusing: try again shortly.
     if (res?.ok && (res.track?.album === 'Unknown Album' || !res.track?.coverArt || !(res.track?.duration > 0))) {
       scheduleMetadataRepair(60_000);
+      notice({
+        key: 'save-incomplete', kind: 'warning', source: 'Save',
+        title: `Saved “${title}” without its album details`,
+        detail: 'Spotify and Apple Music both refused the lookup, so it went into your library with a missing album, cover or length. Studio fills those in by itself within a few minutes once Spotify answers again.',
+        repeatAfterMs: 2 * 60 * 1000,
+      });
+    } else if (res?.ok && res.fromItunes) {
+      notice({
+        key: 'save-itunes', kind: 'info', source: 'Save',
+        title: `Saved “${title}” with Apple Music details`,
+        detail: 'Spotify didn’t answer the details lookup (usually a rate limit), so its album and cover came from Apple Music. They can differ slightly from Spotify’s; use Refetch metadata on the song to redo them later.',
+        repeatAfterMs: 5 * 60 * 1000,
+      });
+    }
+    if (res?.ok && res.likeError) {
+      notice({
+        key: 'save-like', kind: 'warning', source: 'Save',
+        title: 'Saved, but not hearted on Spotify',
+        detail: `“${title}” is in your library, but Spotify refused to add it to your Liked Songs (${res.likeError}). If it says 403, sign in to Spotify again in Settings → Connections.`,
+        repeatAfterMs: 10 * 60 * 1000,
+      });
     }
     return res;
   } catch (e) { return { ok: false, error: String(e?.message || e), noPicker: true }; }
@@ -703,13 +735,20 @@ function isRateLimitError(e) {
  * tracks while Spotify is rate-limited) only notifies once per minute
  * rather than 30 times.
  */
-let lastFallbackNoticeAt = 0;
+/* Search or song details came from Apple Music (iTunes) instead of Spotify.
+   One notice per reason, at most every 15 minutes (a bulk import can fall
+   back hundreds of times). */
 function emitFallbackNotice(provider, reason) {
-  const now = Date.now();
-  if (now - lastFallbackNoticeAt < 60_000) return;
-  lastFallbackNoticeAt = now;
-  try { mainWindow?.webContents.send('metadata:providerSwitched', { provider, reason }); }
-  catch { /* window closed */ }
+  const detail = {
+    nocreds: 'No Spotify Client ID is set in Settings, and your signed-in account couldn’t answer, so results and song details came from Apple Music. They can differ slightly from Spotify’s.',
+    ratelimit: 'Spotify is rate-limiting lookups right now, so results and song details came from Apple Music instead. They can differ slightly from Spotify’s; Studio goes back to Spotify once the limit clears.',
+  }[reason] || 'Spotify didn’t answer a lookup, so results and song details came from Apple Music instead. If this keeps happening, check Settings → Connections.';
+  notice({
+    key: `fallback-${provider}-${reason}`, kind: 'info', source: 'Metadata',
+    title: reason === 'ratelimit' ? 'Using Apple Music while Spotify is rate-limited' : 'Using Apple Music for song details',
+    detail,
+    repeatAfterMs: 15 * 60 * 1000,
+  });
 }
 
 /**

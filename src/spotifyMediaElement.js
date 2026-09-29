@@ -358,15 +358,17 @@ export class SpotifyMediaElement extends EventTarget {
     const id = this.id;
     const reason = ev.reason ? ` (${ev.reason})` : '';
     if (ev.denied) {
-      this._fail(`Spotify refused to play for this account${reason}. Restart Studio; if it keeps happening, sign in to Spotify again in Settings.`, 'denied');
+      this._fail('Spotify refused to play for this account', 'denied',
+        `Spotify turned down the decryption key for this track${reason}, and won't hand out more this session. Restart Studio; if it keeps happening, sign in to Spotify again in Settings → Connections.`);
       return;
     }
     if (ev.throttled || ev.transient) {
       this._throttles += 1;
       if (this._throttles > THROTTLE_RETRIES) {
-        this._fail(ev.throttled
-          ? 'Spotify is turning playback down for now (too many requests). Wait a minute, then press play.'
-          : 'Spotify’s servers aren’t answering right now. Wait a minute, then press play.', 'throttled');
+        this._fail(ev.throttled ? 'Spotify paused playback for now' : 'Spotify’s servers aren’t answering', 'throttled',
+          ev.throttled
+            ? 'Too many songs were loaded close together, so Spotify is refusing to start more for a little while. Studio retried for about a minute and a half. Wait a minute, then press play.'
+            : `Spotify's servers kept failing to load the song${reason}. Nothing is wrong with the song or your account. Wait a minute, then press play.`);
         return;
       }
       const wait = throttleWait(this._throttles);
@@ -375,9 +377,10 @@ export class SpotifyMediaElement extends EventTarget {
       this._running = false;
       this._pending = { positionMs: Math.round(this._pos * 1000) };
       if (this._throttles === 1) {
-        this._notice(ev.throttled
-          ? 'Spotify is rate-limiting playback for a moment. Retrying…'
-          : 'Spotify’s servers are busy. Retrying…', 'retrying');
+        this._notice(ev.throttled ? 'Spotify is slowing playback down, retrying…' : 'Spotify’s servers are busy, retrying…', 'retrying',
+          ev.throttled
+            ? 'Spotify refused the song for a moment because several were loaded close together. Studio waits and tries the same song again (2, 4, 8… seconds), without skipping it.'
+            : `Spotify's servers failed to load the song${reason}. Studio waits and tries again (2, 4, 8… seconds), without skipping it.`);
       }
       clearTimeout(this._retry);
       this._retry = setTimeout(() => {
@@ -389,21 +392,23 @@ export class SpotifyMediaElement extends EventTarget {
     blockedUntil = Date.now() + KEY_COOLDOWN_MS;
     // librespot's wording is for the terminal, not a toast.
     if (ev.reason) console.warn(`[spotify] ${ev.id} unavailable:`, ev.reason);
-    this._fail('Spotify couldn’t play this track, so it was skipped.', 'unavailable');
+    this._fail('Spotify couldn’t play this song, skipped it', 'unavailable',
+      `Spotify says this song isn't available to play${reason ? ` (${ev.reason})` : ''}. It may be region-locked, removed, or only playable as another version. Studio moved on to the next song.`);
   }
 
   /* ---- internals ------------------------------------------------------ */
 
   /** Tell the app something without stopping (a toast, no skip). */
-  _notice(message, code) {
+  _notice(message, code, detail = '') {
     const e = new Event('error');
     e.message = message;
     e.code = code;
+    e.detail = detail;
     e.transient = true;
     this.dispatchEvent(e);
   }
 
-  _fail(message, code = 'helper') {
+  _fail(message, code = 'helper', detail = '') {
     loadInFlight = false;
     this._freeze();
     this._stopTick();
@@ -414,6 +419,7 @@ export class SpotifyMediaElement extends EventTarget {
     const e = new Event('error');
     e.message = String(message || 'Spotify playback failed.');
     e.code = code;
+    e.detail = detail;
     this.dispatchEvent(e);
   }
 

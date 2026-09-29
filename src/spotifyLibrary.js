@@ -83,14 +83,18 @@ async function describe(id, meta, hints = null) {
       return m && { ...m, album: itunesAlbum(m.album), spotifyId: undefined };
     }],
   ];
+  let albumFrom = blank(merged.album) ? null : 'row';
   for (const [name, fetchIt] of sources) {
     if (complete(merged)) break;
     try {
       take(await fetchIt());
+      if (!albumFrom && !blank(merged.album)) albumFrom = name;
     } catch (e) {
       console.warn(`[save] ${name} lookup failed for ${id}:`, String(e?.message || e));
     }
   }
+  // Where the album came from, for the Save's notice; not a stored field.
+  Object.defineProperty(merged, 'albumFrom', { value: albumFrom, enumerable: false });
   return merged;
 }
 
@@ -123,6 +127,7 @@ async function rowFor(meta) {
   const art = String(m.albumArtUrl || '');
   return {
     id,
+    albumFrom: m.albumFrom,
     track: {
       filePath: streamedPathFor(id),
       title: String(m.title || 'Unknown Title'),
@@ -176,14 +181,18 @@ export async function saveSpotifyTracks(metas) {
   try { liked = await likeTracks(rows.map((r) => r.id)); } catch (e) { likeError = String(e?.message || e); }
   if (likeError) console.warn('[save] library saved, but hearting on Spotify failed:', likeError);
 
-  return { ok: true, tracks: rows.map((r) => r.track), failed, liked, likeError };
+  return {
+    ok: true, tracks: rows.map((r) => r.track), failed, liked, likeError,
+    // Saved with Apple Music's album and cover because Spotify wouldn't say.
+    fromItunes: rows.filter((r) => r.albumFrom === 'itunes').map((r) => r.track.title),
+  };
 }
 
 /** One track, in the { ok, track, error } shape Get's callers already expect. */
 export async function saveSpotifyTrack(meta) {
   const r = await saveSpotifyTracks([meta]);
   if (!r.ok) return { ok: false, error: r.error, noPicker: true };
-  return { ok: true, track: r.tracks[0], likeError: r.likeError };
+  return { ok: true, track: r.tracks[0], likeError: r.likeError, fromItunes: r.fromItunes.length > 0 };
 }
 
 /* ---- repair --------------------------------------------------------------

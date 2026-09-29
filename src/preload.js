@@ -99,6 +99,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   whatsnewSetLastSeen: (version) => ipcRenderer.invoke('whatsnew:setLastSeen', version),
   whatsnewFetchReleaseNotes: (version) => ipcRenderer.invoke('whatsnew:fetchReleaseNotes', version),
   whatsnewFetchAllReleases: () => ipcRenderer.invoke('whatsnew:fetchAllReleases'),
+  /* Behind-the-scenes problems from main (notices.js): rate limits,
+     fallbacks, the playback helper. { key, kind, title, detail, source, at } */
+  onAppNotice: (cb) => {
+    const listener = (_event, payload) => cb(payload);
+    ipcRenderer.on('app:notice', listener);
+    return () => ipcRenderer.removeListener('app:notice', listener);
+  },
   // Metadata provider switch notice (Spotify → iTunes fallback)
   onMetadataProviderSwitched: (cb) => {
     const listener = (_event, payload) => cb(payload);

@@ -281,26 +281,20 @@ export default function App() {
     return () => { cancelled = true; if (typeof unsub === 'function') unsub(); };
   }, [pushToast]);
 
-  // Metadata provider fallback notice. When the main process switches
-  // from Spotify to iTunes (rate-limited, or no Spotify creds), it
-  // emits this — we toast so the user understands why search/metadata
-  // is coming from a different source. Debounced server-side to once
-  // per minute, so this won't spam during a bulk import.
+  /* Problems the main process runs into (notices.js): Spotify rate limits,
+     metadata falling back to Apple Music, the playback helper failing. A
+     short toast now; the explanation stays in the notifications panel.
+     Main already holds back repeats of the same notice. */
   useEffect(() => {
     const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.onMetadataProviderSwitched) return undefined;
-    const unsub = api.onMetadataProviderSwitched((payload) => {
-      const reason = payload?.reason;
-      let msg;
-      if (reason === 'nocreds') {
-        msg = 'No Spotify credentials set — using iTunes for search and metadata.';
-      } else if (reason === 'ratelimit') {
-        msg = 'Spotify is rate-limited — switched to iTunes for now.';
-      } else {
-        // 'spotifyerror' or anything else
-        msg = 'Spotify isn\'t responding — using iTunes instead. Check your Spotify credentials in Settings.';
-      }
-      pushToast({ message: msg, kind: 'info', durationMs: 6000 });
+    if (!api?.onAppNotice) return undefined;
+    const unsub = api.onAppNotice((n) => {
+      if (!n?.title) return;
+      pushToast({
+        message: n.title, detail: n.detail, kind: n.kind || 'info', source: n.source,
+        dedupeKey: n.key || undefined, log: true,
+        durationMs: n.kind === 'error' ? 9000 : 7000,
+      });
     });
     return () => { if (typeof unsub === 'function') unsub(); };
   }, [pushToast]);
@@ -2048,14 +2042,17 @@ export default function App() {
       const msg = e?.message || 'Spotify playback failed.';
       const now = Date.now();
       if (msg !== lastMsg || now - lastAt > 5000) {
-        pushToast({ message: msg, kind: e?.transient ? 'warning' : 'error' });
+        pushToast({ message: msg, detail: e?.detail || '', source: 'Playback', kind: e?.transient ? 'warning' : 'error' });
       }
       lastMsg = msg;
       lastAt = now;
       if (e?.code !== 'unavailable' || audioRef.current !== sp) return;
       skips += 1;
       if (skips > MAX_AUTO_SKIPS) {
-        pushToast({ message: 'Several Spotify tracks in a row wouldn’t play, so playback stopped. Press play to try again.', kind: 'error' });
+        pushToast({
+          message: 'Playback stopped after several failed songs', kind: 'error', source: 'Playback',
+          detail: 'Several Spotify songs in a row wouldn’t play. Skipping further would only ask Spotify for more songs and keep the refusal going, so Studio stopped. Press play to try again in a minute.',
+        });
         skips = 0;
         return;
       }
