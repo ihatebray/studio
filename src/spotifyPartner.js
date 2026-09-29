@@ -69,6 +69,9 @@ const OPERATIONS = {
   queryArtistDiscographyAll: 'query',
   getAlbum: 'query',
   getTrack: 'query',
+  // Search, the way the web player (and Sonora) do it: one request answers
+  // songs, albums and artists at once, on the web player's own budget.
+  searchDesktop: 'query',
 };
 
 /* ------------------------------------------------------------ file store */
@@ -503,7 +506,7 @@ async function scanWebPlayer() {
   if (missing()) {
     const urls = chunkUrls(js, base);
     /* Most-likely chunks first; stop as soon as everything is found. */
-    urls.sort((a, b) => Number(/artist|album|track|discograph/i.test(b)) - Number(/artist|album|track|discograph/i.test(a)));
+    urls.sort((a, b) => Number(/artist|album|track|discograph|search/i.test(b)) - Number(/artist|album|track|discograph|search/i.test(a)));
     for (let i = 0; i < urls.length && missing(); i += 6) {
       const batch = await Promise.all(urls.slice(i, i + 6).map((u) => text(u).catch(() => '')));
       batch.forEach(collect);
@@ -533,10 +536,17 @@ async function registry(force = false) {
   }
 }
 
+const rescannedFor = new Map();
 async function hashFor(op, force = false) {
   const over = readJson(overrideFile());
   if (sane(over?.[op])) return { hash: over[op], version: (await registry().catch(() => null))?.clientVersion || FALLBACK_CLIENT_VERSION, fixed: true };
-  const reg = await registry(force);
+  let reg = await registry(force);
+  /* A query added to OPERATIONS after the last scan isn't in the saved list
+     until the daily rescan. Rescan for it now, once an hour at most. */
+  if (!sane(reg.operations?.[op]) && !force && Date.now() - (rescannedFor.get(op) || 0) > 60 * 60 * 1000) {
+    rescannedFor.set(op, Date.now());
+    reg = await registry(true);
+  }
   const hash = reg.operations?.[op];
   if (!sane(hash)) throw new StepError('hash', `no hash found for ${op} in the web player`);
   return { hash, version: reg.clientVersion || FALLBACK_CLIENT_VERSION, fixed: false };
@@ -544,7 +554,11 @@ async function hashFor(op, force = false) {
 
 /* ------------------------------------------------------------- 4. query */
 
+/* After a 429, Pathfinder isn't asked again until Spotify's wait is over. */
+let pathfinderBlockedUntil = 0;
+
 async function send(op, variables, hash, version) {
+  if (pathfinderBlockedUntil > Date.now()) throw rateLimited((pathfinderBlockedUntil - Date.now()) / 1000);
   const [token, ctoken] = await Promise.all([accessToken(), getClientToken()]);
   const res = await fetch(PATHFINDER, {
     method: 'POST',
@@ -563,7 +577,11 @@ async function send(op, variables, hash, version) {
       extensions: { persistedQuery: { version: 1, sha256Hash: hash } },
     }),
   });
-  if (res.status === 429) throw rateLimited(retryAfterOf(res));
+  if (res.status === 429) {
+    const wait = retryAfterOf(res);
+    pathfinderBlockedUntil = Date.now() + wait * 1000;
+    throw rateLimited(wait);
+  }
   const body = await res.json().catch(() => null);
   if (res.status === 401) { clientToken = null; throw new StepError('signin', 'Spotify rejected the session (401)'); }
   if (!res.ok || !body) throw new StepError('query', `${op} → HTTP ${res.status}`);
@@ -844,6 +862,138 @@ export async function searchCatalogue(kind, q) {
     popularity: Number.isFinite(a.popularity) ? a.popularity : null,
     image: Array.isArray(a.images) && a.images.length ? [...a.images].sort((x, y) => (y.width || 0) - (x.width || 0))[0].url : null,
   }));
+}
+
+/* ------------------------------------------ Pathfinder search and artists
+ * What InstantSearch uses first when the account is connected. The public
+ * Web API search (above) and the Client ID behind it have small budgets:
+ * three searches per settled keystroke, a few requests each, used them up in
+ * a couple of queries. The web player's search answers songs, albums and
+ * artists in ONE request, and the three callers for the same query share it.
+ * Shapes match searchCatalogue's, so nothing downstream changes. */
+
+const SEARCH_TTL_MS = 10 * 60 * 1000;
+const pfSearches = new Map(); // lowercased query → { at, promise }
+
+const nodesOf = (block) => (block?.items || [])
+  .map((it) => it?.item?.data || it?.data || null)
+  .filter((d) => d && d.__typename !== 'NotFound' && d.__typename !== 'RestrictedContent');
+const nameList = (a) => (a?.items || []).map((x) => x?.profile?.name).filter(Boolean).join(', ');
+
+function shapeSearch(data) {
+  const sv = data?.searchV2 || {};
+  const tracks = nodesOf(sv.tracksV2).map((t, i) => {
+    const id = t.id || idOf(t.uri);
+    const album = t.albumOfTrack || {};
+    return {
+      spotifyId: id, title: t.name || '', artists: nameList(t.artists),
+      album: album.name || '', albumId: album.id || idOf(album.uri),
+      albumArtUrl: img(album.coverArt?.sources, 640) || '',
+      durationMs: t.duration?.totalMilliseconds || 0,
+      spotifyUrl: id ? `https://open.spotify.com/track/${id}` : '',
+      // No popularity in this response; Spotify's own order stands in for it.
+      popularity: Math.max(1, 100 - i * 4),
+      explicit: t.contentRating?.label === 'EXPLICIT',
+      trackNumber: t.trackNumber || null, discNumber: t.discNumber || null,
+      releaseDate: '', primaryArtistId: idOf(t.artists?.items?.[0]?.uri) || '',
+    };
+  }).filter((t) => t.spotifyId && t.title);
+  const albums = nodesOf(sv.albumsV2).map((a) => {
+    const id = a.id || idOf(a.uri);
+    const type = String(a.type || '').toLowerCase();
+    return {
+      albumId: id, name: a.name || '', artists: nameList(a.artists),
+      albumArtUrl: img(a.coverArt?.sources, 640) || '',
+      totalTracks: a.tracks?.totalCount || a.tracksV2?.totalCount || 0,
+      releaseDate: String(a.date?.isoString || (a.date?.year ? a.date.year : '')).slice(0, 10),
+      spotifyUrl: id ? `https://open.spotify.com/album/${id}` : '',
+      albumType: type === 'ep' ? 'single' : type,
+    };
+  }).filter((a) => a.albumId && a.name);
+  const artists = nodesOf(sv.artists).map((a, i) => ({
+    id: a.id || idOf(a.uri), name: a.profile?.name || '',
+    genres: [],
+    /* No follower count either. InstantSearch weighs same-name artists by
+       it; Spotify's ranking (the bigger act first) is the stand-in. */
+    followers: Math.round(1e6 / (i + 1)),
+    popularity: null,
+    image: img(a.visuals?.avatarImage?.sources, 640),
+  })).filter((a) => a.id && a.name);
+  return { tracks, albums, artists };
+}
+
+async function searchAll(q) {
+  const key = String(q || '').trim().toLowerCase();
+  const hit = pfSearches.get(key);
+  if (hit && Date.now() - hit.at < SEARCH_TTL_MS) return hit.promise;
+  const promise = query('searchDesktop', {
+    searchTerm: String(q).trim(), offset: 0, limit: 20, numberOfTopResults: 5,
+    includeAudiobooks: false, includeArtistHasConcertsField: false, includePreReleases: true,
+    includeLocalConcertsField: false, includeAuthors: false,
+  }).then(shapeSearch);
+  pfSearches.set(key, { at: Date.now(), promise });
+  promise.catch(() => pfSearches.delete(key));
+  if (pfSearches.size > 300) pfSearches.delete(pfSearches.keys().next().value);
+  return promise;
+}
+
+/** Songs, albums or artists for `q`, in searchCatalogue's shapes. */
+export async function searchFast(kind, q) {
+  if (!String(q || '').trim()) return [];
+  const r = await searchAll(q);
+  return r[kind] || [];
+}
+
+/** An artist's popular songs, from the overview the artist page already
+ *  loads (Pathfinder, cached an hour), in the Client ID's track shape. */
+export async function artistTopTracksFast(artistId) {
+  const o = await cachedOverview(artistId);
+  return (o.topTracks || []).map((t, i) => ({
+    ...t,
+    spotifyUrl: t.spotifyId ? `https://open.spotify.com/track/${t.spotifyId}` : '',
+    popularity: Math.max(1, 100 - i * 4),
+    trackNumber: null, discNumber: null, releaseDate: '', primaryArtistId: artistId,
+  }));
+}
+
+/** An artist by name in the Client ID's spotifyArtistByName shape: the
+ *  search above plus the overview the artist page loads anyway (both cached). */
+export async function artistInfoFast(name) {
+  const want = String(name || '').trim().toLowerCase();
+  if (!want) return null;
+  const hits = await searchFast('artists', name);
+  const hit = hits.find((a) => a.name.toLowerCase() === want) || hits[0];
+  if (!hit) return null;
+  const o = await cachedOverview(hit.id).catch(() => null);
+  return {
+    id: hit.id, name: o?.name || hit.name, genres: [],
+    followers: o?.followers ?? null, popularity: null,
+    image: o?.avatar || hit.image || null,
+  };
+}
+
+/** An artist's albums and singles in the Client ID's shape: Pathfinder's
+ *  full discography first (one request), the signed-in Web API second. */
+export async function artistAlbumsFast(artistId) {
+  const toRow = (r, group) => ({
+    albumId: r.albumId, name: r.name, artists: r.artists || '',
+    albumArtUrl: r.albumArtUrl || '', totalTracks: r.totalTracks || 0,
+    releaseDate: r.releaseDate || '', albumGroup: group || r.group || r.type || 'album',
+    spotifyUrl: r.albumId ? `https://open.spotify.com/album/${r.albumId}` : '',
+  });
+  try {
+    const data = await query('queryArtistDiscographyAll', { uri: `spotify:artist:${artistId}`, offset: 0, limit: 100 });
+    const items = data?.artistUnion?.discography?.all?.items || [];
+    const rows = items.flatMap((g) => (g?.releases?.items || []).map((r) => {
+      const s = shapeRelease(r, null);
+      return s?.albumId ? toRow(s, s.type === 'ep' ? 'single' : s.type) : null;
+    })).filter(Boolean);
+    if (rows.length) return rows;
+  } catch (e) {
+    if (e?.step === 'ratelimit') throw e;
+  }
+  const all = await artistDiscography(artistId);
+  return all.filter((r) => r.group === 'album' || r.group === 'single').map((r) => toRow(r, r.group));
 }
 
 /* ------------------------------------------------ Save (stream, no file) */

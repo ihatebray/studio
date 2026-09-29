@@ -371,7 +371,17 @@ export async function getValidUserToken() {
  * lookups turned into. Long waits aren't slept through: past a few seconds the
  * caller is better off being told than being blocked.
  */
+/* After a 429 too long to sit through, the Client ID isn't used again until
+   Spotify's wait is over. Every search used to ask it first regardless, so
+   one rate limit turned each later keystroke into more 429s (and Developer
+   Mode's waits get longer the more it's asked). */
+let clientBlockedUntil = 0;
+export function spotifyClientRateLimited() { return clientBlockedUntil > Date.now(); }
+
 async function spotifyGet(urlStr, attempt = 0) {
+  if (clientBlockedUntil > Date.now()) {
+    throw new Error(`Spotify API (429): rate-limited for another ${Math.ceil((clientBlockedUntil - Date.now()) / 1000)}s`);
+  }
   const token = await getSpotifyAccessToken();
   const res = await fetch(urlStr, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
@@ -384,6 +394,7 @@ async function spotifyGet(urlStr, attempt = 0) {
       await new Promise((r) => { setTimeout(r, waitMs + 150); });
       return spotifyGet(urlStr, attempt + 1);
     }
+    clientBlockedUntil = Date.now() + waitMs;
   }
 
   const text = await res.text();

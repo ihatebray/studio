@@ -30,7 +30,9 @@ function useFeed(key) {
   const [state, setState] = useState(() => feedCache[key] || { data: null, error: null });
   const [loading, setLoading] = useState(false);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Set on every mount: StrictMode mounts, unmounts and mounts again, and a
+  // flag only ever cleared left the page on its skeleton for good.
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const load = useCallback(async (force) => {
     const api = typeof window !== 'undefined' ? window.electronAPI : null;

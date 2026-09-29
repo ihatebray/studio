@@ -152,13 +152,31 @@ import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc, prepareForReload } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
-import { registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch } from './spotifyPartner.js';
+import {
+  registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch,
+  searchFast as partnerSearchFast, artistTopTracksFast, artistAlbumsFast, artistInfoFast,
+} from './spotifyPartner.js';
 
 /* Search fallback chain: Client ID → signed-in Spotify account → iTunes.
    The account has its own rate-limit bucket, so when the Client ID is
    limited it usually still answers with real Spotify results (and IDs the
    artist page and tracklists can use); iTunes stays the floor. Returns null
    when the account isn't connected or can't answer, so callers fall through. */
+/* First stop for search when the account is connected: the web player's own
+   search (Pathfinder), one request for all three result kinds, shared by
+   the three searches InstantSearch sends per query. The routes below it
+   (Client ID, public Web API) are the ones with small rate budgets. */
+async function viaPathfinder(kind, q) {
+  if (!partnerState().connected) return null;
+  try {
+    const rows = await partnerSearchFast(kind, q);
+    return Array.isArray(rows) && rows.length ? rows : null;
+  } catch (e) {
+    console.warn(`[search:${kind}] web player route failed:`, e?.message || e);
+    return null;
+  }
+}
+
 async function viaAccount(kind, q) {
   if (!partnerState().connected) return null;
   try {
@@ -1274,6 +1292,9 @@ ipcMain.handle('spotify:searchArtists', async (_event, q) => {
     return Array.isArray(rows) ? rows : [];
   };
 
+  const pf = await viaPathfinder('artists', query);
+  if (pf) return remember(pf);
+
   if (spotifyCredentialsConfigured()) {
     try {
       const r = await spotifySearchArtists(query);
@@ -1316,6 +1337,12 @@ ipcMain.handle('spotify:artistTopTracks', async (_event, id, name) => {
     );
     if (Array.isArray(rows) && rows.length) setArtistTopTracksCache(cacheKey, rows);
     return rows;
+  }
+  if (partnerState().connected) {
+    try {
+      const rows = await artistTopTracksFast(id);
+      if (rows.length) { setArtistTopTracksCache(cacheKey, rows); return rows; }
+    } catch (e) { console.warn('[spotify:artistTopTracks] web player route failed:', e?.message || e); }
   }
   try {
     const data = await spotifyArtistTopTracks(id, name);
@@ -1480,6 +1507,12 @@ ipcMain.handle('spotify:artistAlbums', async (_event, id) => {
   }
   const hit = artistAlbumsCache.get(id);
   if (hit && Date.now() - hit.at < ARTIST_ALBUMS_TTL_MS) return hit.data;
+  if (partnerState().connected) {
+    try {
+      const rows = await artistAlbumsFast(id);
+      if (rows.length) { artistAlbumsCache.set(id, { at: Date.now(), data: rows }); return rows; }
+    } catch (e) { console.warn('[spotify:artistAlbums] account route failed:', e?.message || e); }
+  }
   try {
     const data = await spotifyArtistAlbums(id);
     /* Only a non-empty result is cached. An empty list here usually means the
@@ -1520,6 +1553,10 @@ ipcMain.handle('spotify:artistInfo', async (_event, name) => {
       return data;
     }
 
+    if (partnerState().connected) {
+      const data = await artistInfoFast(name).catch((e) => { console.warn('[spotify:artistInfo] web player route failed:', e?.message || e); return null; });
+      if (data) { setArtistInfoCache(name, data); return data; }
+    }
     if (spotifyCredentialsConfigured()) {
       const data = await spotifyArtistByName(name);
       if (data) { setArtistInfoCache(name, data); return data; }
@@ -2775,6 +2812,8 @@ ipcMain.handle('spotify:search', async (event, query) => {
   if (!q) return [];
   const cached = getSearchCache('tracks', q);
   if (cached) return cached;
+  const pf = await viaPathfinder('tracks', q);
+  if (pf) { setSearchCache('tracks', q, pf); return pf; }
   // Spotify → Deezer. Deezer is the fallback because it needs no auth,
   // has ~25x Spotify's rate-limit headroom, and still carries real
   // release dates, track/disc numbers and ISRCs. The
@@ -2810,6 +2849,8 @@ ipcMain.handle('spotify:searchAlbums', async (event, query) => {
   if (!q) return [];
   const cached = getSearchCache('albums', q);
   if (cached) return cached;
+  const pf = await viaPathfinder('albums', q);
+  if (pf) { setSearchCache('albums', q, pf); return pf; }
   if (spotifyCredentialsConfigured()) {
     try {
       const r = await spotifySearchAlbums(q);
