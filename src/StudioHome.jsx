@@ -2868,6 +2868,18 @@ export default function StudioHome({
   // Anything that owns Esc (or the letter keys) while fullscreen is up.
   npFullBlockers.current = !!(rowMenu || plPicker || coverZoom || editingTrack || lyricSel || lyricShareOpen);
 
+  /* Where notifications dock: bottom right, a gap above the Now Playing bar
+     (or the window corner when the bar isn't up). The stack lives in App,
+     outside this root, so the numbers go on :root. */
+  useEffect(() => {
+    const gutter = compactMode ? 10 : 16;
+    const gap = compactMode ? 10 : 12;
+    const bottom = currentTrack && !libExpanded ? gutter + 86 + gap : gutter;
+    const s = document.documentElement.style;
+    s.setProperty('--st-toast-bottom', `${bottom}px`);
+    s.setProperty('--st-toast-right', `${gutter}px`);
+  }, [compactMode, currentTrack, libExpanded]);
+
   const compactVizCtx = useMemo(() => ({
     enabled: compactMode, style: compactViz,
     analyserRef, onNeedAnalyser, currentTrack, isPlaying, currentTime, duration, onSeek,

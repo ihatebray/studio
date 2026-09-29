@@ -387,7 +387,9 @@ export class SpotifyMediaElement extends EventTarget {
       return;
     }
     blockedUntil = Date.now() + KEY_COOLDOWN_MS;
-    this._fail(`Spotify couldn’t play this track${reason}.`, 'unavailable');
+    // librespot's wording is for the terminal, not a toast.
+    if (ev.reason) console.warn(`[spotify] ${ev.id} unavailable:`, ev.reason);
+    this._fail('Spotify couldn’t play this track, so it was skipped.', 'unavailable');
   }
 
   /* ---- internals ------------------------------------------------------ */
