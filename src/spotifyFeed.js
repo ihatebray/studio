@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
-import { webApi, paged, partnerState } from './spotifyPartner.js';
+import { webApi, webApiRateLimit, paged, partnerState } from './spotifyPartner.js';
 
 const HOME_TTL_MS = 10 * 60 * 1000;
 const RELEASES_TTL_MS = 6 * 60 * 60 * 1000;
@@ -153,7 +153,11 @@ async function recentContexts(items) {
   return list.filter((c) => !c.dead && c.name).slice(0, 6);
 }
 
-async function buildHome() {
+/* A refused part of a feed keeps the last good copy of that part, so a rate
+   limit greys nothing out that was there before. */
+const refusedBy = (results) => results.find((r) => !r.ok && r.e?.step === 'ratelimit')?.e || null;
+
+async function buildHome(prev) {
   const st = requireSignIn();
   const [me, recent, topShort, topLong, topArtists, playlists, albums, liked] = await Promise.all([
     settle(webApi('/me')),
@@ -167,7 +171,8 @@ async function buildHome() {
   ]);
   // Nothing at all answered: say why rather than show an empty page.
   const all = [recent, topShort, topLong, topArtists, playlists, albums, liked];
-  if (all.every((r) => !r.ok)) throw all[0].e;
+  if (all.every((r) => !r.ok)) throw all.find((r) => r.e?.step === 'ratelimit')?.e || all[0].e;
+  const limit = refusedBy(all);
 
   const recentItems = recent.ok ? recent.v.items || [] : [];
   const recentTracks = [];
@@ -179,24 +184,30 @@ async function buildHome() {
     recentTracks.push(s);
   }
 
+  const old = prev || {};
   return {
     user: {
-      name: (me.ok && me.v.display_name) || st.displayName || '',
-      image: me.ok ? pickImg(me.v.images, 160) : null,
+      name: (me.ok && me.v.display_name) || old.user?.name || st.displayName || '',
+      image: me.ok ? pickImg(me.v.images, 160) : old.user?.image || null,
     },
-    recentTracks: recentTracks.slice(0, 24),
-    jumpBackIn: recentItems.length ? await recentContexts(recentItems).catch(() => []) : [],
-    onRepeat: topShort.ok ? (topShort.v.items || []).map((t) => shapeTrack(t)).filter(Boolean) : [],
-    allTime: topLong.ok ? (topLong.v.items || []).map((t) => shapeTrack(t)).filter(Boolean) : [],
-    topArtists: topArtists.ok ? (topArtists.v.items || []).map(shapeArtist).filter(Boolean) : [],
+    recentTracks: recent.ok ? recentTracks.slice(0, 24) : old.recentTracks || [],
+    jumpBackIn: recent.ok
+      ? (recentItems.length ? await recentContexts(recentItems).catch(() => old.jumpBackIn || []) : [])
+      : old.jumpBackIn || [],
+    onRepeat: topShort.ok ? (topShort.v.items || []).map((t) => shapeTrack(t)).filter(Boolean) : old.onRepeat || [],
+    allTime: topLong.ok ? (topLong.v.items || []).map((t) => shapeTrack(t)).filter(Boolean) : old.allTime || [],
+    topArtists: topArtists.ok ? (topArtists.v.items || []).map(shapeArtist).filter(Boolean) : old.topArtists || [],
     playlists: playlists.ok ? (playlists.v.items || []).filter(Boolean).map((p) => ({
       kind: 'playlist', id: p.id, name: p.name || '', image: pickImg(p.images, 300),
       sub: `${p.tracks?.total ?? 0} songs · ${p.owner?.display_name || ''}`.replace(/ · $/, ''),
       total: p.tracks?.total ?? 0,
-    })) : [],
-    savedAlbums: albums.ok ? (albums.v.items || []).map((r) => r?.album && { ...shapeAlbum(r.album), addedAt: r.added_at }).filter(Boolean) : [],
-    likedCount: liked.ok ? liked.v.total || 0 : null,
+    })) : old.playlists || [],
+    savedAlbums: albums.ok ? (albums.v.items || []).map((r) => r?.album && { ...shapeAlbum(r.album), addedAt: r.added_at }).filter(Boolean) : old.savedAlbums || [],
+    likedCount: liked.ok ? liked.v.total || 0 : old.likedCount ?? null,
     fetchedAt: Date.now(),
+    // Some parts were refused: they're last time's, and this copy only
+    // lasts until Spotify's wait is over.
+    limitedUntil: limit?.retryAt || null,
   };
 }
 
@@ -227,6 +238,9 @@ async function releaseArtists() {
       if (s && !byId.has(s.id)) byId.set(s.id, { ...s, why });
     }
   };
+  // Refused outright: say so, rather than report an empty list of artists
+  // as "nothing new".
+  if (!short.ok && !medium.ok && !followed.ok) throw refusedBy([short, medium, followed]) || short.e;
   add(short.ok ? short.v.items : [], 'top');
   add(medium.ok ? medium.v.items : [], 'top');
   add(followed.ok ? followed.v : [], 'follow');
@@ -235,13 +249,14 @@ async function releaseArtists() {
   return [...byId.values()].slice(0, RELEASE_ARTIST_CAP);
 }
 
-async function buildReleases() {
+async function buildReleases(prev) {
   requireSignIn();
   const artists = await releaseArtists();
   const cutoff = new Date(Date.now() - RELEASE_WINDOW_DAYS * 86400000).toISOString().slice(0, 10);
   const byAlbum = new Map();
   let checked = 0;
   let stoppedEarly = false;
+  let limit = null;
 
   let i = 0;
   const worker = async () => {
@@ -259,11 +274,17 @@ async function buildReleases() {
         }
       } catch (e) {
         // A long rate limit: keep what we have; the next refresh continues.
-        if (e?.step === 'ratelimit' || e?.step === 'signin') { stoppedEarly = true; break; }
+        if (e?.step === 'ratelimit' || e?.step === 'signin') { stoppedEarly = true; limit = e; break; }
       }
     }
   };
   await Promise.all(Array.from({ length: RELEASE_CONCURRENCY }, worker));
+  if (stoppedEarly && !checked) throw limit;
+  /* Cut short: last check's releases fill in for the artists not reached
+     this time (still inside the window). */
+  if (stoppedEarly && prev?.releases?.length) {
+    for (const r of prev.releases) if (r.releaseDate >= cutoff && !byAlbum.has(r.albumId)) byAlbum.set(r.albumId, r);
+  }
 
   /* The explicit and clean cuts, and regional duplicates, are separate
      albums with the same name, artists and date. */
@@ -284,6 +305,7 @@ async function buildReleases() {
     partial: stoppedEarly,
     windowDays: RELEASE_WINDOW_DAYS,
     fetchedAt: Date.now(),
+    limitedUntil: limit?.retryAt || null,
   };
 }
 
@@ -294,10 +316,17 @@ async function cached(key, ttl, build, force) {
   const c = loadCache();
   const hit = c[key];
   const account = partnerState().userId || partnerState().displayName || '';
-  const fresh = hit && hit.account === account && Date.now() - hit.at < ttl;
-  if (fresh && !force) return { ...hit.data, stale: false };
+  const prev = hit && hit.account === account ? hit.data : null;
+  /* A copy made while rate-limited is good only until the wait is over, so
+     the next visit after that fills in what was missing. */
+  const until = prev?.limitedUntil ? Math.min(hit.at + ttl, prev.limitedUntil) : hit?.at + ttl;
+  const fresh = prev && Date.now() < until;
+  if (fresh && !force) return { ...prev, stale: false };
+  // Still waiting out a rate limit: last copy, without asking Spotify.
+  const limited = webApiRateLimit();
+  if (limited && prev) return { ...prev, stale: true, limitedUntil: limited.until };
   if (!inflight.has(key)) {
-    inflight.set(key, build().then((data) => {
+    inflight.set(key, build(prev).then((data) => {
       c[key] = { at: Date.now(), account, data };
       saveCache();
       return data;

@@ -592,7 +592,16 @@ async function query(op, variables) {
 
 /* --------------------------------------------------- Web API, same token */
 
+/* After a rate limit longer than we'd sit through, every Web API call fails
+   at once until the wait Spotify named is over. Asking anyway only earns a
+   longer wait, and a page of feeds asks eight things at once. */
+let webApiBlockedUntil = 0;
+export function webApiRateLimit() {
+  return webApiBlockedUntil > Date.now() ? { until: webApiBlockedUntil } : null;
+}
+
 export async function webApi(p, attempt = 0, method = 'GET') {
+  if (webApiBlockedUntil > Date.now()) throw rateLimited((webApiBlockedUntil - Date.now()) / 1000);
   const token = await accessToken();
   const res = await fetch(p.startsWith('http') ? p : `${WEB_API}${p}`, { method, headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 429) {
@@ -601,6 +610,7 @@ export async function webApi(p, attempt = 0, method = 'GET') {
       await new Promise((r) => setTimeout(r, wait * 1000));
       return webApi(p, 1, method);
     }
+    webApiBlockedUntil = Math.max(webApiBlockedUntil, Date.now() + wait * 1000);
     throw rateLimited(wait);
   }
   if (res.status === 401) throw new StepError('signin', 'Spotify rejected the session (401)');

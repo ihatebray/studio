@@ -53,7 +53,39 @@ function useFeed(key) {
   }, [key]);
 
   useEffect(() => { load(false); }, [load]);
-  return { ...state, loading, refresh: () => load(true) };
+
+  /* Rate-limited: come back by ourselves once Spotify's wait is over (if
+     that's within half an hour; longer, and it's left to Refresh). */
+  const limitedUntil = state.data?.limitedUntil
+    || (state.error?.step === 'ratelimit' && state.error.retryAfter ? Date.now() + state.error.retryAfter * 1000 : 0);
+  useEffect(() => {
+    if (!limitedUntil) return undefined;
+    const wait = limitedUntil - Date.now();
+    if (wait > 30 * 60 * 1000) return undefined;
+    const t = setTimeout(() => load(false), Math.max(1500, wait + 1500));
+    return () => clearTimeout(t);
+  }, [limitedUntil, load]);
+
+  return { ...state, loading, refresh: () => load(true), limitedUntil };
+}
+
+function waitWords(ms) {
+  const m = Math.max(1, Math.ceil(ms / 60000));
+  if (m < 60) return `${m} min`;
+  const h = Math.round(m / 60);
+  return `${h} hour${h === 1 ? '' : 's'}`;
+}
+
+/** Parts of the page are from an earlier visit because Spotify said wait. */
+function LimitBanner({ until }) {
+  if (!until || until <= Date.now()) return null;
+  const ms = until - Date.now();
+  return (
+    <div className="msp-banner">
+      Spotify is rate-limiting Studio for about {waitWords(ms)}, so parts of this page are from your last visit.
+      {ms <= 30 * 60 * 1000 ? ' It updates by itself when the wait is over.' : ' Press refresh after that.'}
+    </div>
+  );
 }
 
 async function loadCollection(item) {
@@ -386,7 +418,9 @@ function FeedError({ error, onRetry, onConnect }) {
   const limited = error?.step === 'ratelimit';
   return (
     <Note icon={Icon.refresh(22)} title={limited ? 'Spotify asked Studio to slow down' : 'Couldn’t reach Spotify'}
-      body={limited ? `Try again ${error.retryAfter ? `in about ${Math.ceil(error.retryAfter / 60)} min` : 'in a minute'}.` : (error?.error || 'Something went wrong.')}
+      body={limited
+        ? `Spotify is limiting how often Studio can ask for your data${error.retryAfter ? ` for about ${waitWords(error.retryAfter * 1000)}` : ''}. Playback isn't affected by this.${error.retryAfter && error.retryAfter <= 1800 ? ' This page loads by itself when the wait is over.' : ''}`
+        : (error?.error || 'Something went wrong.')}
       action={<button type="button" className="st-btn st-btn-outline" onClick={onRetry}>Try again</button>} />
   );
 }
@@ -485,7 +519,7 @@ function HomeSkeleton() {
 }
 
 export function SpotifyHome({ bridge }) {
-  const { data, error, loading, refresh } = useFeed('home');
+  const { data, error, loading, refresh, limitedUntil } = useFeed('home');
   const [panel, openPanel, closePanel] = usePanel();
 
   const fan = (data?.onRepeat || []).filter((t) => t.albumArtUrl);
@@ -517,7 +551,8 @@ export function SpotifyHome({ bridge }) {
             </div>
           </header>
 
-          {error && data ? <div className="msp-banner">Showing what Studio saw last time. {error.error || ''}</div> : null}
+          {data && limitedUntil ? <LimitBanner until={limitedUntil} /> : null}
+          {error && data && error.step !== 'ratelimit' ? <div className="msp-banner">Showing what Studio saw last time. {error.error || ''}</div> : null}
           {error && !data ? <FeedError error={error} onRetry={refresh} onConnect={bridge.onConnect} /> : null}
           {!data && !error ? <HomeSkeleton /> : null}
 
@@ -720,7 +755,7 @@ function ReleasesSkeleton() {
 }
 
 export function SpotifyReleases({ bridge }) {
-  const { data, error, loading, refresh } = useFeed('releases');
+  const { data, error, loading, refresh, limitedUntil } = useFeed('releases');
   const [panel, openPanel, closePanel] = usePanel();
   const [filter, setFilter] = useState(() => { try { return localStorage.getItem('studio:releasesFilter') || 'all'; } catch { return 'all'; } });
   const pickFilter = (f) => { setFilter(f); try { localStorage.setItem('studio:releasesFilter', f); } catch { /* ignore */ } };
@@ -771,8 +806,9 @@ export function SpotifyReleases({ bridge }) {
             </div>
           </header>
 
-          {data?.partial ? <div className="msp-banner">Spotify slowed Studio down part way, so {data.artistsTotal - data.artistsChecked} artists weren’t checked this time. Refresh later to fill them in.</div> : null}
-          {error && data ? <div className="msp-banner">Showing the last check. {error.error || ''}</div> : null}
+          {data && limitedUntil ? <LimitBanner until={limitedUntil} /> : null}
+          {data?.partial && !(limitedUntil > Date.now()) ? <div className="msp-banner">Spotify slowed Studio down part way, so {data.artistsTotal - data.artistsChecked} artists weren’t checked this time. Refresh to fill them in.</div> : null}
+          {error && data && error.step !== 'ratelimit' ? <div className="msp-banner">Showing the last check. {error.error || ''}</div> : null}
           {error && !data ? <FeedError error={error} onRetry={refresh} onConnect={bridge.onConnect} /> : null}
           {!data && !error ? <ReleasesSkeleton /> : null}
 
