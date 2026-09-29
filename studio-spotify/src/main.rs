@@ -27,7 +27,7 @@
 //!   {"event":"authError","kind":"premium|expired|refused|network","message":"…"}
 //!   {"event":"loading|playing|paused|position|seeked","id":"…","positionMs":n}
 //!   {"event":"ended","id":"…"}  {"event":"stopped","id":"…"}
-//!   {"event":"unavailable","id":"…","throttled":bool,"denied":bool,"reason":"…"}
+//!   {"event":"unavailable","id":"…","throttled":bool,"denied":bool,"transient":bool,"reason":"…"}
 //!   {"event":"track","id":"…","durationMs":n}   metadata loaded
 //!   {"event":"levels","v":[24 × 0–100]}         band levels of what's playing, ~30/s
 //!   {"event":"error","message":"…"}
@@ -38,6 +38,7 @@ use std::time::Duration;
 
 use librespot_core::authentication::Credentials;
 use librespot_core::cache::Cache;
+use librespot_core::spclient::RequestStrategy;
 use librespot_core::{Session, SessionConfig, SpotifyUri};
 use librespot_playback::audio_backend::Sink;
 use librespot_playback::config::{Bitrate, PlayerConfig};
@@ -119,7 +120,14 @@ impl log::Log for StderrLog {
         let line = format!("{} {}: {}", r.level(), r.target(), r.args());
         eprintln!("{line}");
         if r.level() == log::Level::Error {
-            *LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = format!("{}", r.args());
+            let msg = format!("{}", r.args());
+            let mut last = LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner());
+            // A failed load logs the cause ("Unable to load audio item: …
+            // StatusCode(503)") and then "Skipping to next track … : ()",
+            // which says nothing. Keep the cause.
+            if !(msg.starts_with("Skipping to next track") && !last.is_empty()) {
+                *last = msg;
+            }
         }
     }
     fn flush(&self) {}
@@ -127,6 +135,15 @@ impl log::Log for StderrLog {
 
 fn last_error() -> String {
     std::mem::take(&mut *LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// A load that failed because Spotify's servers didn't answer (a 5xx or 429
+/// from the metadata service, a timeout), not because of the track. Worth
+/// asking again after a wait, like a throttled key.
+fn is_transient(reason: &str) -> bool {
+    let r = reason.to_lowercase();
+    r.contains("statuscode(5") || r.contains("statuscode(429") || r.contains("deadlineexceeded")
+        || r.contains("timed out") || r.contains("connection")
 }
 
 #[tokio::main]
@@ -325,6 +342,11 @@ fn start_player(session: Session, volume: f32) -> Engine {
     // so librespot's own volume stage is a no-op.
     let cue = Cue::new(volume);
     let sink_cue = cue.clone();
+    // librespot asks the metadata service up to ten times, back to back, when
+    // it fails. When the failure is Spotify's servers being overloaded (503),
+    // that burst only prolongs it. Three quick tries, then Studio waits and
+    // asks again.
+    session.spclient().set_strategy(RequestStrategy::TryTimes(3));
     let player = Player::new(config, session.clone(), Box::new(NoOpVolume), move || -> Box<dyn Sink> {
         match CuedSink::open(sink_cue) {
             Ok(sink) => Box::new(sink),
@@ -350,6 +372,7 @@ fn start_player(session: Session, volume: f32) -> Engine {
 
     let mut events = player.get_player_event_channel();
     let event_cue = cue.clone();
+    let event_session = session.clone();
     tokio::spawn(async move {
         while let Some(ev) = events.recv().await {
             // The player announcing the new track or position is what lets
@@ -363,6 +386,11 @@ fn start_player(session: Session, volume: f32) -> Engine {
                 _ => {}
             }
             if let Some(v) = translate(ev) {
+                // A metadata server that keeps failing may be the bad one:
+                // the next request resolves a fresh one.
+                if v["transient"] == true {
+                    event_session.spclient().flush_accesspoint().await;
+                }
                 emit(v);
             }
         }
@@ -384,11 +412,30 @@ fn translate(ev: PlayerEvent) -> Option<Value> {
         PlayerEvent::Stopped { track_id, .. } => json!({ "event": "stopped", "id": id(&track_id) }),
         // throttled: Spotify refused the audio key for now (a burst of loads);
         // retry after a wait. denied: refused for good this session.
-        PlayerEvent::Unavailable { track_id, denied, throttled, .. } => json!({
-            "event": "unavailable", "id": id(&track_id), "denied": denied, "throttled": throttled, "reason": last_error(),
-        }),
+        // transient: Spotify's servers failed (503, timeout); also retry.
+        PlayerEvent::Unavailable { track_id, denied, throttled, .. } => {
+            let reason = last_error();
+            json!({
+                "event": "unavailable", "id": id(&track_id), "denied": denied, "throttled": throttled,
+                "transient": !denied && !throttled && is_transient(&reason), "reason": reason,
+            })
+        }
         PlayerEvent::TimeToPreloadNextTrack { track_id, .. } => json!({ "event": "preloadNext", "id": id(&track_id) }),
         PlayerEvent::TrackChanged { audio_item } => json!({ "event": "track", "id": id(&audio_item.track_id), "durationMs": audio_item.duration_ms }),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_transient;
+
+    #[test]
+    fn server_failures_are_transient() {
+        assert!(is_transient("Unable to load audio item: Error { kind: Unavailable, error: StatusCode(503) }"));
+        assert!(is_transient("Unable to load audio item: Error { kind: ResourceExhausted, error: StatusCode(429) }"));
+        assert!(is_transient("Unable to load audio item: Error { kind: DeadlineExceeded, error: Elapsed(()) }"));
+        assert!(!is_transient("Unable to load audio item: Error { kind: NotFound, error: StatusCode(404) }"));
+        assert!(!is_transient(""));
+    }
 }

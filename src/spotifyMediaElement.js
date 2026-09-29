@@ -270,11 +270,13 @@ export class SpotifyMediaElement extends EventTarget {
     }
     if (ev.event === 'error') { if (this.id && !this._paused) this._fail(ev.message); return; }
     if (ev.event === 'unavailable') {
-      // Any refusal, even of a preload, means Spotify wants fewer requests.
-      if (ev.throttled) quietUntil = Date.now() + QUIET_AFTER_THROTTLE_MS;
+      // Any refusal or server failure, even of a preload, means Spotify
+      // wants fewer requests.
+      const retryable = ev.throttled || ev.transient;
+      if (retryable) quietUntil = Date.now() + QUIET_AFTER_THROTTLE_MS;
       if (ev.id === preloaded) {
         preloaded = null;
-        if (!ev.throttled) failedPreloads.add(ev.id);
+        if (!retryable) failedPreloads.add(ev.id);
       }
     }
     if (!this.id || ev.id !== this.id || this._pending) return;
@@ -347,6 +349,8 @@ export class SpotifyMediaElement extends EventTarget {
    *               wait doubling each time. Skipping ahead would only ask for
    *               more keys and keep the refusal going — which is what made
    *               every song in the queue fail in turn.
+   *   transient — Spotify's servers failed (a 503 from the metadata service,
+   *               a timeout). Nothing wrong with the track: same as throttled.
    *   denied    — refused for good this session. Stop and say so.
    *   otherwise — this one track can't play; the app skips it. */
   _unavailable(ev) {
@@ -357,10 +361,12 @@ export class SpotifyMediaElement extends EventTarget {
       this._fail(`Spotify refused to play for this account${reason}. Restart Studio; if it keeps happening, sign in to Spotify again in Settings.`, 'denied');
       return;
     }
-    if (ev.throttled) {
+    if (ev.throttled || ev.transient) {
       this._throttles += 1;
       if (this._throttles > THROTTLE_RETRIES) {
-        this._fail('Spotify is turning playback down for now (too many requests). Wait a minute, then press play.', 'throttled');
+        this._fail(ev.throttled
+          ? 'Spotify is turning playback down for now (too many requests). Wait a minute, then press play.'
+          : 'Spotify’s servers aren’t answering right now. Wait a minute, then press play.', 'throttled');
         return;
       }
       const wait = throttleWait(this._throttles);
@@ -368,7 +374,11 @@ export class SpotifyMediaElement extends EventTarget {
       this._stopTick();
       this._running = false;
       this._pending = { positionMs: Math.round(this._pos * 1000) };
-      if (this._throttles === 1) this._notice('Spotify is rate-limiting playback for a moment. Retrying…', 'retrying');
+      if (this._throttles === 1) {
+        this._notice(ev.throttled
+          ? 'Spotify is rate-limiting playback for a moment. Retrying…'
+          : 'Spotify’s servers are busy. Retrying…', 'retrying');
+      }
       clearTimeout(this._retry);
       this._retry = setTimeout(() => {
         this._retry = null;
