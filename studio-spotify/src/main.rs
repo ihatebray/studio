@@ -35,6 +35,8 @@
 //!   {"event":"levels","v":[24 × 0–100]}         band levels of what's playing, ~30/s
 //!   {"event":"answer","req":1,"ok":true,"data":…}   reply to search / album / artist
 //!                                             or "ok":false,"error":"…"
+//!   {"event":"stale","why":"…"}               the session stopped working and was
+//!                                             dropped; sign in again (auth) to go on
 //!   {"event":"error","message":"…"}
 
 use std::path::PathBuf;
@@ -120,6 +122,17 @@ struct Engine {
 /// event carries as `reason` so Studio can say what actually went wrong.
 struct StderrLog;
 static LAST_ERROR: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+/// Set when a load went on without its decryption key (see below): that
+/// load fails, and the failure is the session's fault, not the track's.
+static KEY_TROUBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The command loop's ear for "this session has stopped working".
+static STALE: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<String>> = std::sync::OnceLock::new();
+
+fn report_stale(why: &str) {
+    if let Some(tx) = STALE.get() {
+        let _ = tx.send(why.to_owned());
+    }
+}
 
 impl log::Log for StderrLog {
     fn enabled(&self, m: &log::Metadata) -> bool {
@@ -129,10 +142,26 @@ impl log::Log for StderrLog {
         if !self.enabled(r.metadata()) {
             return;
         }
-        let line = format!("{} {}: {}", r.level(), r.target(), r.args());
+        // The MP3 demuxer warns once per junk block when it's handed bytes it
+        // can't read (thousands of lines for one song); the error that
+        // follows says what matters.
+        if r.level() == log::Level::Warn && r.target().starts_with("symphonia") {
+            return;
+        }
+        let msg = format!("{}", r.args());
+        /* librespot asks the session for each song's decryption key. When
+           that request fails without an answer (the session's connection has
+           gone stale: after sleep, a network change), librespot decodes the
+           still-encrypted file anyway, which only scans the whole file for
+           audio that isn't there and times out. Every song does the same
+           until the session is renewed, which is what a restart used to do. */
+        if r.level() == log::Level::Warn && msg.starts_with("Unable to load key, continuing without decryption") {
+            KEY_TROUBLE.store(true, std::sync::atomic::Ordering::SeqCst);
+            report_stale("Spotify stopped handing out decryption keys on this connection");
+        }
+        let line = format!("{} {}: {}", r.level(), r.target(), msg);
         eprintln!("{line}");
         if r.level() == log::Level::Error {
-            let msg = format!("{}", r.args());
             let mut last = LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner());
             // A failed load logs the cause ("Unable to load audio item: …
             // StatusCode(503)") and then "Skipping to next track … : ()",
@@ -156,6 +185,7 @@ fn is_transient(reason: &str) -> bool {
     let r = reason.to_lowercase();
     r.contains("statuscode(5") || r.contains("statuscode(429") || r.contains("deadlineexceeded")
         || r.contains("timed out") || r.contains("connection")
+        || r.contains("deadline expired") || r.contains("timeout exceeded")
 }
 
 #[tokio::main]
@@ -170,8 +200,29 @@ async fn main() {
     // Kept across re-sign-ins, so a new engine starts at the current volume.
     let mut volume: f32 = 1.0;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let (stale_tx, mut stale_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let _ = STALE.set(stale_tx);
+    // A dropped connection doesn't always announce itself with a failed
+    // song; this notices a session librespot has given up on.
+    let mut check = tokio::time::interval(Duration::from_secs(5));
 
-    while let Ok(Some(line)) = lines.next_line().await {
+    loop {
+        let line = tokio::select! {
+            read = lines.next_line() => match read {
+                Ok(Some(line)) => line,
+                _ => break,
+            },
+            Some(why) = stale_rx.recv() => {
+                drop_stale(&mut engine, &why);
+                continue;
+            }
+            _ = check.tick() => {
+                if engine.as_ref().is_some_and(|e| e.session.is_invalid()) {
+                    drop_stale(&mut engine, "the connection to Spotify dropped");
+                }
+                continue;
+            }
+        };
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -187,6 +238,7 @@ async fn main() {
         match cmd {
             Command::Quit => break,
             Command::Auth { token, prefer_cached } => {
+                KEY_TROUBLE.store(false, std::sync::atomic::Ordering::SeqCst);
                 if let Some(old) = engine.take() {
                     old.player.stop();
                     old.session.shutdown();
@@ -265,6 +317,17 @@ async fn main() {
         e.player.stop();
         e.session.shutdown();
     }
+}
+
+/// The session stopped working: stop the player (so a load decoding without
+/// its key doesn't run on to the timeout), let the session go, and tell
+/// Studio, which signs in again. Only the first report counts; the rest
+/// arrive after the engine is already gone.
+fn drop_stale(engine: &mut Option<Engine>, why: &str) {
+    let Some(old) = engine.take() else { return };
+    old.player.stop();
+    old.session.shutdown();
+    emit(json!({ "event": "stale", "why": why }));
 }
 
 /// Run a metadata request in a task of its own, so playback commands aren't
@@ -454,9 +517,11 @@ fn translate(ev: PlayerEvent) -> Option<Value> {
         // transient: Spotify's servers failed (503, timeout); also retry.
         PlayerEvent::Unavailable { track_id, denied, throttled, .. } => {
             let reason = last_error();
+            // Failed for want of a key from a stale session: the song is fine.
+            let key_trouble = KEY_TROUBLE.swap(false, std::sync::atomic::Ordering::SeqCst);
             json!({
                 "event": "unavailable", "id": id(&track_id), "denied": denied, "throttled": throttled,
-                "transient": !denied && !throttled && is_transient(&reason), "reason": reason,
+                "transient": !denied && !throttled && (key_trouble || is_transient(&reason)), "reason": reason,
             })
         }
         PlayerEvent::TimeToPreloadNextTrack { track_id, .. } => json!({ "event": "preloadNext", "id": id(&track_id) }),
@@ -474,6 +539,7 @@ mod tests {
         assert!(is_transient("Unable to load audio item: Error { kind: Unavailable, error: StatusCode(503) }"));
         assert!(is_transient("Unable to load audio item: Error { kind: ResourceExhausted, error: StatusCode(429) }"));
         assert!(is_transient("Unable to load audio item: Error { kind: DeadlineExceeded, error: Elapsed(()) }"));
+        assert!(is_transient("Unable to read audio file: Symphonia Decoder Error: Deadline expired before operation could complete { wait timeout exceeded }"));
         assert!(!is_transient("Unable to load audio item: Error { kind: NotFound, error: StatusCode(404) }"));
         assert!(!is_transient(""));
     }

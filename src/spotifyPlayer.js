@@ -75,7 +75,40 @@ function onLine(line) {
       account = { user: ev.user, country: ev.country, account: ev.account };
       setStatus('ready');
       for (const c of queue.splice(0)) write(c);
+      // Back after a stale session: the song that was playing picks up again.
+      if (reconnecting) { reconnecting = false; broadcast({ event: 'reconnected' }); }
       return;
+    case 'stale': {
+      /* The helper's session stopped working (a dropped connection, or
+         Spotify no longer handing out decryption keys on it) and it let the
+         session go. What a restart used to fix: sign in again. */
+      const now = Date.now();
+      staleAt = staleAt.filter((t) => now - t < 2 * 60 * 1000);
+      staleAt.push(now);
+      if (staleAt.length > 3) {
+        reconnecting = false;
+        lastError = { kind: 'crash', message: 'The connection to Spotify keeps dropping.' };
+        setStatus('error');
+        notice({
+          key: 'helper-stale-loop', kind: 'error', source: 'Playback',
+          title: 'Spotify keeps dropping the connection',
+          detail: `Studio reconnected to Spotify several times in two minutes and it went stale again each time (${ev.why}). Check your internet connection, then press play; if it keeps happening, restart Studio.`,
+        });
+        return;
+      }
+      const active = last.state === 'playing' || last.state === 'loading';
+      notice({
+        key: 'helper-stale', kind: 'info', source: 'Playback',
+        title: 'Reconnected to Spotify',
+        detail: `The connection to Spotify went stale (${ev.why}), which makes every song fail to load until it's renewed, usually after sleep or a network change. Studio reconnected by itself${active ? ' and picked the song back up where it was' : ''}.`,
+        // Nothing was playing: worth a line in the panel, not a toast.
+        quiet: !active,
+        repeatAfterMs: 5 * 60 * 1000,
+      });
+      reconnecting = true;
+      signIn();
+      return;
+    }
     case 'authError':
       lastError = { kind: ev.kind, message: ev.message };
       queue = [];
@@ -117,6 +150,8 @@ function onLine(line) {
    reusable sign-in librespot saved, and falls back to the token if Spotify
    refuses that. */
 let freshSignIn = false;
+let reconnecting = false; // signing in again after a stale session
+let staleAt = [];         // when sessions went stale, for the give-up check
 
 async function signIn() {
   setStatus('signingIn');

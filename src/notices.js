@@ -17,14 +17,15 @@ import { BrowserWindow } from 'electron';
 
 const lastSent = new Map(); // key → time sent
 
-export function notice({ key, kind = 'warning', title, detail = '', source = '', repeatAfterMs = 10 * 60 * 1000 }) {
+export function notice({ key, kind = 'warning', title, detail = '', source = '', quiet = false, repeatAfterMs = 10 * 60 * 1000 }) {
   if (!title) return;
   const now = Date.now();
   if (key) {
     if (now - (lastSent.get(key) || 0) < repeatAfterMs) return;
     lastSent.set(key, now);
   }
-  const payload = { key: key || null, kind, title, detail, source, at: now };
+  // quiet: kept in the panel, no toast.
+  const payload = { key: key || null, kind, title, detail, source, quiet, at: now };
   for (const w of BrowserWindow.getAllWindows()) {
     try { w.webContents.send('app:notice', payload); } catch { /* closing */ }
   }

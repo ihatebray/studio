@@ -7,7 +7,7 @@ import {
   ensureControlFontInheritance,
   loadGoogleFontForPreset,
 } from './uiFonts.js';
-import { useToastBus, ToastStack, ToastContext } from './Toasts.jsx';
+import { useToastBus, ToastStack, ToastContext, recordNotice } from './Toasts.jsx';
 import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from './spotifyMediaElement.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
 import { useMiniPlayerBridge } from './useMiniPlayerBridge.js';
@@ -290,6 +290,10 @@ export default function App() {
     if (!api?.onAppNotice) return undefined;
     const unsub = api.onAppNotice((n) => {
       if (!n?.title) return;
+      if (n.quiet) {
+        recordNotice({ key: n.key || undefined, kind: n.kind || 'info', title: n.title, detail: n.detail, source: n.source, at: n.at });
+        return;
+      }
       pushToast({
         message: n.title, detail: n.detail, kind: n.kind || 'info', source: n.source,
         dedupeKey: n.key || undefined, log: true,

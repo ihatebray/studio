@@ -269,6 +269,20 @@ export class SpotifyMediaElement extends EventTarget {
       return;
     }
     if (ev.event === 'error') { if (this.id && !this._paused) this._fail(ev.message); return; }
+    if (ev.event === 'reconnected') {
+      // A fresh session: whatever was preloaded is gone, and the song that
+      // was playing (or failing to load) starts again where it was.
+      preloaded = null;
+      loadInFlight = false;
+      if (this.id && !this._paused) {
+        clearTimeout(this._retry);
+        this._retry = null;
+        this._throttles = 0;
+        this._pending = { positionMs: Math.round(this._pos * 1000) };
+        this.play();
+      }
+      return;
+    }
     if (ev.event === 'unavailable') {
       // Any refusal or server failure, even of a preload, means Spotify
       // wants fewer requests.
