@@ -150,6 +150,7 @@ import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc, prepareForReload } from './spotifyPlayer.js';
+import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import { registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch } from './spotifyPartner.js';
 
@@ -176,6 +177,7 @@ registerSpotifyPartnerIpc(ipcMain);
 /* Spotify playback: the studio-spotify helper (librespot). Started on first
    use, signed in with the account above. */
 registerSpotifyPlayerIpc(ipcMain);
+registerSpotifyFeedIpc(ipcMain);
 
 /* Save: Get's replacement. Adds the track to the library as a streamed row
    (spotify:track:<id>, played by the helper) and hearts it on Spotify.

@@ -192,6 +192,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   spotifyPartnerTrackPlays: (id) => ipcRenderer.invoke('spotifyPartner:trackPlays', id),
   spotifyPartnerLibrary: (kind) => ipcRenderer.invoke('spotifyPartner:library', kind),
+  /* My Spotify pages (spotifyFeed.js). Each resolves { ok, data | error }. */
+  spotifyFeedPeek: (key) => ipcRenderer.invoke('spotifyFeed:peek', key),
+  spotifyFeedHome: (force) => ipcRenderer.invoke('spotifyFeed:home', force),
+  spotifyFeedReleases: (force) => ipcRenderer.invoke('spotifyFeed:releases', force),
+  spotifyFeedPlaylist: (id) => ipcRenderer.invoke('spotifyFeed:playlist', id),
+  spotifyFeedLiked: () => ipcRenderer.invoke('spotifyFeed:liked'),
   onSpotifyPartnerChanged: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('spotifyPartner:changed', listener);

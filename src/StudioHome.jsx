@@ -13,7 +13,6 @@ import { useToast, setToastLayout, ToastPositionPicker } from './Toasts.jsx';
 import { DownloadProgressBar, useDownloadProgress, VideoPicker, ExplicitBadge, PlayIcon, PauseIcon } from './sharedUI.jsx';
 import CommandCenter from './CommandCenter.jsx';
 import InstantSearch from './InstantSearch.jsx';
-import StatsPage from './StatsPage.jsx';
 import LyricShare from './LyricShare.jsx';
 import { LyricsPickerButton } from './LyricsPicker.jsx';
 import useCoverFlight from './useCoverFlight.js';
@@ -23,10 +22,10 @@ import { songKey } from './instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
 import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPlayer.jsx';
 import ArtistGrid from './ArtistGrid.jsx';
-import { hoverPreload } from './spotifyMediaElement.js';
+import { hoverPreload, spotifyIdOf } from './spotifyMediaElement.js';
 import { CompactVizContext, CompactVizSlot, CompactVizPicker, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from './compactVizStyles.js';
-import { NewReleases, HomeRail, HOME_CSS } from './HomeReleases.jsx';
+import { SpotifyHome, SpotifyReleases } from './MySpotify.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
 
 /* =========================================================================
@@ -34,9 +33,8 @@ import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rem
  *
  *  The homescreen is now a small app with a navigation rail:
  *
- *    discover — new releases from artists you follow (ported from Immerse,
- *               including the follow-artist manager) + Apple Music top
- *               charts, both downloadable in place.
+ *    my spotify — Home and New Releases from the signed-in Spotify
+ *               account (MySpotify.jsx), playable in place.
  *    library  — Songs and Albums views. Albums group the library into
  *               real album pages: a cover grid that opens into a detail
  *               view with a numbered tracklist, play-album, and removal.
@@ -220,17 +218,6 @@ function fmtHour(h) {
 /* readableAccent() and accentTextColor() moved to coverTheme.js — the artist
    page needs them too, and a copy per file is how two colour systems start. */
 
-/* 'discover' is now the landing page and is labelled Home. The old 'home'
-   section was removed: every block on it was a preview that linked somewhere
-   else, and its releases strip was a second rendering of the feed this
-   section already owns. The id stays 'discover' so stored nav state, deep
-   links and pickSection callers keep working. */
-/* Top-bar tabs, left to right. Settings isn't here — it's an icon on the
-   right of the bar, matching the reference layout.
-
-   'stats' carries the label "Discover": the old Discover section (search +
-   releases) merged into Home, so the name was free, and the stats page is
-   the thing you go to in order to discover what you've been listening to. */
 /* Now Playing bar surface presets. Blue-grey first because that's what the
    reference uses; the rest span neutral-to-warm so there's something that sits
    right against any accent. */
@@ -322,15 +309,15 @@ const LIB_VIEWS = [
   ['artists', 'Artists', 'M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM21 21v-2a4 4 0 0 0-3-3.87'],
 ];
 
-const NAV = [
-  ['home', 'Home', 'M3 11l9-8 9 8M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5'],
-  /* This tab has always routed to 'stats' — it was only ever LABELLED
-     "Discover" (with a sparkle icon), which was left over from when Discover
-     was its own section. Discover folded into Home, so the label pointed at a
-     page that no longer existed while the page it actually opened went
-     unnamed. Now it says what it opens. */
-  ['stats', 'Stats', 'M4 20V10M10 20V4M16 20v-7M22 20H2'],
+/* Sidebar, above Library: the signed-in Spotify account's own pages
+   (MySpotify.jsx). They replaced the old Home and Stats tabs in the top bar. */
+const MY_SPOTIFY = [
+  ['sp-home', 'Home', 'M3 11l9-8 9 8M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5'],
+  ['sp-releases', 'New Releases', 'M12 3l1.9 5.6L19.5 10.5 13.9 12.4 12 18l-1.9-5.6L4.5 10.5l5.6-1.9L12 3zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z'],
 ];
+const MY_SPOTIFY_IDS = new Set(MY_SPOTIFY.map(([id]) => id));
+/* Sections that no longer exist, from stored nav state and old callers. */
+const LEGACY_SECTIONS = new Set(['home', 'stats', 'discover', 'find']);
 
 /* Library width. The sidebar is a permanent column beside the content, not a
    tab you switch to — so the wrapper starts after it rather than under it. */
@@ -577,39 +564,17 @@ export default function StudioHome({
   const [section, setSection] = useState(() => {
     try {
       const v = localStorage.getItem('studio:homeSection');
-      // Legacy values. 'find' folded into Discover; 'home' was removed
-      // entirely and Discover took its place as the landing page. Anyone with
-      // either stored would otherwise boot to a section that renders nothing.
-      // 'find' and 'discover' both folded into the landing page, which is
-      // 'home' again. The Discover TAB now points at stats.
-      if (v === 'find' || v === 'discover') return 'home';
-      /* 'library' is a valid section but NOT a NAV entry — it lives in the
-         left sidebar now, not the top bar. Validating against NAV alone sent
-         it back to Home on every reload, and pickSection('library') looked
-         like it silently did nothing. */
-      return (v === 'library' || NAV.some(([id]) => id === v)) ? v : 'home';
-    } catch { return 'home'; }
+      /* 'library' lives in the sidebar; the My Spotify pages too. Anything
+         else stored (the old Home and Stats tabs, and before them Find and
+         Discover) lands on My Spotify's Home. */
+      return (v === 'library' || MY_SPOTIFY_IDS.has(v)) ? v : 'sp-home';
+    } catch { return 'sp-home'; }
   });
   const pickSection = useCallback((s) => {
-    // Legacy target: 'find' is no longer a tab — anything still navigating to
-    // it (chart-album jumps, empty-state links) lands on Home, where the
-    // search surface takes over as soon as a query exists.
-    const target = s === 'find' ? 'discover' : s;
+    const target = LEGACY_SECTIONS.has(s) ? 'sp-home' : s;
     setSection(target);
     try { localStorage.setItem('studio:homeSection', target); } catch { /* ignore */ }
   }, []);
-  const navIndex = Math.max(0, NAV.findIndex(([id]) => id === section));
-  // Active-tab indicator — user-selectable style (Settings → Appearance).
-  const navFx = (() => {
-    const H = 40; const UNIT = 44; // NAV_BTN, NAV_BTN + NAV_GAP
-    const base = { position: 'absolute', transition: 'top 320ms cubic-bezier(0.3,0.9,0.3,1)', pointerEvents: 'none' };
-    const top = navIndex * UNIT;
-    if (navStyle === 'bar') return { ...base, left: 0, right: 0, top, height: H, borderRadius: 12, boxShadow: `inset 3px 0 0 rgb(${accent})` };
-    if (navStyle === 'glow') return { ...base, left: 0, right: 0, top, height: H, borderRadius: 12, background: `rgba(${accent},0.13)`, border: `1px solid rgba(${accent},0.32)`, boxShadow: `0 0 20px rgba(${accent},0.22)` };
-    if (navStyle === 'underline') return { ...base, left: 14, right: 14, top: top + H - 5, height: 2, borderRadius: 2, background: `rgb(${accent})` };
-    if (navStyle === 'dot') return { ...base, left: 3, top: top + H / 2 - 3, width: 6, height: 6, borderRadius: '50%', background: `rgb(${accent})`, boxShadow: `0 0 8px rgb(${accent})` };
-    return { ...base, left: 0, right: 0, top, height: H, borderRadius: 12, background: 'rgba(var(--st-fg-rgb), 0.07)', border: '1px solid rgba(var(--st-fg-rgb), 0.08)', boxShadow: `inset 3px 0 0 rgb(${accent})` };
-  })();
 
   /* ---------- Row menu + metadata editor (shared by library views) --------- */
   const [rowMenu, setRowMenu] = useState(null); // { x, y, track }
@@ -1253,20 +1218,6 @@ export default function StudioHome({
     } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn't download "${alb.displayName || 'this album'}".`); }
   }, [dlState, markDl, onTrackImported, pushToast, toastError]);
 
-  /** Run `worker` over `items` with a small concurrency pool — two YouTube
-   *  downloads in flight roughly halves an album's wall-clock time without
-   *  hammering the site (each row keeps its own progress bar). */
-  const runPool = useCallback(async (items, worker, width = 2) => {
-    const queue = [...items];
-    await Promise.all(Array.from({ length: Math.min(width, queue.length) }, async () => {
-      while (queue.length) {
-        const item = queue.shift();
-        // eslint-disable-next-line no-await-in-loop
-        await worker(item);
-      }
-    }));
-  }, []);
-
   /* downloadAlbumMissing and ensureAlbumTracks went with the Find page's
      album panel — their state (albumTracks / albumBusy) went with the find
      block above. InstantSearch's album frame does the same job against its
@@ -1314,121 +1265,6 @@ export default function StudioHome({
       openPicker(meta, res, key);
     } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn't download "${song.name}".`); }
   }, [dlState, markDl, onTrackImported, toastError, openPicker]);
-
-  // Release expansion — same protocol as Immerse's Releases tab.
-  const [openReleaseId, setOpenReleaseId] = useState(null);
-  const [releaseClosing, setReleaseClosing] = useState(false);
-  const [releaseTracks, setReleaseTracks] = useState({}); // collectionId → tracks[]
-  const [releaseBusy, setReleaseBusy] = useState({});
-  // Open (or swap to) a release. Never toggles closed — clicking another album
-  // while one is open swaps the content in place rather than closing.
-  const openReleaseModal = useCallback(async (rel) => {
-    const id = Number(rel?.collectionId);
-    if (!Number.isFinite(id)) return;
-    setReleaseClosing(false);
-    setOpenReleaseId(id);
-    if (releaseTracks[id] || releaseBusy[id]) return;
-    const a = api();
-    if (!a?.lookupReleaseAlbumTracks) return;
-    setReleaseBusy((m) => ({ ...m, [id]: true }));
-    try {
-      const res = await a.lookupReleaseAlbumTracks(id);
-      setReleaseTracks((m) => ({ ...m, [id]: res?.ok && Array.isArray(res.tracks) ? res.tracks : [] }));
-    } catch { setReleaseTracks((m) => ({ ...m, [id]: [] })); }
-    setReleaseBusy((m) => ({ ...m, [id]: false }));
-  }, [releaseTracks, releaseBusy]);
-  // Request close — the expansion plays its collapse, then calls back to unmount.
-  const closeRelease = useCallback(() => { setReleaseClosing(true); }, []);
-  const handleReleaseClosed = useCallback(() => {
-    setOpenReleaseId(null);
-    setReleaseClosing(false);
-  }, []);
-  // Escape closes the expanded release; when one opens, scroll it into view.
-  useEffect(() => {
-    if (openReleaseId == null) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') closeRelease(); };
-    window.addEventListener('keydown', onKey);
-    const t = setTimeout(() => {
-      document.querySelector('.sth-relexp')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, 130);
-    return () => { window.removeEventListener('keydown', onKey); clearTimeout(t); };
-  }, [openReleaseId, closeRelease]);
-
-  /** One iTunes release track → yt-dlp import (Immerse's meta shape). */
-  const downloadReleaseTrack = useCallback(async (rel, tk, opts = {}) => {
-    const a = api();
-    if (!a?.importFromYoutubeSearch) return;
-    const key = `r:${rel.collectionId}:${tk.trackId}`;
-    if (dlState[key] === 'busy' || dlState[key] === 'done') return;
-    markDl(key, 'busy');
-    try {
-      const meta = {
-        title: tk.trackName, artists: tk.artistName || rel.artistName,
-        album: tk.collectionName || rel.collectionName,
-        albumArtUrl: tk.artworkUrl || rel.artworkUrl, durationMs: tk.trackTimeMillis || 0,
-        spotifyId: `itunes:${tk.trackId}`, trackNumber: tk.trackNumber || null,
-        discNumber: null, explicit: !!tk.explicit,
-      };
-      const res = await a.importFromYoutubeSearch({ ...meta, progressId: key });
-      if (res?.ok && res.track) { onTrackImported?.(res.track); markDl(key, 'done'); return; }
-      markDl(key, 'failed');
-      // In a batch ("get all missing") we don't hijack the screen with a picker
-      // per failure — the row stays retryable and retrying it opens the picker.
-      if (opts.noPicker) toastError(res?.error, `Couldn't download "${tk.trackName}".`);
-      else openPicker(meta, res, key);
-    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn't download "${tk.trackName}".`); }
-  }, [dlState, markDl, onTrackImported, toastError, openPicker]);
-
-  const downloadReleaseMissing = useCallback(async (rel, list) => {
-    const todo = list.filter((tk) => !alreadyOwned(tk.trackName, tk.artistName || rel.artistName));
-    await runPool(todo, (tk) => downloadReleaseTrack(rel, tk, { noPicker: true }));
-  }, [alreadyOwned, downloadReleaseTrack, runPool]);
-
-  // Follow manager.
-  const [followOpen, setFollowOpen] = useState(false);
-  /* Home → New Releases: the two-item filter, the "show all n tracks" toggle
-     and the last-checked timestamp the refresh button updates. */
-  const [releaseFilter, setReleaseFilter] = useState('all');
-  const [releaseShowAll, setReleaseShowAll] = useState(null);
-  const [releasesCheckedAt, setReleasesCheckedAt] = useState(() => {
-    try { return localStorage.getItem('studio:releasesCheckedAt') || null; } catch { return null; }
-  });
-  useEffect(() => {
-    if (!releasesCheckedAt) return;
-    try { localStorage.setItem('studio:releasesCheckedAt', releasesCheckedAt); } catch { /* ignore */ }
-  }, [releasesCheckedAt]);
-  useEffect(() => { if (releases.length && !releasesCheckedAt) setReleasesCheckedAt(new Date().toISOString()); }, [releases.length, releasesCheckedAt]);
-
-  // Representative cover per primary artist (for follow-list avatars).
-  const artistCovers = useMemo(() => {
-    const m = new Map();
-    for (const t of library) {
-      const p = (t.artist || '').split(/,|feat\.|ft\.|&|\bx\b/i)[0].trim().toLowerCase();
-      if (p && t.coverArt && !m.has(p)) m.set(p, t.coverArt);
-    }
-    return m;
-  }, [library]);
-  const [followQuery, setFollowQuery] = useState('');
-  const [followCands, setFollowCands] = useState([]);
-  const [followBusy, setFollowBusy] = useState(false);
-  const followSearchTimer = useRef(null);
-  useEffect(() => {
-    if (!followOpen) return undefined;
-    const q = followQuery.trim();
-    if (followSearchTimer.current) clearTimeout(followSearchTimer.current);
-    if (q.length < 2) { setFollowCands([]); return undefined; }
-    followSearchTimer.current = setTimeout(async () => {
-      const a = api();
-      if (!a?.searchArtistCandidates) return;
-      setFollowBusy(true);
-      try {
-        const res = await a.searchArtistCandidates(q);
-        setFollowCands(res?.ok && Array.isArray(res.candidates) ? res.candidates : []);
-      } catch { setFollowCands([]); }
-      setFollowBusy(false);
-    }, 350);
-    return () => { if (followSearchTimer.current) clearTimeout(followSearchTimer.current); };
-  }, [followQuery, followOpen]);
 
   /* ---------- Library views ------------------------------------------------ */
   const [libView, setLibView] = useState(() => {
@@ -1802,13 +1638,6 @@ export default function StudioHome({
     if (libView === 'albums' && openLibAlbumKey && !filteredAlbums.some((g) => g.key === openLibAlbumKey)) setOpenLibAlbumKey(null);
     if (libView === 'artists' && openLibArtistKey && !filteredArtists.some((a) => a.key === openLibArtistKey)) setOpenLibArtistKey(null);
   }, [section, libView, filteredAlbums, filteredArtists, openLibAlbumKey, openLibArtistKey]);
-
-  /* ---------- Stats --------------------------------------------------------
-     The Stats page derives everything it shows from `playEvents` + `library`
-     itself (see StatsPage.jsx), so the range state, the stats memo, the
-     year-heat memo and the streak-tier bookkeeping that used to sit here are
-     gone. Nothing else in this file read them — they were computed on every
-     render of every section purely to feed one tab. */
 
   /* ---------- Discord connection status (settings page) -------------------- */
   const [discordStatus, setDiscordStatus] = useState(null); // { connected, appId, lastError } | null
@@ -2871,6 +2700,58 @@ export default function StudioHome({
   /* The shell's geometry, for wherever notifications are set to dock (the
      stack lives in App, outside this root). Same numbers as the variables on
      the root below. */
+  /* ---------- My Spotify bridge (MySpotify.jsx) ---------------------------
+     Rows on those pages are Spotify tracks, not library rows. Playing one
+     plays your library's copy when you have it (a Saved row, or a local file
+     of the same song); otherwise a stream-only track the helper plays
+     straight away, with nothing saved. Save adds it for good. */
+  const libBySpotifyId = useMemo(() => {
+    const m = new Map();
+    for (const t of library) { const sid = spotifyIdOf(t); if (sid) m.set(sid, t); }
+    return m;
+  }, [library]);
+  const spotifyPlayable = useCallback((row) => libBySpotifyId.get(row.spotifyId)
+    || ownedTrackFor(row.title, row.artists)
+    || {
+      id: `spotify:track:${row.spotifyId}`,
+      filePath: `spotify:track:${row.spotifyId}`,
+      title: row.title || '',
+      artist: row.artists || '',
+      album: row.album || '',
+      coverArt: row.albumArtUrl || null,
+      duration: (Number(row.durationMs) || 0) / 1000,
+      explicit: !!row.explicit,
+      trackNumber: row.trackNumber || null,
+      streamOnly: true,
+    }, [libBySpotifyId, ownedTrackFor]);
+  const mySpotifyBridge = useMemo(() => {
+    const saveState = (row) => {
+      if (libBySpotifyId.has(row.spotifyId) || ownedTrackFor(row.title, row.artists)) return 'saved';
+      const st = dlState[`s:${row.spotifyId}`];
+      return st === 'busy' ? 'busy' : st === 'done' ? 'saved' : null;
+    };
+    const currentSid = spotifyIdOf(currentTrack);
+    return {
+      playRows(rows, index = 0, { shuffle = false } = {}) {
+        const list = (rows || []).filter((r) => r?.spotifyId).map(spotifyPlayable);
+        if (!list.length) return;
+        if (shuffle) {
+          const mixed = [...list].sort(() => Math.random() - 0.5);
+          onPlayTrack?.(mixed[0], mixed);
+        } else {
+          onPlayTrack?.(list[Math.min(index, list.length - 1)] || list[0], list);
+        }
+      },
+      saveRow(row) { if (!saveState(row)) downloadSpotifyRow(row, { noPicker: true }); },
+      saveState,
+      isCurrent: (row) => !!currentSid && currentSid === row.spotifyId,
+      isPlaying: !!isPlaying,
+      hoverProps: (row) => hoverPreload(spotifyPlayable(row)) || {},
+      onOpenArtist: openArtistAnywhere,
+      onConnect: () => { pickSection('settings'); setSetCat('connections'); },
+    };
+  }, [libBySpotifyId, ownedTrackFor, dlState, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection]);
+
   const barShown = !!currentTrack && !libExpanded;
   useEffect(() => {
     const gutter = compactMode ? 10 : 16;
@@ -4265,7 +4146,6 @@ export default function StudioHome({
           transition: opacity 150ms ease, transform 150ms ease; }
         .sth-alb:hover .sth-alb-play, .sth-alb:focus-within .sth-alb-play { opacity: 1; transform: translateY(0); }
         @media (prefers-reduced-motion: reduce) { .sth-alb-play { transition: none; } }
-${HOME_CSS}
 
         /* ---- Radius pass (brief, Tokens and primitives) --------------------
            8px for controls up to 30px tall, 10px from 32 to 42, 12px above.
@@ -4380,20 +4260,6 @@ ${HOME_CSS}
           <span aria-hidden style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, background: 'linear-gradient(135deg, var(--accent-line), var(--accent))' }} />
           <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--text)' }}>studio</span>
         </div>
-        <nav aria-label="Primary" style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, WebkitAppRegion: 'no-drag' }}>
-          {NAV.map(([id, label, path]) => {
-            const on = section === id;
-            return (
-              <button key={id} type="button" className={`sth-toptab${on ? ' on' : ''}`} aria-current={on ? 'page' : undefined}
-                onClick={() => pickSection(id)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ flexShrink: 0 }}>
-                  <path d={path} />
-                </svg>
-                {label}
-              </button>
-            );
-          })}
-        </nav>
 
         </div>
 
@@ -4458,7 +4324,24 @@ ${HOME_CSS}
       aria-hidden={compactMode && chromePeek !== 'side' ? true : undefined}>
         {/* LIBRARY heading — the point of the change: the sidebar reads as one
             category rather than the leftovers of a split navigation. */}
-        <div className="sth-side-eyebrow"><span className="st-eyebrow">Library</span></div>
+        <div className="sth-side-eyebrow"><span className="st-eyebrow">My Spotify</span></div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {MY_SPOTIFY.map(([id, label, path]) => {
+            const on = section === id;
+            return (
+              <button key={id} type="button" aria-current={on ? 'page' : undefined}
+                className={`sth-side-item m-${navStyle === 'glow' ? 'chip' : navStyle}${on ? ' on' : ''}`}
+                onClick={() => { pickSection(id); setLibDetail(null); }}>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden style={{ flexShrink: 0 }}>
+                  <path d={path} />
+                </svg>
+                <span className="lbl">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="sth-side-eyebrow" style={{ marginTop: 20 }}><span className="st-eyebrow">Library</span></div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {LIB_VIEWS.map(([id, label, path]) => {
             const on = section === 'library' && libView === id && !libDetail;
@@ -4562,248 +4445,15 @@ ${HOME_CSS}
             also scrolling and carrying 90px of bottom padding — so the list
             was sized to 100% of a box 108px taller than what's visible, cutting
             off mid-row with dead space below and scrolling past the end. */}
-        <div key={sec} className={`sth-scroll${sec === 'home' || sec === 'library' || sec === 'settings' || sec === 'stats' ? ' is-page' : ''}`} style={{
+        <div key={sec} className={`sth-scroll${sec === 'library' || sec === 'settings' || MY_SPOTIFY_IDS.has(sec) ? ' is-page' : ''}`} style={{
           position: 'relative', zIndex: 1, animation: 'stFadeUp 0.35s cubic-bezier(0.2,0.9,0.3,1) both',
         }}>
 
-          {/* ================= HOME ================= */}
-          {/* ================= HOME (search + releases) ================= */}
-          {/* Greeting — moved here from the removed 'home' section. Hidden once
-              a search is running so results start at the top of the view. */}
-          {/* Greeting removed, along with the profile-name state and its
-              rename handler — nothing else referenced them. */}
-          {/* ================= DISCOVER ================= */}
-          {sec === 'home' ? (() => {
-            /* Brief, Home: two columns, no greeting and no page title. New
-               Releases at full height on the left, the rail on the right.
-               Nothing scrolls sideways. */
-            const relKey = (rel, tk) => `r:${rel.collectionId}:${tk.trackId}`;
-            const owns = (tk) => alreadyOwned(tk.trackName, tk.artistName);
-            const dlFor = (rel, tk) => dlState[relKey(rel, tk)];
-            const progressFor = (rel, tk) => dlProgress[relKey(rel, tk)];
-            const downloadingCount = Object.values(dlState).filter((v) => v === 'busy').length;
-
-            /* Jump back in — six destinations from the last seven days, mixing
-               playlists and albums. Whole tile is the link. */
-            const WEEK = Date.now() - 7 * 86400000;
-            const recentEvents = (playEvents || []).filter((e) => e && Number.isFinite(e.at) && e.at >= WEEK);
-            const byId = new Map(library.map((t) => [t.id, t]));
-            const albumSeen = new Map();
-            for (const e of [...recentEvents].sort((x, y) => y.at - x.at)) {
-              const t = byId.get(e.id);
-              if (!t || !t.album) continue;
-              const k = albumKeyOf(t);
-              if (!albumSeen.has(k)) albumSeen.set(k, { key: `album:${k}`, albumKey: k, kind: 'album', name: t.album, sub: `Album · ${primaryArtistOf(t)}`, art: coverFor(t) });
-            }
-            const recentIds = new Set(recentEvents.map((e) => e.id));
-            const recentPlaylists = (playlists || [])
-              .filter((pl) => (pl.trackIds || []).some((id2) => recentIds.has(id2)))
-              .map((pl) => {
-                const t0 = library.find((t) => t.id === (pl.trackIds || [])[0]);
-                return {
-                  key: `pl:${pl.id}`, id: pl.id, kind: 'playlist', name: pl.name,
-                  sub: `Playlist · ${(pl.trackIds || []).length} songs`,
-                  art: pl.coverArt || (t0 ? coverFor(t0) : null),
-                };
-              });
-            const jumpBackIn = [];
-            const albumsList = [...albumSeen.values()];
-            for (let i = 0; i < 6; i += 1) {
-              const from = i % 2 === 0 ? recentPlaylists : albumsList;
-              const other = i % 2 === 0 ? albumsList : recentPlaylists;
-              const pick = from.shift() || other.shift();
-              if (!pick) break;
-              jumpBackIn.push(pick);
-            }
-
-            /* On repeat this week — ranked by plays, which is what earns it
-               the space the old "Recently played" carousel was using. */
-            const weekCounts = new Map();
-            for (const e of recentEvents) weekCounts.set(e.id, (weekCounts.get(e.id) || 0) + 1);
-            const onRepeat = [...weekCounts.entries()]
-              .map(([id2, plays]) => ({ track: byId.get(id2), plays }))
-              .filter((r) => r.track)
-              .sort((x, y) => y.plays - x.plays)
-              .slice(0, 9)
-              .map((r) => ({ ...r, art: coverFor(r.track) }));
-
-            const playRelease = (rel) => {
-              const name = String(rel.collectionName || '').toLowerCase();
-              const own = library.filter((t) => String(t.album || '').toLowerCase() === name);
-              if (own.length) onPlayTrack?.(own[0], own);
-            };
-
-            return (
-              <div className="sth-home">
-                <div className="sth-home-col">
-                  <div className="sth-home-scroll">
-              {followOpen ? (
-                <div className="sth-fm">
-                  <div className="sth-fm-head">
-                    <div>
-                      <div className="sth-fm-title">Manage follows</div>
-                      <div className="sth-fm-sub">New releases from these artists show up here within 30 days.</div>
-                    </div>
-                    <div className="sth-fm-count">{followedArtists.length} following</div>
-                  </div>
-
-                  {/* Add an artist */}
-                  <div className="sth-fm-search">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--st-fg-rgb), 0.42)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.35-4.35" /></svg>
-                    <input
-                      placeholder="Search for an artist to follow…"
-                      value={followQuery}
-                      onChange={(e) => setFollowQuery(e.target.value)}
-                      spellCheck={false}
-                    />
-                    {followQuery ? (
-                      <button type="button" className="sth-fm-clear" onClick={() => setFollowQuery('')} aria-label="Clear">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {followBusy ? (
-                    <div style={{ padding: '14px 4px 2px', fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.45)', animation: 'stPulse 1.2s ease infinite' }}>Searching…</div>
-                  ) : followCands.length ? (
-                    <div className="sth-fm-res">
-                      {followCands.map((c, i) => {
-                        const entry = followedArtists.find((a) => a.key === (c.artistName || '').toLowerCase());
-                        const pinnedId = entry?.itunesArtistId != null ? Number(entry.itunesArtistId) : null;
-                        const state = !entry ? 'not'
-                          : pinnedId == null ? 'unpinned'
-                            : pinnedId === Number(c.artistId) ? 'this'
-                              : 'other';
-                        return (
-                          <div key={c.artistId} className="sth-fm-resrow">
-                            <div style={{ width: 38, height: 38, borderRadius: '50%', flexShrink: 0, background: c.artworkUrl ? `url("${c.artworkUrl}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)', boxShadow: '0 0 0 1px rgba(var(--st-fg-rgb), 0.1)' }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.artistName}</div>
-                              <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', marginTop: 1 }}>
-                                {[c.genre, c.latestYear ? `latest ${c.latestYear}` : ''].filter(Boolean).join(' · ') || 'Artist'}
-                              </div>
-                            </div>
-                            {state === 'this' ? (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'rgb(140,255,185)', flexShrink: 0, fontWeight: 650 }}>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                                Following
-                              </span>
-                            ) : state === 'unpinned' ? (
-                              <RowBtn label="Pin this one" onClick={() => onFollowArtist?.(c.artistName, c.artistId)} />
-                            ) : state === 'other' ? (
-                              <RowBtn label="Follow instead" onClick={() => onFollowArtist?.(c.artistName, c.artistId)} />
-                            ) : (
-                              <RowBtn label="Follow" filled onClick={() => onFollowArtist?.(c.artistName, c.artistId)} />
-                            )}
-                          </div>
-                        );
-                      })}
-                      <div className="sth-fm-note">
-                        Several artists can share a name — following pins to the exact one you pick, so only their releases show up.
-                      </div>
-                    </div>
-                  ) : followQuery.trim() ? (
-                    <div style={{ padding: '14px 4px 2px', fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.4)' }}>No artists match “{followQuery.trim()}”.</div>
-                  ) : null}
-
-                  {/* Who you're following */}
-                  <div className="sth-fm-divider" />
-                  {followedArtists.length ? (
-                    <div className="sth-fm-grid">
-                      {[...followedArtists]
-                        .sort((a, b) => (a.source === 'auto' ? 1 : 0) - (b.source === 'auto' ? 1 : 0) || (a.displayName || '').localeCompare(b.displayName || '', undefined, { sensitivity: 'base' }))
-                        .map((a) => {
-                          const cover = artistCovers.get((a.displayName || '').toLowerCase()) || artistCovers.get(a.key) || null;
-                          const auto = a.source === 'auto';
-                          return (
-                            <div key={a.key} className="sth-fm-card">
-                              {cover ? (
-                                <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, background: `url("${cover}") center/cover`, boxShadow: '0 0 0 1px rgba(var(--st-fg-rgb), 0.12)' }} />
-                              ) : (
-                                <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `rgba(${readableAccent(accent)},0.16)`, border: `1px solid rgba(${readableAccent(accent)},0.3)`, color: `rgb(${readableAccent(accent)})`, fontSize: 15, fontWeight: 700, textTransform: 'uppercase' }}>{(a.displayName || '?').trim().charAt(0)}</div>
-                              )}
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 16 }}>{a.displayName}</div>
-                                <span className="sth-fm-pill" style={auto
-                                  ? { background: 'rgba(var(--st-fg-rgb), 0.08)', color: 'rgba(var(--st-sub-rgb), 0.5)' }
-                                  : { background: `rgba(${readableAccent(accent)},0.16)`, color: `rgb(${readableAccent(accent)})` }}>
-                                  {auto ? 'Library' : 'Followed'}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                className="sth-fm-x"
-                                title={`Unfollow ${a.displayName}`}
-                                onClick={() => onUnfollowArtist?.(a.displayName)}
-                              >
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                              </button>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  ) : (
-                    <div className="sth-fm-empty">
-                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--st-fg-rgb), 0.3)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 11h-6M19 8v6" /></svg>
-                      <div style={{ fontSize: 12.5, color: 'rgba(var(--st-sub-rgb), 0.6)', fontWeight: 600 }}>No artists yet</div>
-                      <div style={{ fontSize: 11, color: 'rgba(var(--st-sub-rgb), 0.4)', lineHeight: 1.5, maxWidth: 320 }}>Search above to follow anyone. Artists with two or more tracks in your library are followed automatically.</div>
-                    </div>
-                  )}
-                </div>
-              ) : null}
-
-                    <NewReleases
-                      releases={releases}
-                      openId={openReleaseId}
-                      onToggle={(rel) => (Number(rel.collectionId) === openReleaseId ? closeRelease() : openReleaseModal(rel))}
-                      tracksById={releaseTracks}
-                      busyById={releaseBusy}
-                      owns={owns}
-                      dlFor={dlFor}
-                      progressFor={progressFor}
-                      onDownloadTrack={downloadReleaseTrack}
-                      onDownloadAll={(rel) => {
-                        const tks = releaseTracks[Number(rel.collectionId)];
-                        if (tks?.length) downloadReleaseMissing(rel, tks);
-                        else openReleaseModal(rel);
-                      }}
-                      onPlay={playRelease}
-                      filter={releaseFilter}
-                      onFilter={setReleaseFilter}
-                      checkedAt={releasesCheckedAt}
-                      refreshing={releasesRefreshing}
-                      onRefresh={onRefreshReleases ? () => { onRefreshReleases(); setReleasesCheckedAt(new Date().toISOString()); } : null}
-                      onManageFollows={() => setFollowOpen((v) => !v)}
-                      showAllFor={releaseShowAll}
-                      onShowAll={setReleaseShowAll}
-                      downloadingCount={downloadingCount}
-                      emptyNote={followedArtists.length
-                        ? (releasesRefreshing ? 'Checking for new releases…' : 'Nothing new from the artists you follow in the last 30 days.')
-                        : 'No followed artists yet. Follow someone from their artist page, or use Manage follows.'}
-                    />
-                  </div>
-                </div>
-
-                <aside className="sth-home-col sth-home-rail" aria-label="Your library at a glance">
-                  <div className="sth-home-scroll" style={{ display: 'flex', flexDirection: 'column' }}>
-                    <HomeRail
-                      onShuffleAll={library.length ? () => {
-                        const sh = [...library].sort(() => Math.random() - 0.5);
-                        onPlayTrack?.(sh[0], sh);
-                      } : null}
-                      jumpBackIn={jumpBackIn}
-                      onRepeat={onRepeat}
-                      onOpen={(it) => {
-                        pickSection('library');
-                        setLibDetail(it.kind === 'album' ? { kind: 'album', key: it.albumKey } : { kind: 'playlist', key: it.id });
-                      }}
-                      onPlayTrack={(t, list2) => onPlayTrack?.(t, list2)}
-                    />
-                  </div>
-                </aside>
-              </div>
-            );
-          })() : null}
+          {/* ================= MY SPOTIFY =================
+              Home and New Releases, from the signed-in Spotify account
+              (MySpotify.jsx). Each page scrolls itself. */}
+          {sec === 'sp-home' ? <SpotifyHome bridge={mySpotifyBridge} /> : null}
+          {sec === 'sp-releases' ? <SpotifyReleases bridge={mySpotifyBridge} /> : null}
 
           {/* ================= LIBRARY =================
               Rebuilt to the mockup: a fixed left rail of views + playlists,
@@ -5550,30 +5200,6 @@ ${HOME_CSS}
           })() : null}
 
 
-          {/* ================= STATS =================
-              Option 3b ("Streak ring"), per STATS_PAGE_SPEC.md. The page is
-              one panel that never scrolls, so it renders as an `is-page`
-              section pinned to the wrapper's edges — same treatment as the
-              album / playlist pages.
-
-              StatsPage owns its own range state and derives every figure from
-              the raw play log, which is why the stats/heat memos and the
-              streak state that used to live in this file are gone. */}
-          {sec === 'stats' ? (
-            <StatsPage
-              library={library}
-              playEvents={playEvents}
-              coverFor={coverFor}
-              onPlaySong={(t) => onPlayTrack?.(t, library, 'list')}
-              onOpenArtist={(name) => openArtistAnywhere({ name })}
-              onOpenGenre={(name) => {
-                pickSection('library');
-                pickLibView('songs');
-                setLibDetail(null);
-                setLibFilter(name);
-              }}
-            />
-          ) : null}
 
           {/* ================= SETTINGS ================= */}
           {sec === 'settings' ? (() => {

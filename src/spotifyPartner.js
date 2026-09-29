@@ -592,7 +592,7 @@ async function query(op, variables) {
 
 /* --------------------------------------------------- Web API, same token */
 
-async function webApi(p, attempt = 0, method = 'GET') {
+export async function webApi(p, attempt = 0, method = 'GET') {
   const token = await accessToken();
   const res = await fetch(p.startsWith('http') ? p : `${WEB_API}${p}`, { method, headers: { Authorization: `Bearer ${token}` } });
   if (res.status === 429) {
@@ -611,7 +611,7 @@ async function webApi(p, attempt = 0, method = 'GET') {
   return body ? JSON.parse(body) : null;
 }
 
-async function paged(first, cap = 2000) {
+export async function paged(first, cap = 2000) {
   const out = [];
   let next = first;
   while (next && out.length < cap) {

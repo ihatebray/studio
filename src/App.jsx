@@ -3162,6 +3162,9 @@ export default function App() {
 
     const recordIfThresholdHit = () => {
       if (playRecordedRef.current.has(id)) return;
+      /* Played from My Spotify without saving: there's no library row to
+         count it against (Spotify keeps its own history of it). */
+      if (currentTrack.streamOnly) return;
       const dur = audio.duration || currentTrack.duration || 0;
       const elapsed = audio.currentTime || 0;
       const threshold = Math.min(30, dur > 0 ? dur * 0.5 : 30);
