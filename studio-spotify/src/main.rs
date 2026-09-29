@@ -25,6 +25,7 @@
 //!   {"cmd":"releases","req":4,"days":60,"ids":["…"],"spotify":true}
 //!                                             new releases from followed artists (library.rs)
 //!   {"cmd":"like","req":8,"ids":["…"],"saved":true}   Liked Songs, via the collection service
+//!   {"cmd":"artists","req":9,"ids":["…"]}     artist names and portraits
 //!   {"cmd":"playlist","req":5,"id":"…"}       a playlist's songs
 //!   {"cmd":"liked","req":6}                   Liked Songs
 //!   {"cmd":"tracks","req":7,"ids":["…"]}      song details
@@ -122,6 +123,7 @@ enum Command {
         spotify: bool,
     },
     Like { req: u64, ids: Vec<String>, #[serde(default = "yes")] saved: bool },
+    Artists { req: u64, ids: Vec<String> },
     Playlist { req: u64, id: String },
     Liked { req: u64 },
     Tracks { req: u64, ids: Vec<String> },
@@ -297,7 +299,7 @@ async fn main() {
                     match &other {
                         Command::Search { req, .. } | Command::Album { req, .. } | Command::Artist { req, .. }
                         | Command::Releases { req, .. } | Command::Playlist { req, .. } | Command::Liked { req } | Command::Tracks { req, .. }
-                        | Command::Like { req, .. } => {
+                        | Command::Like { req, .. } | Command::Artists { req, .. } => {
                             send(json!({ "event": "answer", "req": req, "ok": false, "error": "not signed in" }));
                         }
                         _ => send(json!({ "event": "error", "message": "not signed in" })),
@@ -327,6 +329,7 @@ async fn main() {
                     }),
                     Command::Releases { req, days, ids, spotify } => answer(req, e.session.clone(), move |s| async move { library::releases(&s, days, &ids, spotify).await }),
                     Command::Like { req, ids, saved } => answer(req, e.session.clone(), move |s| async move { library::like(&s, &ids, saved).await }),
+                    Command::Artists { req, ids } => answer(req, e.session.clone(), move |s| async move { library::artists(&s, &ids).await }),
                     Command::Playlist { req, id } => answer(req, e.session.clone(), move |s| async move { library::playlist(&s, &id).await }),
                     Command::Liked { req } => answer(req, e.session.clone(), move |s| async move { library::liked(&s).await }),
                     Command::Tracks { req, ids } => answer(req, e.session.clone(), move |s| async move { library::tracks(&s, &ids).await }),

@@ -203,6 +203,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyFeedPeek: (key) => ipcRenderer.invoke('spotifyFeed:peek', key),
   spotifyFeedHome: (force) => ipcRenderer.invoke('spotifyFeed:home', force),
   spotifyFeedExtras: (force) => ipcRenderer.invoke('spotifyFeed:extras', force),
+  spotifyFeedStudio: () => ipcRenderer.invoke('spotifyFeed:studio'),
+  /* A Spotify song played past the halfway mark in Studio (listening.js). */
+  recordListen: (track) => ipcRenderer.invoke('listening:record', track),
   /* Artists followed in Studio (follows.js), not on Spotify. */
   followsList: () => ipcRenderer.invoke('follows:list'),
   followsAdd: (artist) => ipcRenderer.invoke('follows:add', artist),
@@ -211,6 +214,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event, list) => cb(list);
     ipcRenderer.on('follows:changed', listener);
     return () => ipcRenderer.removeListener('follows:changed', listener);
+  },
+  /* Spotify-followed artists left out of New Releases in Studio. */
+  followsHidden: () => ipcRenderer.invoke('follows:hidden'),
+  followsSetHidden: (artist, hidden) => ipcRenderer.invoke('follows:setHidden', artist, hidden),
+  onFollowsHiddenChanged: (cb) => {
+    const listener = (_event, list) => cb(list);
+    ipcRenderer.on('follows:hiddenChanged', listener);
+    return () => ipcRenderer.removeListener('follows:hiddenChanged', listener);
   },
   spotifyFeedReleases: (force) => ipcRenderer.invoke('spotifyFeed:releases', force),
   spotifyFeedPlaylist: (id) => ipcRenderer.invoke('spotifyFeed:playlist', id),

@@ -28,6 +28,7 @@ import { VIZ_IDS } from './compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases } from './MySpotify.jsx';
 import NotificationsButton from './Notifications.jsx';
 import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from './studioFollows.js';
+import { notePlayContext } from './playContext.js';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
 
 /* =========================================================================
@@ -2739,8 +2740,10 @@ export default function StudioHome({
     };
     const currentSid = spotifyIdOf(currentTrack);
     return {
-      playRows(rows, index = 0, { shuffle = false } = {}) {
-        const list = (rows || []).filter((r) => r?.spotifyId).map(spotifyPlayable);
+      playRows(rows, index = 0, { shuffle = false, context = null } = {}) {
+        const spotifyRows = (rows || []).filter((r) => r?.spotifyId);
+        notePlayContext(spotifyRows, context);
+        const list = spotifyRows.map(spotifyPlayable);
         if (!list.length) return;
         if (shuffle) {
           const mixed = [...list].sort(() => Math.random() - 0.5);

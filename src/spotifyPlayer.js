@@ -332,6 +332,8 @@ export const helperLike = (ids, saved = true) => helperRequest({ cmd: 'like', id
 export const helperPlaylist = (id) => helperRequest({ cmd: 'playlist', id: String(id) }, 30_000);
 export const helperLiked = () => helperRequest({ cmd: 'liked' }, 30_000);
 export const helperTracks = (ids) => helperRequest({ cmd: 'tracks', ids: (ids || []).map(String) });
+/** `[{ id, name, image }]` for artist ids. */
+export const helperArtists = (ids) => helperRequest({ cmd: 'artists', ids: (ids || []).map(String) });
 
 export function stopHelper() {
   quitting = true;

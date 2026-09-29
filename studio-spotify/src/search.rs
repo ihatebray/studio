@@ -169,6 +169,7 @@ pub async fn search(session: &Session, query: &str) -> Result<Value, String> {
 /// all of its tracks at once.
 pub async fn album(session: &Session, id: &str) -> Result<Value, String> {
     let uri = format!("{ALBUM_PREFIX}{id}");
+    let id_of_album = id.to_owned();
     let bytes = extended(session, std::slice::from_ref(&uri), ExtensionKind::ALBUM_V4)
         .await?
         .into_iter()
@@ -203,6 +204,8 @@ pub async fn album(session: &Session, id: &str) -> Result<Value, String> {
             let names = t.artist.iter().map(|x| x.name().to_owned()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", ");
             Some(json!({
                 "spotifyId": id, "title": t.name(), "artists": names,
+                "artistIds": t.artist.iter().filter_map(|x| base62(x.gid())).collect::<Vec<_>>(),
+                "albumId": id_of_album,
                 "album": name, "albumArtUrl": cover, "albumArtists": artists,
                 "durationMs": t.duration().max(0),
                 "trackNumber": if t.number() > 0 { t.number() } else { *n },

@@ -9,6 +9,7 @@ import {
 } from './uiFonts.js';
 import { useToastBus, ToastStack, ToastContext, recordNotice } from './Toasts.jsx';
 import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from './spotifyMediaElement.js';
+import { playContextFor } from './playContext.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
 import { useMiniPlayerBridge } from './useMiniPlayerBridge.js';
 import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
@@ -3163,15 +3164,34 @@ export default function App() {
 
     const recordIfThresholdHit = () => {
       if (playRecordedRef.current.has(id)) return;
-      /* Played from My Spotify without saving: there's no library row to
-         count it against (Spotify keeps its own history of it). */
-      if (currentTrack.streamOnly) return;
       const dur = audio.duration || currentTrack.duration || 0;
       const elapsed = audio.currentTime || 0;
       const threshold = Math.min(30, dur > 0 ? dur * 0.5 : 30);
       if (elapsed < threshold) return;
       playRecordedRef.current.add(id);
       const api = window.electronAPI;
+      /* Any Spotify song, saved or not, goes in Studio's own listening
+         history too: Spotify never hears about plays here, so that's what
+         My Spotify's Home is built from. */
+      const sid = spotifyIdOf(currentTrack);
+      if (sid && api?.recordListen) {
+        const note = playContextFor(sid) || {};
+        api.recordListen({
+          spotifyId: sid,
+          title: currentTrack.title,
+          artists: currentTrack.artist || note.artists,
+          artistIds: note.artistIds || [],
+          album: currentTrack.album || note.album,
+          albumId: note.albumId || null,
+          albumArtUrl: (typeof currentTrack.coverArt === 'string' && /^https?:/.test(currentTrack.coverArt)
+            ? currentTrack.coverArt : null) || note.albumArtUrl || null,
+          durationMs: Math.round((dur || 0) * 1000),
+          context: note.context || null,
+        }).catch(() => {});
+      }
+      /* Played from My Spotify without saving: there's no library row to
+         count it against. */
+      if (currentTrack.streamOnly) return;
       if (!api?.recordTrackPlay) return;
       api.recordTrackPlay(id, Math.round(listenRef.current.ms)).then((r) => {
         if (!r?.ok) return;

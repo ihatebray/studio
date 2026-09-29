@@ -48,7 +48,38 @@ export function unfollow(id) {
   return { ok: true, follows: cache };
 }
 
+/* Hidden: artists followed on Spotify whose releases you'd rather not see
+   in Studio. Unfollowing them would mean changing Spotify, so they're only
+   left out here (New Releases filters them itself, with no re-check). */
+const hiddenFile = () => path.join(app.getPath('userData'), 'studio-follows-hidden.json');
+let hiddenCache = null;
+export function listHidden() {
+  if (hiddenCache) return hiddenCache;
+  try {
+    const v = JSON.parse(fs.readFileSync(hiddenFile(), 'utf8'));
+    hiddenCache = Array.isArray(v) ? v.filter((a) => valid(a?.id)) : [];
+  } catch { hiddenCache = []; }
+  return hiddenCache;
+}
+
+function saveHidden(next) {
+  hiddenCache = next;
+  try { fs.writeFileSync(hiddenFile(), JSON.stringify(next, null, 1)); } catch { /* ignore */ }
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { w.webContents.send('follows:hiddenChanged', next); } catch { /* closing */ }
+  }
+}
+
+export function setHidden({ id, name = '', image = null } = {}, hidden = true) {
+  if (!valid(id)) return { ok: false };
+  const rest = listHidden().filter((a) => a.id !== id);
+  saveHidden(hidden ? [{ id, name: String(name || ''), image: image || null, at: Date.now() }, ...rest] : rest);
+  return { ok: true, hidden: hiddenCache };
+}
+
 export function registerFollowsIpc(ipcMain) {
+  ipcMain.handle('follows:hidden', () => listHidden());
+  ipcMain.handle('follows:setHidden', (_e, artist, hidden) => setHidden(artist, hidden !== false));
   ipcMain.handle('follows:list', () => listFollows());
   ipcMain.handle('follows:add', (_e, artist) => follow(artist));
   ipcMain.handle('follows:remove', (_e, id) => unfollow(String(id || '')));

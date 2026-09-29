@@ -10,10 +10,12 @@ import { useSyncExternalStore } from 'react';
 const api = () => (typeof window !== 'undefined' ? window.electronAPI : null);
 
 let list = [];
+let hidden = [];
 let started = false;
 const subs = new Set();
 const emit = () => subs.forEach((fn) => fn());
 const set = (next) => { list = Array.isArray(next) ? next : []; emit(); };
+const setHiddenList = (next) => { hidden = Array.isArray(next) ? next : []; emit(); };
 
 function start() {
   if (started) return;
@@ -21,12 +23,32 @@ function start() {
   const a = api();
   a?.followsList?.().then(set).catch(() => {});
   a?.onFollowsChanged?.(set);
+  a?.followsHidden?.().then(setHiddenList).catch(() => {});
+  a?.onFollowsHiddenChanged?.(setHiddenList);
 }
+
+const subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
 
 /** Artists followed in Studio, newest first: [{ id, name, image, at }]. */
 export function useStudioFollows() {
   start();
-  return useSyncExternalStore((fn) => { subs.add(fn); return () => subs.delete(fn); }, () => list);
+  return useSyncExternalStore(subscribe, () => list);
+}
+
+/** Spotify-followed artists hidden from New Releases: [{ id, name, image }]. */
+export function useHiddenArtists() {
+  start();
+  return useSyncExternalStore(subscribe, () => hidden);
+}
+
+/** Hide (or show again) a Spotify-followed artist's releases in Studio.
+ *  Updates here at once; main keeps the list. */
+export async function setArtistHidden(artist, on = true) {
+  if (!artist?.id) return { ok: false };
+  setHiddenList(on
+    ? [{ id: artist.id, name: artist.name || '', image: artist.image || null }, ...hidden.filter((a) => a.id !== artist.id)]
+    : hidden.filter((a) => a.id !== artist.id));
+  return api()?.followsSetHidden?.({ id: artist.id, name: artist.name, image: artist.image }, on) ?? { ok: true };
 }
 
 const norm = (s) => String(s || '').trim().toLowerCase();

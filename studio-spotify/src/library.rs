@@ -260,14 +260,16 @@ pub async fn playlist(session: &Session, id: &str) -> Result<Value, String> {
 
 /// Releases from the last `days` days by `extra` (artists followed in
 /// Studio) and, with `spotify`, the artists followed on Spotify, newest
-/// first: `{ releases, artistsChecked, artistsTotal }`.
+/// first: `{ releases, artistsChecked, artistsTotal, artists }`.
 pub async fn releases(session: &Session, days: u32, extra: &[String], spotify: bool) -> Result<Value, String> {
     let mut artist_uris: Vec<String> = extra.iter().filter(|id| !id.is_empty()).map(|id| format!("{ARTIST_PREFIX}{id}")).collect();
     let studio_count = artist_uris.len();
+    let mut on_spotify: std::collections::HashSet<String> = std::collections::HashSet::new();
     if spotify {
         match saved_items(session, "artist", ARTIST_PREFIX, MAX_FOLLOWED).await {
             Ok(followed) => {
                 for (u, _) in followed {
+                    on_spotify.insert(u.clone());
                     if !artist_uris.contains(&u) {
                         artist_uris.push(u);
                     }
@@ -309,6 +311,24 @@ pub async fn releases(session: &Session, days: u32, extra: &[String], spotify: b
             }
         }
     }
+
+    // Who was checked, for Studio's Following list (Spotify's follows included).
+    let extra_uris: std::collections::HashSet<String> = extra.iter().map(|id| format!("{ARTIST_PREFIX}{id}")).collect();
+    let checked: Vec<Value> = artist_uris
+        .iter()
+        .filter_map(|u| {
+            let a = artists.get(u)?;
+            let mut images: Vec<_> = a.portrait_group.iter().flat_map(|g| g.image.iter().cloned()).collect();
+            images.extend(a.portrait.iter().cloned());
+            Some(json!({
+                "id": u.strip_prefix(ARTIST_PREFIX)?,
+                "name": a.name(),
+                "image": image_url(&images, ImageSize::DEFAULT),
+                "source": if extra_uris.contains(u) { "studio" } else { "spotify" },
+                "onSpotify": on_spotify.contains(u),
+            }))
+        })
+        .collect();
 
     let cutoff = date_days_ago(days);
     let mut out: Vec<Value> = Vec::new();
@@ -358,7 +378,25 @@ pub async fn releases(session: &Session, days: u32, extra: &[String], spotify: b
         "releases": out,
         "artistsChecked": artists.len(),
         "artistsTotal": artist_uris.len(),
+        "artists": checked,
     }))
+}
+
+/// Names and portraits for these artist ids, in one batch: `[{ id, name, image }]`.
+pub async fn artists(session: &Session, ids: &[String]) -> Result<Value, String> {
+    let uris: Vec<String> = ids.iter().filter(|id| !id.is_empty()).map(|id| format!("{ARTIST_PREFIX}{id}")).collect();
+    let mut out = Vec::new();
+    for chunk in uris.chunks(BATCH) {
+        for (u, b) in extended(session, chunk, ExtensionKind::ARTIST_V4).await? {
+            let Ok(a) = ArtistMessage::parse_from_bytes(&b) else { continue };
+            let mut images: Vec<_> = a.portrait_group.iter().flat_map(|g| g.image.iter().cloned()).collect();
+            images.extend(a.portrait.iter().cloned());
+            if let Some(id) = u.strip_prefix(ARTIST_PREFIX) {
+                out.push(json!({ "id": id, "name": a.name(), "image": image_url(&images, ImageSize::DEFAULT) }));
+            }
+        }
+    }
+    Ok(Value::Array(out))
 }
 
 /// Add songs to (or take them out of) Liked Songs, through the collection

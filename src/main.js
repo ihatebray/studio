@@ -152,6 +152,7 @@ import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { registerFollowsIpc } from './follows.js';
+import { registerListeningIpc } from './listening.js';
 import { notice } from './notices.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import {
@@ -254,6 +255,7 @@ registerSpotifyPartnerIpc(ipcMain);
 registerSpotifyPlayerIpc(ipcMain);
 registerSpotifyFeedIpc(ipcMain);
 registerFollowsIpc(ipcMain);
+registerListeningIpc(ipcMain);
 
 /* Save: Get's replacement. Adds the track to the library as a streamed row
    (spotify:track:<id>, played by the helper) and hearts it on Spotify.

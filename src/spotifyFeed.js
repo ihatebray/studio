@@ -18,7 +18,8 @@ import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 import { webApi, webApiRateLimit, paged, partnerState, homeFeed, libraryItems } from './spotifyPartner.js';
-import { helperReleases, helperPlaylist, helperLiked } from './spotifyPlayer.js';
+import { helperReleases, helperPlaylist, helperLiked, helperArtists } from './spotifyPlayer.js';
+import { listeningSummary } from './listening.js';
 import { listFollows, onFollowsChange } from './follows.js';
 
 const HOME_TTL_MS = 10 * 60 * 1000;
@@ -221,6 +222,7 @@ async function buildReleases(prev) {
     return {
       releases: (r.releases || []).map((x) => ({ ...x, inStudio: (x.artistIds || []).some((id) => studioIds.has(id)) })),
       artistsChecked: r.artistsChecked || 0, artistsTotal: r.artistsTotal || 0, studioFollows: studio.length,
+      artists: r.artists || [],
       partial: false, windowDays: RELEASE_WINDOW_DAYS, fetchedAt: Date.now(), limitedUntil: null, source: 'session',
     };
   } catch (e) {
@@ -321,6 +323,28 @@ function peek(key) {
   return hit && hit.account === account ? { ...hit.data, stale: true } : null;
 }
 
+/* ------------------------------------------------ your Studio listening */
+
+/* Liked Songs (for the daily mix) and artist portraits change slowly; keep
+   them a while so the Studio sections cost nothing to redraw. */
+let likedCache = { at: 0, rows: [] };
+const portraitCache = new Map(); // artist id → image | null
+
+async function studioHome() {
+  if (Date.now() - likedCache.at > 6 * 60 * 60 * 1000) {
+    try { likedCache = { at: Date.now(), rows: await helperLiked() }; } catch { likedCache.at = Date.now() - 5 * 60 * 60 * 1000; }
+  }
+  const s = listeningSummary({ liked: likedCache.rows });
+  const want = s.topArtists.map((a) => a.id).filter((id) => id && !portraitCache.has(id));
+  if (want.length) {
+    try {
+      for (const a of await helperArtists(want)) portraitCache.set(a.id, a.image || null);
+    } catch { /* portraits are a nicety; album art stands in */ }
+  }
+  s.topArtists = s.topArtists.map((a) => ({ ...a, image: (a.id && portraitCache.get(a.id)) || null }));
+  return s;
+}
+
 /* ------------------------------------------------------------ collections */
 
 async function playlistTracks(id) {
@@ -353,6 +377,7 @@ onFollowsChange(() => {
 export function registerSpotifyFeedIpc(ipcMain) {
   ipcMain.handle('spotifyFeed:peek', (_e, key) => (['home', 'releases', 'extras'].includes(key) ? peek(key) : null));
   ipcMain.handle('spotifyFeed:home', wrap((force) => cached('home', HOME_TTL_MS, buildHome, !!force)));
+  ipcMain.handle('spotifyFeed:studio', wrap(() => studioHome()));
   ipcMain.handle('spotifyFeed:extras', wrap((force) => cached('extras', EXTRAS_TTL_MS, buildExtras, !!force, true)));
   ipcMain.handle('spotifyFeed:releases', wrap((force) => cached('releases', RELEASES_TTL_MS, buildReleases, !!force)));
   ipcMain.handle('spotifyFeed:playlist', wrap((id) => playlistTracks(String(id || ''))));
