@@ -725,7 +725,9 @@ export function SpotifyHome({ bridge }) {
     const mixes = m.mixes || [];
     const mixById = new Map(mixes.map((x) => [x.id, x]));
 
-    const allShelves = (c.shelves || []).map((sh) => ({ ...sh, items: noDj(sh.items) })).filter((sh) => sh.items.length);
+    // Spotify titles its personal shelf after your account ("Made For lil bray").
+    const retitle = (t) => (/^made for\b/i.test(String(t || '').trim()) ? 'Made for You' : t);
+    const allShelves = (c.shelves || []).map((sh) => ({ ...sh, title: retitle(sh.title), items: noDj(sh.items) })).filter((sh) => sh.items.length);
     // Fresh New Music first, always: this visit's, or the last one seen.
     const fresh = allShelves.find((sh) => FRESH_SHELF.test(sh.title || '')) || (c.fresh?.items?.length ? { ...c.fresh, items: noDj(c.fresh.items) } : null);
     const shelves = [
