@@ -108,6 +108,8 @@ const refusedBy = (results) => results.find((r) => !r.ok && r.e?.step === 'ratel
    player's "recents" and its shelves, Made For You and the rest) and Your
    Library, both through Pathfinder. Neither touches the Web API, whose
    quota is shared by every app signing in as Spotify's desktop client. */
+const FRESH_SHELF = /fresh new music/i;
+
 async function buildHome(prev) {
   const st = requireSignIn();
   const [feed, lib] = await Promise.all([settle(homeFeed()), settle(libraryItems())]);
@@ -116,7 +118,11 @@ async function buildHome(prev) {
   const items = lib.ok ? lib.v.items : null;
   const of = (kind) => (items ? items.filter((i) => i.kind === kind) : null);
   const liked = items?.find((i) => i.kind === 'liked') || null;
+  /* Fresh New Music comes and goes from Spotify's home feed. Home always
+     shows it, so keep the last one seen for the visits it's missing from. */
+  const freshNow = feed.ok ? feed.v.shelves.find((sh) => FRESH_SHELF.test(sh.title || '') && sh.items?.length) : null;
   return {
+    fresh: freshNow ? { ...freshNow, seenAt: Date.now() } : old.fresh || null,
     user: { name: st.displayName || old.user?.name || '', image: old.user?.image || null },
     recents: feed.ok ? feed.v.recents : old.recents || [],
     shelves: feed.ok ? feed.v.shelves : old.shelves || [],

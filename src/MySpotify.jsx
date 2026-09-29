@@ -113,6 +113,8 @@ async function loadCollection(item) {
     }
     case 'playlist': return unwrap(await api.spotifyFeedPlaylist(item.id));
     case 'liked': return unwrap(await api.spotifyFeedLiked());
+    // Studio's own mixes (listening.js) come with their songs.
+    case 'mix': return item.rows || [];
     // Through main's artist route (the helper's session first).
     case 'artist': return unwrap(await api.spotifyArtistTopTracks(item.id, item.name));
     default: return [];
@@ -270,6 +272,20 @@ const CSS = `
 .msp-tile.is-artist { align-items: center; text-align: center; }
 .msp-tile.is-artist .msp-art { border-radius: 50%; }
 .msp-tile.is-artist .nm, .msp-tile.is-artist .sb { text-align: center; }
+/* Studio mixes: four covers and the name, like Spotify prints on its own */
+.msp-mixart-grid { position: absolute; inset: 0; display: grid; }
+.msp-mixart-grid.is-four { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.msp-mixart-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msp-mixart::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 38%, rgba(0,0,0,0.72) 100%); }
+.msp-mixart-mark { position: absolute; left: 8px; top: 8px; z-index: 1; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-ink); box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
+.msp-jumptile .msp-mixart-mark { display: none; }
+.msp-mixart-name { position: absolute; left: 12px; right: 12px; bottom: 10px; z-index: 1; font-size: 19px; font-weight: 800; line-height: 1.05;
+  letter-spacing: -0.02em; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,0.45);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.msp-panel-head .msp-mixart-name { display: none; }
+.msp-mixart .msp-playfab { z-index: 2; }
 .msp-rank { position: absolute; left: 8px; top: 8px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
   background: rgba(0,0,0,0.6); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(6px); }
@@ -417,7 +433,8 @@ const CSS = `
 .msp-panel-head .sub { font-size: 12.5px; color: rgba(255,255,255,0.7); margin-top: 4px; }
 .msp-panel-head .x { position: absolute; top: 10px; right: 10px; color: rgba(255,255,255,0.75); }
 .msp-panel-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 18px; }
-.msp-panel .msp-row { grid-template-columns: 26px minmax(0, 1fr) auto auto; }
+.msp-panel .msp-row { grid-template-columns: 26px 40px minmax(0, 1fr) auto auto; }
+.msp-panel .msp-row.no-art { grid-template-columns: 26px minmax(0, 1fr) auto auto; }
 @media (prefers-reduced-motion: reduce) { .msp-panel, .msp-scrim, .msp-bars i, .msp-sk, .msp-rexp, .msp-fm { animation: none !important; } }
 `;
 
@@ -448,7 +465,7 @@ function SaveButton({ state, onSave }) {
 function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context = null }) {
   const on = bridge.isCurrent(row);
   return (
-    <div className={cx('msp-row', on && 'on')} role="button" tabIndex={0}
+    <div className={cx('msp-row', on && 'on', !showArt && 'no-art')} role="button" tabIndex={0}
       onClick={() => bridge.playRows(list, index, { context })}
       onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}
       {...bridge.hoverProps(row)}>
@@ -464,10 +481,21 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
   );
 }
 
+/** Headers read in title case, whatever Spotify sent ("today's biggest
+ *  hits" → "Today's Biggest Hits"). Only ever raises a letter; short joining
+ *  words stay small unless they start or end the title. */
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'or', 'the', 'to', 'with']);
+function titleCase(text) {
+  const words = String(text || '').split(' ');
+  return words.map((w, i) => (
+    i > 0 && i < words.length - 1 && SMALL_WORDS.has(w) ? w : w.replace(/^([^\p{L}]*)(\p{Ll})/u, (_, pre, c) => pre + c.toUpperCase())
+  )).join(' ');
+}
+
 function SectionHead({ title, meta, children }) {
   return (
     <div className="msp-sec-h">
-      <span className="st-section-title">{title}</span>
+      <span className="st-section-title">{titleCase(title)}</span>
       {meta ? <span className="st-meta">{meta}</span> : null}
       {children ? <span className="msp-more">{children}</span> : null}
     </div>
@@ -539,10 +567,10 @@ function CollectionPanel({ item, bridge, onClose }) {
       <aside className="msp-panel" aria-label={item.name}>
         <div className="msp-panel-head">
           <span className="bg" style={{ backgroundImage: item.image ? `url("${item.image}")` : 'none' }} />
-          {item.kind === 'liked' ? <LikedArt size={40} /> : <Art src={item.image} round={item.kind === 'artist'} />}
+          {item.kind === 'liked' ? <LikedArt size={40} /> : item.kind === 'mix' ? <MixArt item={item} /> : <Art src={item.image} round={item.kind === 'artist'} />}
           <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 2 }}>
             <span className="st-eyebrow" style={{ color: 'rgba(255,255,255,0.65)' }}>
-              {item.kind === 'artist' ? 'Top songs' : item.kind === 'liked' ? 'Collection' : item.label || item.kind}
+              {item.kind === 'artist' ? 'Top songs' : item.kind === 'liked' ? 'Collection' : item.kind === 'mix' ? 'Made in Studio' : item.label || item.kind}
             </span>
             <span className="ttl">{item.name}</span>
             <span className="sub">
@@ -568,7 +596,7 @@ function CollectionPanel({ item, bridge, onClose }) {
           {!rows && !err ? Array.from({ length: 8 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 40, margin: '8px 6px' }} />) : null}
           {(rows || []).map((r, i) => (
             <TrackRow key={`${r.spotifyId}:${i}`} row={r} n={i + 1} list={rows} index={i} bridge={bridge}
-              showArt={false} meta={fmtDur(r.durationMs)} context={item} />
+              showArt={item.kind !== 'album'} meta={fmtDur(r.durationMs)} context={item} />
           ))}
           {rows && !rows.length ? <div className="st-meta" style={{ padding: 20, textAlign: 'center' }}>Nothing to play here.</div> : null}
         </div>
@@ -585,10 +613,19 @@ function usePanel() {
 
 /* ------------------------------------------------------------------ Home */
 
-/* Spotify home shelves Studio leaves out: its new-releases shelf (hit and
-   miss about which artists it shows; New Releases does that job) and the
-   albums-featuring-songs-you-like one. */
-const HIDDEN_SHELVES = /new release|albums? featuring songs you like/i;
+/* Which of Spotify's home shelves Home shows. Only the ones about you (your
+   mixes, Made For You, Discover and the like) and Fresh New Music; the
+   editorial and mood shelves (Today's Biggest Hits, Focus, genre shelves)
+   are left to Spotify. Never: its new-releases shelf (New Releases does
+   that, for artists you pick), albums featuring songs you like, and its
+   Jump back in / Recently played, which go into Home's own Jump Back In. */
+const FRESH_SHELF = /fresh new music/i;
+const KEEP_SHELVES = /made for you|mix|for you|discover|radar|recommended|based on|more (of what|like)|your (favou?rite|top)|picks/i;
+const NEVER_SHELVES = /new release|albums? featuring songs you like|jump back in|recently played/i;
+const RECENT_SHELVES = /jump back in|recently played/i;
+
+/* Spotify's DJ: an app-only feature that nothing outside Spotify can play. */
+const isDj = (it) => it?.id === '37i9dQZF1EYkqdzj48dyYq' || /^dj( x)?$/i.test(String(it?.name || '').trim());
 
 /* Studio's own history takes over a list once it has this much in it;
    before that, Spotify's (from listening elsewhere) fills in. */
@@ -623,7 +660,37 @@ function pulseLine(p) {
   return bits.join(' · ');
 }
 
-const TODAYS_MIX = { kind: 'mix', id: 'today', name: 'Today’s mix' };
+/** A Studio mix's cover: four of its album covers, with the name on it the
+ *  way Spotify prints its own mixes' names. */
+function MixArt({ item, children }) {
+  const c = item.covers || [];
+  const grid = c.length >= 4 ? c.slice(0, 4) : c.slice(0, 1);
+  return (
+    <Art className="msp-mixart">
+      <span className={cx('msp-mixart-grid', grid.length === 4 && 'is-four')}>
+        {grid.map((u, i) => <img key={`${u}:${i}`} src={u} alt="" loading="lazy" draggable={false} />)}
+      </span>
+      <span className="msp-mixart-mark" aria-hidden>{Icon.spark(12)}</span>
+      {item.name ? <span className="msp-mixart-name">{item.name}</span> : null}
+      {children}
+    </Art>
+  );
+}
+
+function MixTile({ item, onOpen, onPlay }) {
+  return (
+    <div className="msp-tile" role="button" tabIndex={0} onClick={() => onOpen(item)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}>
+      <MixArt item={item}>
+        <button type="button" className="msp-playfab" aria-label={`Play ${item.name}`}
+          onClick={(e) => { e.stopPropagation(); onPlay(item); }}>{Icon.play(15)}</button>
+      </MixArt>
+      <span style={{ minWidth: 0 }}>
+        <span className="nm" style={{ display: 'block' }}>{item.name}</span>
+        <span className="sb" style={{ display: 'block' }}>{item.sub}</span>
+      </span>
+    </div>
+  );
+}
 
 export function SpotifyHome({ bridge }) {
   const { data: core, error, loading, refresh, limitedUntil } = useFeed('home');
@@ -646,7 +713,7 @@ export function SpotifyHome({ bridge }) {
      enough to say; Spotify's home feed and Your Library supply the shelves,
      playlists and albums, and fill in until Studio has history of its own. */
   const data = useMemo(() => {
-    if (!core && !mine?.pulse?.total && !mine?.todaysMix?.length && !extra) return null;
+    if (!core && !mine?.pulse?.total && !mine?.mixes?.length && !extra) return null;
     const c = core || {};
     const m = mine || {};
     const e = extra || {};
@@ -655,27 +722,46 @@ export function SpotifyHome({ bridge }) {
       return list.filter((x) => { const k = key(x); if (!k || seen.has(k)) return false; seen.add(k); return true; });
     };
     const when = (t) => (typeof t.playedAt === 'number' ? t.playedAt : Date.parse(t.playedAt || '') || 0);
+    const noDj = (items) => (items || []).filter((it) => !isDj(it));
+    const mixes = m.mixes || [];
+    const mixById = new Map(mixes.map((x) => [x.id, x]));
+
+    const allShelves = (c.shelves || []).map((sh) => ({ ...sh, items: noDj(sh.items) })).filter((sh) => sh.items.length);
+    // Fresh New Music first, always: this visit's, or the last one seen.
+    const fresh = allShelves.find((sh) => FRESH_SHELF.test(sh.title || '')) || (c.fresh?.items?.length ? { ...c.fresh, items: noDj(c.fresh.items) } : null);
+    const shelves = [
+      ...(fresh ? [{ ...fresh, fresh: true }] : []),
+      ...allShelves.filter((sh) => !FRESH_SHELF.test(sh.title || '') && !NEVER_SHELVES.test(sh.title || '') && KEEP_SHELVES.test(sh.title || '')),
+    ];
+
     const studioRepeat = (m.onRepeat || []).length >= STUDIO_ENOUGH.onRepeat;
     const studioAll = (m.allTime || []).length >= STUDIO_ENOUGH.allTime;
     const studioArtists = (m.topArtists || []).length >= STUDIO_ENOUGH.artists;
     return {
       user: { name: e.user?.name || c.user?.name || '', image: e.user?.image || null },
       pulse: m.pulse || null,
-      jumpBackIn: uniq([...(m.recentContexts || []), ...(c.recents || [])], (it) => it?.id && `${it.kind}:${it.id}`),
+      /* Studio's own places first, then Spotify's (its recents and its
+         Jump back in / Recently played shelves), one tile each. A mix you
+         played from shows its current version; a mix that's gone isn't. */
+      jumpBackIn: uniq([
+        ...(m.recentContexts || []).map((it) => (it.kind === 'mix' ? mixById.get(it.id) && { ...mixById.get(it.id), playedAt: it.playedAt } : it)).filter(Boolean),
+        ...noDj(c.recents),
+        ...allShelves.filter((sh) => RECENT_SHELVES.test(sh.title || '')).flatMap((sh) => sh.items),
+      ], (it) => it?.id && `${it.kind}:${it.id}`),
+      mixes,
+      todaysMix: m.todaysMix || [],
       recentTracks: uniq([...(m.recentTracks || []), ...(e.recentTracks || [])].sort((a, b) => when(b) - when(a)), (t) => t.spotifyId),
       onRepeat: studioRepeat || !e.onRepeat?.length ? (m.onRepeat || []) : e.onRepeat,
       onRepeatFrom: studioRepeat || !e.onRepeat?.length ? 'studio' : 'spotify',
       allTime: studioAll || !e.allTime?.length ? (m.allTime || []) : e.allTime,
-      rediscover: m.rediscover || [],
-      todaysMix: m.todaysMix || [],
       topArtists: studioArtists
         ? m.topArtists.map((a) => ({ id: a.id, name: a.name, image: a.image || a.art, sub: `${a.plays} play${a.plays === 1 ? '' : 's'} this month` }))
         : e.topArtists?.length
           ? e.topArtists.map((a) => ({ ...a, sub: a.genres?.[0] || 'Artist' }))
           : (c.artists || []).map((a) => ({ id: a.id, name: a.name, image: a.image, sub: 'Artist' })),
-      artistsTitle: studioArtists ? 'Your artists right now' : e.topArtists?.length ? 'Your artists right now' : 'Artists you follow',
-      shelves: (c.shelves || []).filter((sh) => !HIDDEN_SHELVES.test(sh.title || '') && sh.items?.length),
-      playlists: c.playlists || [],
+      artistsTitle: studioArtists || e.topArtists?.length ? 'Your Artists Right Now' : 'Artists You Follow',
+      shelves,
+      playlists: noDj(c.playlists),
       liked: c.liked || null,
       likedCount: c.liked?.count ?? null,
       savedAlbums: c.albums || [],
@@ -688,20 +774,19 @@ export function SpotifyHome({ bridge }) {
 
   const openItem = (it) => {
     if (it.kind === 'artist' && bridge.onOpenArtist) { bridge.onOpenArtist({ name: it.name, spotifyId: it.id, image: it.image }); return; }
-    if (it.kind === 'mix') { if (data?.todaysMix?.length) bridge.playRows(data.todaysMix, 0); return; }
     openPanel(it);
   };
   const playItem = async (it, opts = {}) => {
-    if (it.kind === 'mix') { if (data?.todaysMix?.length) bridge.playRows(data.todaysMix, 0, opts); return; }
     try {
       const rows = await loadCollection(it);
       if (rows?.length) bridge.playRows(rows, 0, { ...opts, context: it });
     } catch { openPanel(it); }
   };
   const liked = data?.liked || { kind: 'liked', id: 'liked', name: 'Liked Songs', sub: 'Collection' };
+  const today = data?.mixes?.find((x) => x.id === 'today');
 
   const hasStudio = !!mine?.pulse?.total;
-  const nothing = data && !hasStudio && !data.jumpBackIn.length && !data.shelves.length && !data.playlists.length && !data.todaysMix.length;
+  const nothing = data && !hasStudio && !data.jumpBackIn.length && !data.shelves.length && !data.playlists.length && !data.mixes.length;
 
   return (
     <div className="msp-root">
@@ -714,8 +799,8 @@ export function SpotifyHome({ bridge }) {
               <span className="msp-lhead-m">{pulseLine(data?.pulse)}</span>
             </div>
             <div className="msp-lhead-r2">
-              <button type="button" className="msp-act is-primary" disabled={!data?.todaysMix?.length}
-                onClick={() => bridge.playRows(data.todaysMix, 0)}>{Icon.play(12)} Today’s mix</button>
+              <button type="button" className="msp-act is-primary" disabled={!today}
+                onClick={() => today && playItem(today)}>{Icon.play(12)} Today’s Mix</button>
               <button type="button" className="msp-act" disabled={!data} onClick={() => playItem(liked, { shuffle: true })}>
                 {Icon.shuffle(14)} <span className="msp-act-label">Shuffle Liked Songs</span>
               </button>
@@ -734,15 +819,15 @@ export function SpotifyHome({ bridge }) {
               {/* ---- Jump back in: Studio's own first, then Spotify's ---- */}
               {data.jumpBackIn.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="Jump back in" meta="Where you left off" />
+                  <SectionHead title="Jump Back In" meta="Where you left off" />
                   <div className="msp-jump">
                     {data.jumpBackIn.slice(0, 8).map((it) => (
                       <div key={`${it.kind}:${it.id}`} className="msp-jumptile" role="button" tabIndex={0}
                         onClick={() => openItem(it)} onKeyDown={(e) => { if (e.key === 'Enter') openItem(it); }}>
-                        {it.kind === 'liked' ? <LikedArt size={24} /> : <Art src={it.image} round={it.kind === 'artist'} />}
+                        {it.kind === 'liked' ? <LikedArt size={24} /> : it.kind === 'mix' ? <MixArt item={{ ...it, name: '' }} /> : <Art src={it.image} round={it.kind === 'artist'} />}
                         <span style={{ minWidth: 0 }}>
                           <span className="nm" style={{ display: 'block' }}>{it.name}</span>
-                          <span className="sb" style={{ display: 'block' }}>{it.playedAt ? `${it.sub ? `${it.sub} · ` : ''}${ago(it.playedAt)}` : it.sub}</span>
+                          <span className="sb" style={{ display: 'block' }}>{it.playedAt ? `${it.kind === 'mix' ? 'Mix' : it.sub || ''}${it.sub || it.kind === 'mix' ? ' · ' : ''}${ago(it.playedAt)}` : it.sub}</span>
                         </span>
                         <button type="button" className="go" aria-label={`Play ${it.name}`} style={{ border: 'none', cursor: 'pointer' }}
                           onClick={(e) => { e.stopPropagation(); playItem(it); }}>{Icon.play(13)}</button>
@@ -752,25 +837,22 @@ export function SpotifyHome({ bridge }) {
                 </section>
               ) : null}
 
-              {/* ---- Today's mix / On repeat ---- */}
-              {data.todaysMix.length || data.onRepeat.length ? (
-                <div className={cx('msp-duo', !(data.todaysMix.length && data.onRepeat.length) && 'is-one')}>
-                  {data.todaysMix.length ? (
-                    <section className="msp-sec">
-                      <SectionHead title="Today’s mix" meta={`New every day · ${data.todaysMix.length} songs`}>
-                        <button type="button" className="msp-act is-sm" onClick={() => bridge.playRows(data.todaysMix, 0)}>{Icon.play(11)} Play</button>
-                        <button type="button" className="msp-act is-sm" onClick={() => bridge.playRows(data.todaysMix, 0, { shuffle: true })} aria-label="Shuffle">{Icon.shuffle(13)}</button>
-                      </SectionHead>
-                      <div className="msp-list">
-                        {data.todaysMix.slice(0, 8).map((t, i) => (
-                          <TrackRow key={t.spotifyId} row={t} n={i + 1} list={data.todaysMix} index={i} bridge={bridge} meta={fmtDur(t.durationMs)} />
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
+              {/* ---- Studio's own mixes, laid out like Spotify's ---- */}
+              {data.mixes.length ? (
+                <section className="msp-sec">
+                  <SectionHead title="Made in Studio" meta="From what you play here · new every day" />
+                  <div className="msp-grid is-clip">
+                    {data.mixes.map((x) => <MixTile key={x.id} item={x} onOpen={openItem} onPlay={playItem} />)}
+                  </div>
+                </section>
+              ) : null}
+
+              {/* ---- On repeat / Recently played ---- */}
+              {data.onRepeat.length || data.recentTracks.length ? (
+                <div className={cx('msp-duo', !(data.onRepeat.length && data.recentTracks.length) && 'is-one')}>
                   {data.onRepeat.length ? (
                     <section className="msp-sec">
-                      <SectionHead title="On repeat" meta={data.onRepeatFrom === 'studio' ? 'Most played this month' : 'Last four weeks on Spotify'} />
+                      <SectionHead title="On Repeat" meta={data.onRepeatFrom === 'studio' ? 'Most played this month' : 'Last four weeks on Spotify'} />
                       <div className="msp-list">
                         {data.onRepeat.slice(0, 8).map((t, i) => (
                           <TrackRow key={t.spotifyId} row={t} n={i + 1} list={data.onRepeat} index={i} bridge={bridge}
@@ -779,15 +861,9 @@ export function SpotifyHome({ bridge }) {
                       </div>
                     </section>
                   ) : null}
-                </div>
-              ) : null}
-
-              {/* ---- Recently played / Rediscover ---- */}
-              {data.recentTracks.length || data.rediscover.length ? (
-                <div className={cx('msp-duo', !(data.recentTracks.length && data.rediscover.length) && 'is-one')}>
                   {data.recentTracks.length ? (
                     <section className="msp-sec">
-                      <SectionHead title="Recently played" />
+                      <SectionHead title="Recently Played" />
                       <div className="msp-list">
                         {data.recentTracks.slice(0, 8).map((t, i) => (
                           <TrackRow key={`${t.spotifyId}:${t.playedAt}`} row={t} n={<span style={{ fontSize: 10 }}>•</span>} list={data.recentTracks} index={i} bridge={bridge} meta={ago(t.playedAt)} />
@@ -795,23 +871,14 @@ export function SpotifyHome({ bridge }) {
                       </div>
                     </section>
                   ) : null}
-                  {data.rediscover.length ? (
-                    <section className="msp-sec">
-                      <SectionHead title="Rediscover" meta="Big for you a while back, not played lately" />
-                      <div className="msp-list">
-                        {data.rediscover.slice(0, 8).map((t, i) => (
-                          <TrackRow key={t.spotifyId} row={t} n={i + 1} list={data.rediscover} index={i} bridge={bridge} meta={`last ${ago(t.lastPlayed)}`} />
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
                 </div>
               ) : null}
 
-              {/* ---- Spotify's own shelves (Made For You, mixes…) ---- */}
+              {/* ---- Spotify's shelves about you, Fresh New Music first ---- */}
               {data.shelves.map((sh, n) => (
                 <section key={`${sh.title}:${n}`} className="msp-sec">
-                  <SectionHead title={sh.title || 'For you'} meta="From Spotify" />
+                  <SectionHead title={sh.title || 'For You'}
+                    meta={sh.fresh ? 'From Spotify · new music from everyone, not just who you follow' : 'From Spotify'} />
                   <div className="msp-grid is-clip">
                     {sh.items.map((it) => (it.kind === 'artist' ? (
                       <button key={`${it.kind}:${it.id}`} type="button" className="msp-tile is-artist" onClick={() => openItem(it)}>
@@ -848,7 +915,7 @@ export function SpotifyHome({ bridge }) {
               {/* ---- Playlists ---- */}
               {data.playlists.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="Your playlists" meta={data.likedCount ? `${data.likedCount.toLocaleString()} liked songs` : null} />
+                  <SectionHead title="Your Playlists" meta={data.likedCount ? `${data.likedCount.toLocaleString()} liked songs` : null} />
                   <div className="msp-grid is-clip" style={{ '--rows': 3 }}>
                     {data.liked ? <CoverTile item={{ ...data.liked, image: null }} onOpen={openItem} onPlay={playItem} liked /> : null}
                     {data.playlists.map((p) => <CoverTile key={p.id} item={p} onOpen={openItem} onPlay={playItem} />)}
@@ -859,7 +926,7 @@ export function SpotifyHome({ bridge }) {
               {/* ---- Saved albums ---- */}
               {data.savedAlbums.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="Albums in your library" meta="Most recently played first" />
+                  <SectionHead title="Albums in Your Library" meta="Most recently played first" />
                   <div className="msp-grid is-clip" style={{ '--rows': 2 }}>
                     {data.savedAlbums.map((a) => <CoverTile key={a.id} item={a} onOpen={openItem} onPlay={playItem} />)}
                   </div>
@@ -869,7 +936,7 @@ export function SpotifyHome({ bridge }) {
               {/* ---- All time ---- */}
               {data.allTime.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="Forever favourites" meta="Your most played, all time" />
+                  <SectionHead title="Forever Favourites" meta="Your most played, all time" />
                   <div className="msp-grid is-small is-clip" style={{ '--rows': 2 }}>
                     {data.allTime.slice(0, 20).map((t, i) => (
                       <div key={t.spotifyId} className="msp-tile" role="button" tabIndex={0}
@@ -891,7 +958,7 @@ export function SpotifyHome({ bridge }) {
 
               {nothing ? (
                 <Note icon={Icon.spotify(24)} title="Nothing here yet"
-                  body="Play something from Search or an artist’s page. This page fills in with what you play in Studio: where you left off, what’s on repeat, a new mix every day." />
+                  body="Play something from Search or an artist’s page. This page fills in with what you play in Studio: where you left off, what’s on repeat, new mixes every day." />
               ) : null}
             </>
           ) : null}

@@ -186,11 +186,34 @@ export function listeningSummary({ liked = [] } = {}) {
   const pick = (arr, n) => daily(arr, today * 7919 + arr.length).slice(0, n);
   const mixSeen = new Set();
   const todaysMix = daily([
-    ...pick(favourites, 10), ...pick(likedFresh, 12), ...pick(current, 3),
-  ], today).filter((t) => (mixSeen.has(t.spotifyId) ? false : (mixSeen.add(t.spotifyId), true))).slice(0, 24);
+    ...pick(favourites, 12), ...pick(likedFresh, 15), ...pick(current, 3),
+  ], today).filter((t) => (mixSeen.has(t.spotifyId) ? false : (mixSeen.add(t.spotifyId), true))).slice(0, 30);
+
+  /* Mixes, shown on Home like Spotify's own: today's, one for each of your
+     top artists this month (their songs you've played here and liked), and
+     Rediscover. Each is reshuffled daily. */
+  const covers = (rows) => {
+    const out = [];
+    for (const r of rows) { if (r.albumArtUrl && !out.includes(r.albumArtUrl)) out.push(r.albumArtUrl); if (out.length === 4) break; }
+    return out;
+  };
+  const mix = (id, name, sub, rows) => ({ kind: 'mix', id, name, sub, rows, covers: covers(rows), count: rows.length });
+  const mixes = [];
+  if (todaysMix.length >= 5) mixes.push(mix('today', 'Today’s Mix', 'New every day', todaysMix));
+  const everPlayed = ranked(counts(list, 0)).map((c) => row(c.last, { plays: c.plays }));
+  const by = (name) => (t) => String(t?.artists || '').toLowerCase().split(', ').includes(name.toLowerCase());
+  for (const a of topArtists.slice(0, 5)) {
+    const seenA = new Set();
+    const rows = [...everPlayed.filter(by(a.name)), ...(liked || []).filter(by(a.name))]
+      .filter((t) => t?.spotifyId && (seenA.has(t.spotifyId) ? false : (seenA.add(t.spotifyId), true)));
+    if (rows.length < 6) continue;
+    const seed = today * 31 + [...a.name].reduce((n, ch) => (n * 33 + ch.charCodeAt(0)) >>> 0, 5381);
+    mixes.push(mix(`artist:${a.id || a.name}`, `${a.name} Mix`, `Your favourites by ${a.name}, reshuffled daily`, daily(rows, seed).slice(0, 40)));
+  }
+  if (rediscover.length >= 5) mixes.push(mix('rediscover', 'Rediscover', 'Big for you a while back', rediscover));
 
   return {
-    recentTracks, recentContexts, onRepeat, allTime, rediscover, topArtists, todaysMix,
+    recentTracks, recentContexts, onRepeat, allTime, rediscover, topArtists, todaysMix, mixes,
     pulse: { todayMs, todaySongs, weekMs, weekSongs, streak, total: list.length },
     fetchedAt: now,
   };
