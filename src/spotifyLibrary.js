@@ -14,7 +14,7 @@
 import { partnerState, trackById, trackByIdPathfinder, findTrack, likeTracks } from './spotifyPartner.js';
 import { spotifyCredentialsConfigured, spotifyGetTrack, spotifySearchTracks } from './spotifyClient.js';
 import { itunesCrossCheck } from './itunesClient.js';
-import { helperTracks } from './spotifyPlayer.js';
+import { helperTracks, helperLike } from './spotifyPlayer.js';
 import { upsertTracks, idsForFilePaths, loadAllTracks } from './libraryDb.js';
 
 export const SPOTIFY_PATH_PREFIX = 'spotify:track:';
@@ -182,7 +182,16 @@ export async function saveSpotifyTracks(metas) {
 
   let liked = 0;
   let likeError = null;
-  try { liked = await likeTracks(rows.map((r) => r.id)); } catch (e) { likeError = String(e?.message || e); }
+  /* Hearted the way Spotify's clients do it (the helper, through the
+     collection service), else through the Web API, whose quota is the one
+     that keeps running out. */
+  const trackIds = rows.map((r) => r.id);
+  try {
+    liked = (await helperLike(trackIds))?.count || trackIds.length;
+  } catch (viaHelper) {
+    try { liked = await likeTracks(trackIds); } catch (e) { likeError = String(e?.message || e); }
+    if (likeError) console.warn('[save] helper couldn’t heart it either:', String(viaHelper?.message || viaHelper));
+  }
   if (likeError) console.warn('[save] library saved, but hearting on Spotify failed:', likeError);
 
   return {

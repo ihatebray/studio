@@ -258,11 +258,26 @@ pub async fn playlist(session: &Session, id: &str) -> Result<Value, String> {
 
 /* ------------------------------------------------------------ releases */
 
-/// Releases from the last `days` days by the artists you follow, newest
+/// Releases from the last `days` days by `extra` (artists followed in
+/// Studio) and, with `spotify`, the artists followed on Spotify, newest
 /// first: `{ releases, artistsChecked, artistsTotal }`.
-pub async fn releases(session: &Session, days: u32) -> Result<Value, String> {
-    let followed = saved_items(session, "artist", ARTIST_PREFIX, MAX_FOLLOWED).await?;
-    let artist_uris: Vec<String> = followed.iter().map(|(u, _)| u.clone()).collect();
+pub async fn releases(session: &Session, days: u32, extra: &[String], spotify: bool) -> Result<Value, String> {
+    let mut artist_uris: Vec<String> = extra.iter().filter(|id| !id.is_empty()).map(|id| format!("{ARTIST_PREFIX}{id}")).collect();
+    let studio_count = artist_uris.len();
+    if spotify {
+        match saved_items(session, "artist", ARTIST_PREFIX, MAX_FOLLOWED).await {
+            Ok(followed) => {
+                for (u, _) in followed {
+                    if !artist_uris.contains(&u) {
+                        artist_uris.push(u);
+                    }
+                }
+            }
+            // Studio's own follows still make a page without Spotify's.
+            Err(e) if studio_count > 0 => log::warn!("releases: Spotify follows unavailable: {e}"),
+            Err(e) => return Err(e),
+        }
+    }
     let mut artists: HashMap<String, ArtistMessage> = HashMap::new();
     for chunk in artist_uris.chunks(BATCH) {
         for (u, b) in extended(session, chunk, ExtensionKind::ARTIST_V4).await? {
@@ -344,6 +359,37 @@ pub async fn releases(session: &Session, days: u32) -> Result<Value, String> {
         "artistsChecked": artists.len(),
         "artistsTotal": artist_uris.len(),
     }))
+}
+
+/// Add songs to (or take them out of) Liked Songs, through the collection
+/// service as Spotify's clients do, not the Web API.
+pub async fn like(session: &Session, ids: &[String], saved: bool) -> Result<Value, String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?;
+    let username = session.username();
+    let mut done = 0;
+    for (n, id) in ids.iter().filter(|id| !id.is_empty()).enumerate() {
+        let mut item = Vec::new();
+        pb_string(&mut item, 1, &format!("{TRACK_PREFIX}{id}"));
+        pb_varint_field(&mut item, 2, if saved { now.as_secs() } else { 0 });
+        pb_varint_field(&mut item, 3, u64::from(!saved));
+        let mut req = Vec::new();
+        pb_string(&mut req, 1, &username);
+        pb_string(&mut req, 2, "collection");
+        write_varint(&mut req, u64::from(3u32 << 3 | 2));
+        write_varint(&mut req, item.len() as u64);
+        req.extend_from_slice(&item);
+        pb_string(&mut req, 4, &format!("studio-{}-{}-{n}", now.as_secs(), now.subsec_nanos()));
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(CONTENT));
+        headers.insert(ACCEPT, HeaderValue::from_static(CONTENT));
+        session
+            .spclient()
+            .request(&Method::POST, "/collection/v2/write", Some(headers), Some(&req))
+            .await
+            .map_err(|e| format!("liked songs: {e}"))?;
+        done += 1;
+    }
+    Ok(json!({ "count": done }))
 }
 
 /// "YYYY-MM-DD" for `days` days before today (UTC).

@@ -151,6 +151,7 @@ import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
+import { registerFollowsIpc } from './follows.js';
 import { notice } from './notices.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import {
@@ -252,6 +253,7 @@ registerSpotifyPartnerIpc(ipcMain);
    use, signed in with the account above. */
 registerSpotifyPlayerIpc(ipcMain);
 registerSpotifyFeedIpc(ipcMain);
+registerFollowsIpc(ipcMain);
 
 /* Save: Get's replacement. Adds the track to the library as a streamed row
    (spotify:track:<id>, played by the helper) and hearts it on Spotify.

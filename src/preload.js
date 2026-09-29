@@ -203,6 +203,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyFeedPeek: (key) => ipcRenderer.invoke('spotifyFeed:peek', key),
   spotifyFeedHome: (force) => ipcRenderer.invoke('spotifyFeed:home', force),
   spotifyFeedExtras: (force) => ipcRenderer.invoke('spotifyFeed:extras', force),
+  /* Artists followed in Studio (follows.js), not on Spotify. */
+  followsList: () => ipcRenderer.invoke('follows:list'),
+  followsAdd: (artist) => ipcRenderer.invoke('follows:add', artist),
+  followsRemove: (id) => ipcRenderer.invoke('follows:remove', id),
+  onFollowsChanged: (cb) => {
+    const listener = (_event, list) => cb(list);
+    ipcRenderer.on('follows:changed', listener);
+    return () => ipcRenderer.removeListener('follows:changed', listener);
+  },
   spotifyFeedReleases: (force) => ipcRenderer.invoke('spotifyFeed:releases', force),
   spotifyFeedPlaylist: (id) => ipcRenderer.invoke('spotifyFeed:playlist', id),
   spotifyFeedLiked: () => ipcRenderer.invoke('spotifyFeed:liked'),

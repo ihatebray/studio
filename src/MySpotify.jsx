@@ -21,6 +21,7 @@
  * ========================================================================= */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from './studioFollows.js';
 
 /* ------------------------------------------------------------------ data */
 
@@ -313,6 +314,16 @@ const CSS = `
 .msp-week-label::before { content: ''; display: block; width: 22px; height: 3px; border-radius: 2px; background: var(--accent-line); margin-bottom: 10px; }
 @media (max-width: 900px) { .msp-week { grid-template-columns: minmax(0, 1fr); } .msp-week-label { position: static; } .msp-spot .msp-art { width: 160px; height: 160px; } .msp-spot-title { font-size: 28px; } }
 .msp-new { position: absolute; left: 8px; top: 8px; }
+.msp-fhead { display: flex; gap: 12px; align-items: flex-start; padding: 20px 16px 12px 20px; }
+.msp-fhead .ttl { display: block; font-size: 21px; font-weight: 800; color: var(--text); letter-spacing: -0.015em; }
+.msp-fhead .sub { display: block; font-size: 12.5px; color: var(--text-faint); line-height: 1.5; margin-top: 4px; }
+.msp-fsearch { padding: 0 20px 8px; }
+.msp-fsearch .st-input { box-sizing: border-box; }
+.msp-fsec { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; }
+.msp-frow { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 10px; }
+.msp-frow:hover { background: rgba(255,255,255,0.04); }
+.msp-frow-who { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; background: none; border: none; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.msp-frow-who .nm { font-size: 13.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* empty / error / skeleton */
 .msp-note { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 12px;
@@ -510,10 +521,14 @@ function usePanel() {
 
 /* ------------------------------------------------------------------ Home */
 
+/* Spotify home shelves Studio leaves out: its new-releases shelf (hit and
+   miss about which artists it shows; New Releases does that job) and the
+   albums-featuring-songs-you-like one. */
+const HIDDEN_SHELVES = /new release|albums? featuring songs you like/i;
+
 function HomeSkeleton() {
   return (
     <>
-      <div className="msp-sk" style={{ height: 236, borderRadius: 20 }} />
       <div className="msp-jump">{Array.from({ length: 6 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 64, borderRadius: 12 }} />)}</div>
       <div className="msp-duo">
         <div>{Array.from({ length: 6 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 44, margin: '6px 0' }} />)}</div>
@@ -544,11 +559,7 @@ export function SpotifyHome({ bridge }) {
     likedCount: core.liked?.count ?? null,
   } : null;
 
-  const fan = (data?.onRepeat?.length ? data.onRepeat.map((t) => t.albumArtUrl) : (data?.jumpBackIn || []).map((i) => i.image)).filter(Boolean);
-  const fanArt = [...new Set(fan)].slice(0, 4);
-  const heroArtists = [...new Set((data?.onRepeat || []).flatMap((t) => t.artists.split(', ')))].slice(0, 3);
   const name = data?.user?.name ? data.user.name.split(' ')[0] : '';
-  const heroItem = data && !data.onRepeat.length ? data.jumpBackIn[0] : null;
   const refreshAll = () => { refresh(); refreshExtras(); };
 
   const openItem = (it) => {
@@ -582,53 +593,12 @@ export function SpotifyHome({ bridge }) {
 
           {data ? (
             <>
-              {/* ---- In rotation (or, without the Web API, where you left off) ---- */}
-              {data.onRepeat.length || heroItem ? (
-                <section className="msp-hero">
-                  <span className="msp-hero-bg" style={{ backgroundImage: fanArt[0] ? `url("${fanArt[0]}")` : 'none' }} />
-                  <div className="msp-fan" aria-hidden>
-                    {fanArt.slice().reverse().map((u, i, arr) => {
-                      const k = arr.length - 1 - i; // 0 = front
-                      return <Art key={u} src={u} round={heroItem?.kind === 'artist' && k === 0} style={{ left: 12 + k * 14, zIndex: 10 - k, '--r': `${(k - 1.5) * 5}deg`, '--dx': `${(k - 1.5) * 8}px`, opacity: 1 - k * 0.12 }} />;
-                    })}
-                  </div>
-                  {data.onRepeat.length ? (
-                    <div className="msp-hero-copy">
-                      <span className="st-eyebrow">In rotation this month</span>
-                      <span className="msp-hero-title">Your top {data.onRepeat.length}, right now</span>
-                      <span className="msp-hero-sub">
-                        {heroArtists.join(', ')}{heroArtists.length ? ' and more. ' : ''}The songs you keep coming back to, straight from your Spotify.
-                      </span>
-                      <div className="msp-hero-actions">
-                        <button type="button" className="st-btn st-btn-primary st-btn-lg" onClick={() => bridge.playRows(data.onRepeat, 0)}>{Icon.play(14)} Play</button>
-                        <button type="button" className="st-btn st-btn-lg msp-btn-glass" onClick={() => bridge.playRows(data.onRepeat, 0, { shuffle: true })}>{Icon.shuffle(15)} Shuffle</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="msp-hero-copy">
-                      <span className="st-eyebrow">Pick up where you left off</span>
-                      <span className="msp-hero-title">{heroItem.name}</span>
-                      <span className="msp-hero-sub">{heroItem.sub}</span>
-                      <div className="msp-hero-actions">
-                        <button type="button" className="st-btn st-btn-primary st-btn-lg" onClick={() => playItem(heroItem)}>{Icon.play(14)} Play</button>
-                        <button type="button" className="st-btn st-btn-lg msp-btn-glass" onClick={() => openItem(heroItem)}>{heroItem.kind === 'artist' ? 'Open artist' : 'Tracklist'}</button>
-                      </div>
-                    </div>
-                  )}
-                  <div className="msp-hero-stats">
-                    {data.likedCount != null ? <div className="msp-stat"><b>{data.likedCount.toLocaleString()}</b><span>Liked songs</span></div> : null}
-                    <div className="msp-stat"><b>{data.playlists.length}{data.playlists.length >= 100 ? '+' : ''}</b><span>Playlists</span></div>
-                    <div className="msp-stat"><b>{data.topArtists.length}</b><span>{extra?.topArtists?.length ? 'Artists in rotation' : 'Artists you follow'}</span></div>
-                  </div>
-                </section>
-              ) : null}
-
               {/* ---- Jump back in ---- */}
-              {data.jumpBackIn?.length > (heroItem ? 1 : 0) ? (
+              {data.jumpBackIn?.length ? (
                 <section className="msp-sec">
                   <SectionHead title="Jump back in" meta="Where you left off" />
                   <div className="msp-jump">
-                    {data.jumpBackIn.slice(heroItem ? 1 : 0, heroItem ? 9 : 8).map((it) => (
+                    {data.jumpBackIn.slice(0, 8).map((it) => (
                       <div key={`${it.kind}:${it.id}`} className="msp-jumptile" role="button" tabIndex={0}
                         onClick={() => openItem(it)} onKeyDown={(e) => { if (e.key === 'Enter') openItem(it); }}>
                         {it.kind === 'liked' ? <LikedArt size={24} /> : <Art src={it.image} />}
@@ -667,7 +637,7 @@ export function SpotifyHome({ bridge }) {
               ) : null}
 
               {/* ---- Spotify's own shelves (Made For You, mixes…) ---- */}
-              {(data.shelves || []).map((sh, n) => (
+              {(data.shelves || []).filter((sh) => !HIDDEN_SHELVES.test(sh.title || '')).map((sh, n) => (
                 <section key={`${sh.title}:${n}`} className="msp-sec">
                   <SectionHead title={sh.title || 'For you'} />
                   <div className="msp-grid is-clip">
@@ -817,33 +787,119 @@ function ReleasesSkeleton() {
   );
 }
 
+/* ---- Following: artists followed in Studio (studioFollows.js) ---- */
+
+function FollowPanel({ bridge, onClose }) {
+  const follows = useStudioFollows();
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  useEffect(() => {
+    const query = q.trim();
+    if (query.length < 2) { setHits([]); return undefined; }
+    const t = setTimeout(async () => {
+      setBusy(true);
+      const rows = await window.electronAPI?.spotifySearchArtists?.(query).catch(() => []);
+      setHits((rows || []).filter((a) => /^[0-9A-Za-z]{22}$/.test(a.id || '')).slice(0, 8));
+      setBusy(false);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const toggle = async (a) => {
+    if (isStudioFollowed(a, follows)) await unfollowArtist(a);
+    else await followArtist({ id: a.id, name: a.name, image: a.image });
+  };
+  const Row = ({ a }) => {
+    const on = isStudioFollowed(a, follows);
+    return (
+      <div className="msp-frow">
+        <button type="button" className="msp-frow-who" onClick={() => bridge.onOpenArtist?.({ name: a.name, spotifyId: a.id, image: a.image })}>
+          <Art src={a.image} round style={{ width: 40, height: 40 }} />
+          <span className="nm">{a.name}</span>
+        </button>
+        <button type="button" className={cx('st-btn st-btn-sm', on ? 'st-btn-outline' : 'st-btn-primary')} onClick={() => toggle(a)}>
+          {on ? 'Following' : 'Follow'}
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div className="msp-scrim" onClick={onClose} />
+      <aside className="msp-panel" aria-label="Following">
+        <div className="msp-fhead">
+          <div>
+            <span className="ttl">Following</span>
+            <span className="sub">Artists you follow here are Studio’s own; nothing changes on Spotify. Their new albums and singles show up in New Releases, along with the artists you follow on Spotify.</span>
+          </div>
+          <button type="button" className="st-icon-btn is-sm" onClick={onClose} aria-label="Close">{Icon.close(14)}</button>
+        </div>
+        <div className="msp-fsearch">
+          <input ref={inputRef} className="st-input" placeholder="Search for an artist to follow" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <div className="msp-panel-body">
+          {q.trim().length >= 2 ? (
+            <div className="msp-fsec">
+              {busy && !hits.length ? <div className="st-meta" style={{ padding: '8px 10px' }}>Searching…</div> : null}
+              {!busy && !hits.length ? <div className="st-meta" style={{ padding: '8px 10px' }}>No artists match “{q.trim()}”.</div> : null}
+              {hits.map((a) => <Row key={a.id} a={a} />)}
+            </div>
+          ) : null}
+          <div className="msp-fsec">
+            <span className="st-eyebrow" style={{ padding: '10px 10px 4px', display: 'block' }}>Following in Studio{follows.length ? ` · ${follows.length}` : ''}</span>
+            {follows.length
+              ? follows.map((a) => <Row key={a.id} a={a} />)
+              : <div className="st-meta" style={{ padding: '4px 10px 10px', lineHeight: 1.5 }}>No one yet. Search above, or use Follow on any artist’s page.</div>}
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
 export function SpotifyReleases({ bridge }) {
   const { data, error, loading, refresh, limitedUntil } = useFeed('releases');
   const [panel, openPanel, closePanel] = usePanel();
+  const follows = useStudioFollows();
+  const [following, setFollowing] = useState(false);
+  const followKey = follows.map((a) => a.id).join(',');
+  const lastFollowKey = useRef(followKey);
+  // Closing the Following panel after a change checks again (main has
+  // already dropped the old copy).
+  const closeFollowing = useCallback(() => {
+    setFollowing(false);
+    if (lastFollowKey.current !== followKey) { lastFollowKey.current = followKey; refresh(); }
+  }, [followKey, refresh]);
   const [filter, setFilter] = useState(() => { try { return localStorage.getItem('studio:releasesFilter') || 'all'; } catch { return 'all'; } });
   const pickFilter = (f) => { setFilter(f); try { localStorage.setItem('studio:releasesFilter', f); } catch { /* ignore */ } };
 
   const releases = useMemo(() => (data?.releases || []).filter((r) => (filter === 'all' ? true : filter === 'album' ? r.type === 'album' || r.type === 'compilation' : r.type === 'single')), [data, filter]);
-  // The spotlight: the newest full record, else the newest anything.
-  const spot = useMemo(() => releases.find((r) => r.type === 'album' && daysSince(r.releaseDate) < 21) || releases[0] || null, [releases]);
   const groups = useMemo(() => {
     const out = [];
     for (const r of releases) {
-      if (spot && r.albumId === spot.albumId) continue;
       const [k, label] = bucketOf(r.releaseDate);
       let g = out.find((x) => x.key === k);
       if (!g) { g = { key: k, label, items: [] }; out.push(g); }
       g.items.push(r);
     }
     return out;
-  }, [releases, spot]);
+  }, [releases]);
 
   const asItem = (r) => ({ kind: 'album', id: r.albumId, name: r.name, sub: `${r.artists} · ${releaseDay(r.releaseDate)}`, image: r.albumArtUrl, label: typeLabel(r) });
   const play = async (r) => {
     try { const rows = await loadCollection(asItem(r)); if (rows?.length) bridge.playRows(rows, 0); } catch { openPanel(asItem(r)); }
   };
-  const openArtistOf = (r) => bridge.onOpenArtist?.({ name: r.artists.split(', ')[0], spotifyId: r.artistIds?.[0] || null });
 
+  const onSpotify = data ? Math.max(0, (data.artistsTotal || 0) - (data.studioFollows || 0)) : 0;
   return (
     <div className="msp-root">
       <style>{CSS}</style>
@@ -855,8 +911,8 @@ export function SpotifyReleases({ bridge }) {
               <h1 className="st-page-title">New Releases</h1>
               <div className="st-meta" style={{ marginTop: 6 }}>
                 {data
-                  ? `The last ${data.windowDays} days from ${data.artistsChecked} artist${data.artistsChecked === 1 ? '' : 's'} you follow and play.`
-                  : 'From the artists you follow and play.'}
+                  ? `The last ${data.windowDays} days from ${follows.length} artist${follows.length === 1 ? '' : 's'} you follow in Studio${onSpotify ? ` and ${onSpotify} on Spotify` : ''}.`
+                  : 'From the artists you follow in Studio and on Spotify.'}
               </div>
             </div>
             <div className="msp-head-side msp-controls">
@@ -865,6 +921,9 @@ export function SpotifyReleases({ bridge }) {
                   <button key={id} type="button" role="tab" aria-selected={filter === id} className={filter === id ? 'on' : ''} onClick={() => pickFilter(id)}>{label}</button>
                 ))}
               </div>
+              <button type="button" className="st-btn st-btn-outline" onClick={() => setFollowing(true)}>
+                Following{follows.length ? ` · ${follows.length}` : ''}
+              </button>
               <RefreshButton loading={loading} onClick={refresh} at={data?.fetchedAt} label="Checked" />
             </div>
           </header>
@@ -878,31 +937,9 @@ export function SpotifyReleases({ bridge }) {
           {data && !releases.length ? (
             <Note icon={Icon.spark(24)} title={filter === 'all' ? 'Nothing new yet' : 'Nothing of this kind'}
               body={filter === 'all'
-                ? `None of the artists you follow or play has released anything in the last ${data.windowDays} days. Follow more artists on Spotify and they'll show up here.`
-                : 'Try another filter.'} />
-          ) : null}
-
-          {spot ? (
-            <section className="msp-spot">
-              <span className="msp-spot-bg" style={{ backgroundImage: spot.albumArtUrl ? `url("${spot.albumArtUrl}")` : 'none' }} />
-              <Art src={spot.albumArtUrl}>
-                <button type="button" className="msp-playfab is-on" style={{ width: 52, height: 52, right: 14, bottom: 14 }}
-                  aria-label={`Play ${spot.name}`} onClick={() => play(spot)}>{Icon.play(18)}</button>
-              </Art>
-              <div className="msp-spot-copy">
-                <span className="msp-pill"><span className="dot" />{daysSince(spot.releaseDate) <= 3 ? 'Just out' : 'New'} · {typeLabel(spot)}</span>
-                <span className="msp-spot-title">{spot.name}</span>
-                <button type="button" className="msp-spot-artist" onClick={() => openArtistOf(spot)}>{spot.artists}</button>
-                <span className="msp-spot-meta">
-                  {releaseDay(spot.releaseDate)}{spot.totalTracks ? ` · ${spot.totalTracks} track${spot.totalTracks === 1 ? '' : 's'}` : ''}
-                  {spot.followed ? ' · An artist you follow' : ' · In your rotation'}
-                </span>
-                <div className="msp-hero-actions">
-                  <button type="button" className="st-btn st-btn-primary st-btn-lg" onClick={() => play(spot)}>{Icon.play(14)} Play</button>
-                  <button type="button" className="st-btn st-btn-lg msp-btn-glass" onClick={() => openPanel(asItem(spot))}>Tracklist</button>
-                </div>
-              </div>
-            </section>
+                ? `None of the artists you follow has released anything in the last ${data.windowDays} days. Follow more with the Following button (or Follow on any artist's page), and their new music shows up here.`
+                : 'Try another filter.'}
+              action={filter === 'all' ? <button type="button" className="st-btn st-btn-primary" onClick={() => setFollowing(true)}>Follow artists</button> : null} />
           ) : null}
 
           {groups.length ? (
@@ -934,6 +971,7 @@ export function SpotifyReleases({ bridge }) {
         </div>
       </div>
       {panel ? <CollectionPanel item={panel} bridge={bridge} onClose={closePanel} /> : null}
+      {following ? <FollowPanel bridge={bridge} onClose={closeFollowing} /> : null}
     </div>
   );
 }

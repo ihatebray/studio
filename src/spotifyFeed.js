@@ -19,6 +19,7 @@ import path from 'path';
 import { app } from 'electron';
 import { webApi, webApiRateLimit, paged, partnerState, homeFeed, libraryItems } from './spotifyPartner.js';
 import { helperReleases, helperPlaylist, helperLiked } from './spotifyPlayer.js';
+import { listFollows, onFollowsChange } from './follows.js';
 
 const HOME_TTL_MS = 10 * 60 * 1000;
 const EXTRAS_TTL_MS = 30 * 60 * 1000;
@@ -195,6 +196,8 @@ async function releaseArtists() {
   // Refused outright: say so, rather than report an empty list of artists
   // as "nothing new".
   if (!short.ok && !medium.ok && !followed.ok) throw refusedBy([short, medium, followed]) || short.e;
+  // Artists followed in Studio are checked first.
+  for (const a of listFollows()) if (!byId.has(a.id)) byId.set(a.id, { id: a.id, name: a.name, image: a.image, genres: [], why: 'follow', followed: true });
   add(short.ok ? short.v.items : [], 'top');
   add(medium.ok ? medium.v.items : [], 'top');
   add(followed.ok ? followed.v : [], 'follow');
@@ -210,10 +213,14 @@ async function releaseArtists() {
    helper isn't available. */
 async function buildReleases(prev) {
   requireSignIn();
+  // Artists followed in Studio go first, then the ones followed on Spotify.
+  const studio = listFollows();
+  const studioIds = new Set(studio.map((a) => a.id));
   try {
-    const r = await helperReleases(RELEASE_WINDOW_DAYS);
+    const r = await helperReleases(RELEASE_WINDOW_DAYS, studio.map((a) => a.id), true);
     return {
-      releases: r.releases || [], artistsChecked: r.artistsChecked || 0, artistsTotal: r.artistsTotal || 0,
+      releases: (r.releases || []).map((x) => ({ ...x, inStudio: (x.artistIds || []).some((id) => studioIds.has(id)) })),
+      artistsChecked: r.artistsChecked || 0, artistsTotal: r.artistsTotal || 0, studioFollows: studio.length,
       partial: false, windowDays: RELEASE_WINDOW_DAYS, fetchedAt: Date.now(), limitedUntil: null, source: 'session',
     };
   } catch (e) {
@@ -335,6 +342,13 @@ const wrap = (fn) => async (_e, ...args) => {
     return { ok: false, step: e?.step || 'webapi', error: String(e?.message || e), retryAfter: e?.retryAfter || null };
   }
 };
+
+/* Following or unfollowing in Studio changes what New Releases should hold:
+   the next visit rebuilds it rather than serving the old copy. */
+onFollowsChange(() => {
+  const c = loadCache();
+  if (c.releases) { c.releases.at = 0; saveCache(); }
+});
 
 export function registerSpotifyFeedIpc(ipcMain) {
   ipcMain.handle('spotifyFeed:peek', (_e, key) => (['home', 'releases', 'extras'].includes(key) ? peek(key) : null));

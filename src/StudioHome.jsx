@@ -27,6 +27,7 @@ import { CompactVizContext, CompactVizSlot, CompactVizPicker, COMPACT_VIZ_KEY, C
 import { VIZ_IDS } from './compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases } from './MySpotify.jsx';
 import NotificationsButton from './Notifications.jsx';
+import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from './studioFollows.js';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
 
 /* =========================================================================
@@ -2330,16 +2331,21 @@ export default function StudioHome({
     setLibDetail({ kind: 'album', key });
   }, [libAlbums]);
 
-  /** Follow state for the open artist — the same list the releases feed reads,
-   *  so following from here shows up there and vice versa. */
-  const isFollowing = useCallback(
-    (name) => (followedArtists || []).some((a) => a.key === String(name || '').toLowerCase() && a.source !== 'excluded'),
-    [followedArtists],
-  );
-  const toggleFollow = useCallback((name) => {
-    if (isFollowing(name)) onUnfollowArtist?.(name);
-    else onFollowArtist?.(name, null);
-  }, [isFollowing, onFollowArtist, onUnfollowArtist]);
+  /** Follow state for an artist page: Studio's own follows (studioFollows.js),
+   *  the list New Releases reads. Following here doesn't touch Spotify. */
+  const studioFollows = useStudioFollows();
+  const isFollowing = useCallback((artist) => isStudioFollowed(artist, studioFollows), [studioFollows]);
+  const toggleFollow = useCallback(async (artist) => {
+    if (!artist) return;
+    if (isStudioFollowed(artist, studioFollows)) {
+      await unfollowArtist(artist);
+      pushToast?.({ message: `Unfollowed ${artist.name}`, kind: 'info', durationMs: 3000, log: false });
+      return;
+    }
+    const r = await followArtist({ spotifyId: artist.spotifyId, name: artist.name, image: artist.art || artist.image });
+    if (r?.ok) pushToast?.({ message: `Following ${artist.name}`, kind: 'success', durationMs: 3500, detail: 'Their new albums and singles show up in My Spotify → New Releases. This is Studio’s own follow; nothing changes on Spotify.', log: false });
+    else pushToast?.({ message: r?.error || `Couldn’t follow ${artist.name}`, kind: 'error', source: 'Follow' });
+  }, [studioFollows, pushToast]);
 
   /** The open album or playlist, normalised so the detail view renders one shape. */
   const detailData = useMemo(() => {
@@ -4607,8 +4613,8 @@ export default function StudioHome({
                     onOpenAlbum={(key) => setLibDetail({ kind: 'album', key })}
                     onJumpToFind={openPalette}
                     onBack={() => setLibDetail(null)}
-                    following={isFollowing(openArtist.name)}
-                    onToggleFollow={toggleFollow}
+                    following={isFollowing(openArtist)}
+                    onToggleFollow={() => toggleFollow(openArtist)}
                     hasArtist={(n) => libArtists.some((a) => a.key === String(n || '').toLowerCase())}
                     onConnectSpotify={() => { pickSection('settings'); setSetCat('connections'); }}
                     onOpenRelated={(r) => openArtistAnywhere({ name: r.name, spotifyId: r.id, image: r.image })}
@@ -6983,8 +6989,8 @@ export default function StudioHome({
               onOpenRelease={nav.openAlbum}
               onJumpToFind={(q) => nav.search(q)}
               onOpenFullPage={nav.openPage}
-              following={isFollowing(art.name)}
-              onToggleFollow={toggleFollow}
+              following={isFollowing(art)}
+              onToggleFollow={() => toggleFollow(art)}
               hasArtist={(n) => libArtists.some((a) => a.key === String(n || '').toLowerCase())}
               onConnectSpotify={() => { setPaletteOpen(false); pickSection('settings'); setSetCat('connections'); }}
               onOpenRelated={(r) => nav.openArtist(r)}
