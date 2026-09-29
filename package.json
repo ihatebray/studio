@@ -10,6 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "setup:binaries": "node scripts/download-binaries.mjs",
+    "setup:spotify": "node scripts/build-spotify-helper.mjs",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "devDependencies": {
