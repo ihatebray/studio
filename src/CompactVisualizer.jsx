@@ -243,8 +243,9 @@ function TilePreview({ style, animate, palette }) {
       t += dt;
       drawViz(style, { ctx: canvas.getContext('2d'), w, h, dpr, src, t, dt, playing: true, palette, progress: (t / 90) % 1, hover: null, shape: null, s });
     };
-    // Warm the demo up so a still tile shows the style mid-song, not at rest.
-    for (let i = 0; i < 90; i++) frameOf(1 / 60);
+    // Warm the demo up so a still tile shows the style mid-song, not at rest,
+    // with a few seconds of history for the styles that scroll.
+    for (let i = 0; i < 240; i++) frameOf(1 / 60);
     if (!animate || reduceMotion()) return undefined;
     let raf = 0;
     let last = performance.now();
