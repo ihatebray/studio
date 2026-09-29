@@ -35,12 +35,20 @@ export function spotifyIdOf(track) {
 
 let preloaded = null;
 let currentId = null;
+/* Every preload asks Spotify for a decryption key, and Spotify refuses keys
+   "for now" under a burst of them, after which every load fails until it
+   eases off. So preloads stand aside while a real load is in flight (it
+   needs the key more), and for a while after any refusal. */
+let loadInFlight = false;
+let quietUntil = 0;
+const QUIET_AFTER_THROTTLE_MS = 60_000;
 
 /** Ask the helper to fetch a Saved track ahead. No-op for local files, the
  *  playing track, or the one already preloaded. */
 export function preloadStreamed(track) {
   const id = spotifyIdOf(track) || (typeof track === 'string' ? track : null);
   if (!id || id === preloaded || id === currentId) return;
+  if (loadInFlight || Date.now() < quietUntil) return;
   const api = typeof window !== 'undefined' ? window.electronAPI : null;
   if (!api?.spotifyPlayerPreload) return;
   preloaded = id;
@@ -64,6 +72,9 @@ export function hoverPreload(track) {
 }
 
 const TICK_MS = 250;
+/* Retries after a throttled refusal: 1, 2, 4, 8, 16 s, then give up until
+   the user presses play. */
+const THROTTLE_RETRIES = 5;
 
 export class SpotifyMediaElement extends EventTarget {
   constructor(api) {
@@ -81,6 +92,8 @@ export class SpotifyMediaElement extends EventTarget {
     this._volume = 1;
     this._ended = false;
     this._tick = null;
+    this._throttles = 0;     // throttled refusals in a row for this track
+    this._retry = null;      // pending retry after one
     this._off = api?.onSpotifyPlayerEvent?.((ev) => this._onEvent(ev)) || null;
   }
 
@@ -133,6 +146,9 @@ export class SpotifyMediaElement extends EventTarget {
     this._seamless = this._ended;
     this.id = String(id || '') || null;
     currentId = this.id;
+    clearTimeout(this._retry);
+    this._retry = null;
+    this._throttles = 0;
     // Loading consumes the helper's preload slot either way.
     preloaded = null;
     this._pending = { positionMs: 0 };
@@ -165,12 +181,15 @@ export class SpotifyMediaElement extends EventTarget {
       // The helper's mixer starts at 50% and forgets on restart, so every
       // fresh load carries the current volume ahead of it.
       this.api?.spotifyPlayerVolume?.(this._volume)?.catch?.(() => {});
+      loadInFlight = true;
       return this._call(() => this.api.spotifyPlayerLoad(this.id, { play: true, positionMs, cut }));
     }
     return this._call(() => this.api.spotifyPlayerPlay());
   }
 
   pause() {
+    clearTimeout(this._retry);
+    this._retry = null;
     if (this._paused) return;
     this._freeze();
     this._paused = true;
@@ -182,6 +201,9 @@ export class SpotifyMediaElement extends EventTarget {
   unload() {
     const had = this.id && !this._pending;
     currentId = null;
+    loadInFlight = false;
+    clearTimeout(this._retry);
+    this._retry = null;
     this._freeze();
     this._stopTick();
     this.id = null;
@@ -211,6 +233,11 @@ export class SpotifyMediaElement extends EventTarget {
       return;
     }
     if (ev.event === 'error') { if (this.id && !this._paused) this._fail(ev.message); return; }
+    if (ev.event === 'unavailable') {
+      // Any refusal, even of a preload, means Spotify wants fewer requests.
+      if (ev.throttled) quietUntil = Date.now() + QUIET_AFTER_THROTTLE_MS;
+      if (ev.id === preloaded) preloaded = null;
+    }
     if (!this.id || ev.id !== this.id || this._pending) return;
     const pos = typeof ev.positionMs === 'number' ? ev.positionMs / 1000 : null;
     switch (ev.event) {
@@ -226,6 +253,8 @@ export class SpotifyMediaElement extends EventTarget {
         if (pos != null) this._setPos(pos);
         return;
       case 'playing':
+        loadInFlight = false;
+        this._throttles = 0;
         if (pos != null) this._setPos(pos);
         this._running = true;
         this._startTick();
@@ -267,15 +296,63 @@ export class SpotifyMediaElement extends EventTarget {
         if (!this._paused) { this._paused = true; this._emit('pause'); }
         return;
       case 'unavailable':
-        this._fail('Spotify can’t play this track on your account (not available in your country, or removed).', 'unavailable');
+        this._unavailable(ev);
         return;
       default:
     }
   }
 
+  /* A load that failed. Three different things, handled the way Sonora does:
+   *   throttled — Spotify refused the decryption key for now (too many loads
+   *               close together). Wait and ask for the SAME track again, the
+   *               wait doubling each time. Skipping ahead would only ask for
+   *               more keys and keep the refusal going — which is what made
+   *               every song in the queue fail in turn.
+   *   denied    — refused for good this session. Stop and say so.
+   *   otherwise — this one track can't play; the app skips it. */
+  _unavailable(ev) {
+    loadInFlight = false;
+    const id = this.id;
+    const reason = ev.reason ? ` (${ev.reason})` : '';
+    if (ev.denied) {
+      this._fail(`Spotify refused to play for this account${reason}. Restart Studio; if it keeps happening, sign in to Spotify again in Settings.`, 'denied');
+      return;
+    }
+    if (ev.throttled) {
+      this._throttles += 1;
+      if (this._throttles > THROTTLE_RETRIES) {
+        this._fail('Spotify is turning playback down for now (too many requests). Wait a minute, then press play.', 'throttled');
+        return;
+      }
+      const wait = 1000 * 2 ** (this._throttles - 1);
+      this._freeze();
+      this._stopTick();
+      this._running = false;
+      this._pending = { positionMs: Math.round(this._pos * 1000) };
+      if (this._throttles === 1) this._notice('Spotify is rate-limiting playback for a moment. Retrying…', 'retrying');
+      clearTimeout(this._retry);
+      this._retry = setTimeout(() => {
+        this._retry = null;
+        if (this.id === id && !this._paused && this._pending) this.play();
+      }, wait);
+      return;
+    }
+    this._fail(`Spotify couldn’t play this track${reason}.`, 'unavailable');
+  }
+
   /* ---- internals ------------------------------------------------------ */
 
+  /** Tell the app something without stopping (a toast, no skip). */
+  _notice(message, code) {
+    const e = new Event('error');
+    e.message = message;
+    e.code = code;
+    e.transient = true;
+    this.dispatchEvent(e);
+  }
+
   _fail(message, code = 'helper') {
+    loadInFlight = false;
     this._freeze();
     this._stopTick();
     this._running = false;

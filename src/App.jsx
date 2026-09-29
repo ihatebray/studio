@@ -2018,22 +2018,41 @@ export default function App() {
 
   /* Spotify playback problems (helper not built, sign-in needed, a track
      that isn't available) arrive as 'error' on the stand-in element. Say
-     why, and skip a track Spotify won't play instead of stalling there. */
+     why, and skip a single track Spotify won't play instead of stalling.
+     Never skip on a throttle (the stand-in retries the same track), and
+     stop after a few failed skips in a row: running down the queue asks
+     Spotify for a key per track, which is what keeps a refusal going. */
   useEffect(() => {
     const sp = spotifyElRef.current;
     if (!sp) return undefined;
+    const MAX_AUTO_SKIPS = 3;
+    let skips = 0;
     let lastMsg = '';
     let lastAt = 0;
     const onError = (e) => {
       const msg = e?.message || 'Spotify playback failed.';
       const now = Date.now();
-      if (msg !== lastMsg || now - lastAt > 5000) pushToast({ message: msg, kind: 'error' });
+      if (msg !== lastMsg || now - lastAt > 5000) {
+        pushToast({ message: msg, kind: e?.transient ? 'warning' : 'error' });
+      }
       lastMsg = msg;
       lastAt = now;
-      if (e?.code === 'unavailable' && audioRef.current === sp) handleNextRef.current?.();
+      if (e?.code !== 'unavailable' || audioRef.current !== sp) return;
+      skips += 1;
+      if (skips > MAX_AUTO_SKIPS) {
+        pushToast({ message: 'Several Spotify tracks in a row wouldn’t play, so playback stopped. Press play to try again.', kind: 'error' });
+        skips = 0;
+        return;
+      }
+      handleNextRef.current?.();
     };
+    const onPlaying = () => { skips = 0; };
     sp.addEventListener('error', onError);
-    return () => sp.removeEventListener('error', onError);
+    sp.addEventListener('playing', onPlaying);
+    return () => {
+      sp.removeEventListener('error', onError);
+      sp.removeEventListener('playing', onPlaying);
+    };
   }, [pushToast]);
 
   useEffect(() => {

@@ -26,7 +26,7 @@
 //!   {"event":"authError","kind":"premium|expired|refused|network","message":"…"}
 //!   {"event":"loading|playing|paused|position|seeked","id":"…","positionMs":n}
 //!   {"event":"ended","id":"…"}  {"event":"stopped","id":"…"}
-//!   {"event":"unavailable","id":"…"}
+//!   {"event":"unavailable","id":"…","throttled":bool,"denied":bool,"reason":"…"}
 //!   {"event":"track","id":"…","durationMs":n}   metadata loaded
 //!   {"event":"error","message":"…"}
 
@@ -90,8 +90,37 @@ struct Engine {
     cue: Cue,
 }
 
+/// librespot reports why a load failed only through `log`. This prints its
+/// warnings and errors to stderr (Studio's terminal shows them as
+/// `[studio-spotify] …`) and keeps the last error, which the "unavailable"
+/// event carries as `reason` so Studio can say what actually went wrong.
+struct StderrLog;
+static LAST_ERROR: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+impl log::Log for StderrLog {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::Level::Warn
+    }
+    fn log(&self, r: &log::Record) {
+        if !self.enabled(r.metadata()) {
+            return;
+        }
+        let line = format!("{} {}: {}", r.level(), r.target(), r.args());
+        eprintln!("{line}");
+        if r.level() == log::Level::Error {
+            *LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()) = format!("{}", r.args());
+        }
+    }
+    fn flush(&self) {}
+}
+
+fn last_error() -> String {
+    std::mem::take(&mut *LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 #[tokio::main]
 async fn main() {
+    let _ = log::set_logger(&StderrLog).map(|()| log::set_max_level(log::LevelFilter::Warn));
     // stdout carries the protocol only; everything human goes to stderr.
     let cache_dir = std::env::args().nth(1).map(PathBuf::from);
     let send = emit;
@@ -313,7 +342,11 @@ fn translate(ev: PlayerEvent) -> Option<Value> {
         PlayerEvent::Seeked { track_id, position_ms, .. } => json!({ "event": "seeked", "id": id(&track_id), "positionMs": position_ms }),
         PlayerEvent::EndOfTrack { track_id, .. } => json!({ "event": "ended", "id": id(&track_id) }),
         PlayerEvent::Stopped { track_id, .. } => json!({ "event": "stopped", "id": id(&track_id) }),
-        PlayerEvent::Unavailable { track_id, .. } => json!({ "event": "unavailable", "id": id(&track_id) }),
+        // throttled: Spotify refused the audio key for now (a burst of loads);
+        // retry after a wait. denied: refused for good this session.
+        PlayerEvent::Unavailable { track_id, denied, throttled, .. } => json!({
+            "event": "unavailable", "id": id(&track_id), "denied": denied, "throttled": throttled, "reason": last_error(),
+        }),
         PlayerEvent::TimeToPreloadNextTrack { track_id, .. } => json!({ "event": "preloadNext", "id": id(&track_id) }),
         PlayerEvent::TrackChanged { audio_item } => json!({ "event": "track", "id": id(&audio_item.track_id), "durationMs": audio_item.duration_ms }),
         _ => return None,
