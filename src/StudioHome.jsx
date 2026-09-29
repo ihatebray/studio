@@ -9,7 +9,7 @@ import PanelLyricsEditor from './PanelLyricsEditor.jsx';
 import { AnimatedGradientBg } from './VisualEffects.jsx';
 import { MetadataEditor, AlbumMetadataEditor } from './MetadataEditor.jsx';
 import { SpotifyCredsPanel, SoulseekCredsPanel, StudioMotionStyles } from './StudioOnboarding.jsx';
-import { useToast } from './Toasts.jsx';
+import { useToast, setToastLayout, ToastPositionPicker } from './Toasts.jsx';
 import { DownloadProgressBar, useDownloadProgress, VideoPicker, ExplicitBadge, PlayIcon, PauseIcon } from './sharedUI.jsx';
 import CommandCenter from './CommandCenter.jsx';
 import InstantSearch from './InstantSearch.jsx';
@@ -2868,17 +2868,22 @@ export default function StudioHome({
   // Anything that owns Esc (or the letter keys) while fullscreen is up.
   npFullBlockers.current = !!(rowMenu || plPicker || coverZoom || editingTrack || lyricSel || lyricShareOpen);
 
-  /* Where notifications dock: bottom right, a gap above the Now Playing bar
-     (or the window corner when the bar isn't up). The stack lives in App,
-     outside this root, so the numbers go on :root. */
+  /* The shell's geometry, for wherever notifications are set to dock (the
+     stack lives in App, outside this root). Same numbers as the variables on
+     the root below. */
+  const barShown = !!currentTrack && !libExpanded;
   useEffect(() => {
     const gutter = compactMode ? 10 : 16;
     const gap = compactMode ? 10 : 12;
-    const bottom = currentTrack && !libExpanded ? gutter + 86 + gap : gutter;
-    const s = document.documentElement.style;
-    s.setProperty('--st-toast-bottom', `${bottom}px`);
-    s.setProperty('--st-toast-right', `${gutter}px`);
-  }, [compactMode, currentTrack, libExpanded]);
+    setToastLayout({
+      gutter, gap,
+      reserve: barShown ? gutter + 86 + gap : gutter,
+      barLeft: compactMode ? gutter : SIDEBAR_W,
+      sidebarW: compactMode ? 0 : SIDEBAR_W,
+      shellTop: compactMode ? gutter : TOPBAR_H,
+      barShown, barH: 86,
+    });
+  }, [compactMode, barShown]);
 
   const compactVizCtx = useMemo(() => ({
     enabled: compactMode, style: compactViz,
@@ -2923,9 +2928,11 @@ export default function StudioHome({
          which is what let the card, the bar and the panel drift apart. */
       '--gutter': compactMode ? '10px' : '16px',
       '--gap': compactMode ? '10px' : '12px',
-      '--np-reserve': currentTrack && !libExpanded
+      /* + the notification lane, when notifications are set to take one
+         (Toasts.jsx sets it on :root and eases it). */
+      '--np-reserve': `calc(${currentTrack && !libExpanded
         ? (compactMode ? `${10 + 86 + 10}px` : `${16 + 86 + 12}px`)
-        : (compactMode ? '10px' : '16px'),
+        : (compactMode ? '10px' : '16px')} + var(--st-toast-lane, 0px))`,
       '--row-h': listDensity === 'compact' ? '40px' : listDensity === 'roomy' ? '64px' : '54px',
       '--row-art': listDensity === 'compact' ? '30px' : listDensity === 'roomy' ? '48px' : '40px',
     }}>
@@ -4128,7 +4135,9 @@ export default function StudioHome({
         /* Now Playing bar — detached card aligned to the content card. */
         .sth-npbar { left: var(--np-bar-left); right: var(--gutter); bottom: var(--gutter); height: 86px; border-radius: var(--r-card); background: var(--np-bar-bg, var(--surface)); border: 1px solid var(--border); }
         .sth-npbar-grid { position: relative; z-index: 1; height: 100%; display: grid; grid-template-columns: 282px minmax(0, 1fr) 282px; align-items: center; padding: 0 16px; gap: 16px; }
-        .sth-npbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .sth-npbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; transition: opacity 0.24s ease, transform 0.36s cubic-bezier(0.22,1,0.36,1); }
+        /* A notification docked in the bar sits over the song info. */
+        :root[data-st-toast-in-bar] .sth-npbar-left { opacity: 0; transform: translateX(-10px); pointer-events: none; }
         .sth-npbar-art { width: 52px; height: 52px; border-radius: var(--r-art); flex-shrink: 0; padding: 0; border: none; box-shadow: 0 0 0 1px rgba(255,255,255,0.06); }
         .sth-npbar-title { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         /* Title doubles as the Spotify link: click to copy. */
@@ -5686,6 +5695,9 @@ ${HOME_CSS}
                       </SetRow>
                       <SetRow title="Visualizer colours from the cover" note="On, the visualizer takes its colours from the album playing. Off, it's drawn in white, whatever the album." wide={false}>
                         <SetToggle label="Visualizer colours from the cover" on={compactVizCover} onToggle={toggleCompactVizCover} />
+                      </SetRow>
+                      <SetRow title="Notifications" note="Where notifications appear. Own lane makes room for them so they never cover anything; the player bar option shows them over the song info for a moment. Hover a notification to hold it.">
+                        <ToastPositionPicker />
                       </SetRow>
                       <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits about half again as many rows on screen.">
                         <SetSeg label="List density" value={listDensity} onPick={pickListDensity}

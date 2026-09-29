@@ -4,6 +4,7 @@
  * Exports:
  *   useToastBus()  — creates the toast state (used once in App.jsx)
  *   ToastStack     — renders the docked toast UI
+ *   ToastPositionPicker, setToastLayout — where it docks (Settings / StudioHome)
  *   ToastContext    — React context for pushToast
  *   useToast()     — hook for any component to push a toast
  *
@@ -13,7 +14,9 @@
  *   pushToast({ message: 'Saved', kind: 'success' });
  */
 
-import React, { createContext, useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
+import React, {
+  createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
+} from 'react';
 
 const DEFAULT_DURATION_MS = 5000;
 const MAX_VISIBLE_TOASTS = 4;
@@ -89,12 +92,93 @@ export function useToastBus() {
   return { toasts, pushToast, dismissToast };
 }
 
-/* ── Visual stack ────────────────────────────────────────────────
+/* ── Placement ──────────────────────────────────────────────────
  *
- * Docked bottom right, a gap above the Now Playing bar (StudioHome sets
- * --st-toast-bottom / --st-toast-right on :root). Toasts used to drop in at
- * the top centre, which is where every page keeps its title, tabs and search,
- * so each one covered something you were reading.
+ * Where the deck sits is a setting (Settings → Layout → Notifications). The
+ * geometry comes from StudioHome, which knows the shell: how wide the sidebar
+ * is, whether the Now Playing bar is up, compact mode's tighter gutters. It
+ * reports that through setToastLayout(), and the stack (mounted in App,
+ * outside StudioHome) reads both through this little store.
+ */
+
+const POS_KEY = 'studio:toastPosition';
+
+export const TOAST_POSITIONS = [
+  { id: 'lane', name: 'Own lane', note: 'The page makes room above the player; covers nothing' },
+  { id: 'player', name: 'In the player bar', note: 'Over the song info for a moment' },
+  { id: 'right', name: 'Bottom right', note: 'Above the player, right corner' },
+  { id: 'left', name: 'Bottom left', note: 'Over the foot of the sidebar' },
+  { id: 'top-right', name: 'Top right', note: 'Top corner of the page' },
+  { id: 'top-center', name: 'Top centre', note: 'Top middle of the page' },
+];
+
+const DEFAULT_LAYOUT = {
+  gutter: 16, gap: 12, reserve: 16, barLeft: 236, sidebarW: 236, shellTop: 62, barShown: false, barH: 86,
+};
+
+function readPosition() {
+  try {
+    const v = localStorage.getItem(POS_KEY);
+    if (TOAST_POSITIONS.some((p) => p.id === v)) return v;
+  } catch { /* ignore */ }
+  return 'lane';
+}
+
+let store = { position: readPosition(), layout: DEFAULT_LAYOUT };
+const subscribers = new Set();
+const emit = () => subscribers.forEach((fn) => fn());
+const subscribe = (fn) => { subscribers.add(fn); return () => subscribers.delete(fn); };
+const snapshot = () => store;
+
+export function setToastPosition(id) {
+  if (!TOAST_POSITIONS.some((p) => p.id === id) || store.position === id) return;
+  store = { ...store, position: id };
+  try { localStorage.setItem(POS_KEY, id); } catch { /* ignore */ }
+  emit();
+}
+
+/** StudioHome reports the shell's geometry here (see DEFAULT_LAYOUT). */
+export function setToastLayout(next) {
+  const cur = store.layout;
+  if (Object.keys(next).every((k) => cur[k] === next[k])) return;
+  store = { ...store, layout: { ...cur, ...next } };
+  emit();
+}
+
+export function useToastPlacement() {
+  return useSyncExternalStore(subscribe, snapshot);
+}
+
+/** Where the deck goes, as a fixed region plus which edge it grows from. */
+function regionFor(position, L, deckH) {
+  const bottomRow = { bottom: L.reserve, left: L.barLeft, right: L.gutter };
+  switch (position) {
+    case 'player':
+      if (L.barShown) {
+        // Centred on the bar's height, over its left column (art + title).
+        return {
+          style: { bottom: L.gutter + Math.max(0, (L.barH - deckH) / 2), left: L.barLeft + 12, width: 300 },
+          justify: 'flex-start', anchor: 'bottom', inBar: true,
+        };
+      }
+      return { style: bottomRow, justify: 'flex-end', anchor: 'bottom' };
+    case 'lane':
+      return { style: bottomRow, justify: 'center', anchor: 'bottom', lane: true };
+    case 'left':
+      return {
+        style: { bottom: L.reserve, left: L.gutter, width: L.sidebarW ? L.sidebarW - L.gutter - L.gap : 348 },
+        justify: 'flex-start', anchor: 'bottom',
+      };
+    case 'top-right':
+      return { style: { top: L.shellTop + 12, left: L.barLeft, right: L.gutter + 12 }, justify: 'flex-end', anchor: 'top' };
+    case 'top-center':
+      return { style: { top: L.shellTop + 12, left: L.barLeft, right: L.gutter }, justify: 'center', anchor: 'top' };
+    default:
+      return { style: bottomRow, justify: 'flex-end', anchor: 'bottom' };
+  }
+}
+
+/* ── Visual stack ────────────────────────────────────────────────
  *
  * It's a deck, not a column: the newest card sits in front and older ones
  * tuck behind it as thin edges, so four notifications take the room of one.
@@ -106,6 +190,7 @@ const GAP = 8;           // between cards when fanned out
 const PEEK = 7;          // how much of each card behind shows when stacked
 const DEPTH = 3;         // cards visible behind the front one
 const EXIT_MS = 240;
+const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 const KIND_RGB = {
   success: '123, 225, 145',
@@ -113,17 +198,25 @@ const KIND_RGB = {
   warning: '245, 190, 80',
 };
 
+/* Above InstantSearch (scrim 90, panel 91), whose blur used to smear them. */
 const CSS = `
-.st-toasts { position: fixed; z-index: 60; right: var(--st-toast-right, 16px); bottom: var(--st-toast-bottom, 16px);
-  width: min(348px, calc(100vw - 2 * var(--st-toast-right, 16px)));
-  transition: height 0.34s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.34s cubic-bezier(0.22, 1, 0.36, 1); }
+@property --st-toast-lane { syntax: '<length>'; inherits: true; initial-value: 0px; }
+:root { transition: --st-toast-lane 0.36s ${EASE}; }
+.st-toasts { position: fixed; z-index: 95; display: flex; pointer-events: none;
+  transition: left 0.36s ${EASE}, right 0.36s ${EASE}, top 0.36s ${EASE}, bottom 0.36s ${EASE}, width 0.36s ${EASE}; }
+.st-toast-deck { position: relative; width: min(348px, 100%); pointer-events: auto;
+  transition: height 0.34s ${EASE}; }
 .st-toast { position: absolute; left: 0; right: 0; bottom: 0; box-sizing: border-box;
   border-radius: 14px; overflow: hidden; touch-action: pan-y;
   background: rgba(22, 22, 24, 0.97); border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
   color: rgba(255, 255, 255, 0.94);
   transform-origin: 50% 100%; will-change: transform, opacity;
-  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s ease, height 0.34s cubic-bezier(0.22, 1, 0.36, 1); }
+  transition: transform 0.42s ${EASE}, opacity 0.3s ease, height 0.34s ${EASE}; }
+.st-toasts.is-top .st-toast { top: 0; bottom: auto; transform-origin: 50% 0; }
+.st-toasts.is-inbar .st-toast { background: rgba(10, 10, 12, 0.72); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.st-toasts.is-inbar .st-toast-msg { -webkit-line-clamp: 2; }
 .st-toast.is-dragging { transition: none; }
 .st-toast-in { display: flex; align-items: flex-start; gap: 11px; padding: 11px 10px 12px 12px;
   transition: opacity 0.22s ease; }
@@ -144,13 +237,15 @@ const CSS = `
   background: rgba(var(--tk), 0.55); animation-name: stToastLife; animation-timing-function: linear; animation-fill-mode: forwards; }
 @keyframes stToastLife { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) {
-  .st-toasts, .st-toast, .st-toast-in { transition-duration: 0.01s !important; }
+  :root { transition: none; }
+  .st-toasts, .st-toast-deck, .st-toast, .st-toast-in { transition-duration: 0.01s !important; }
 }
 `;
 
 export function ToastStack({ toasts, onDismiss }) {
   const [hovered, setHovered] = useState(false);
   const [heights, setHeights] = useState({});
+  const { position, layout } = useToastPlacement();
   const list = toasts || [];
 
   const setHeight = useCallback((id, h) => {
@@ -167,39 +262,138 @@ export function ToastStack({ toasts, onDismiss }) {
     offset += (heights[t.id] || 0) + GAP;
     return at;
   });
-  const height = !ordered.length ? 0
-    : expanded ? Math.max(0, offset - GAP)
-    : frontH + PEEK * Math.min(DEPTH, ordered.length - 1);
+  const collapsedH = !ordered.length ? 0 : frontH + PEEK * Math.min(DEPTH, ordered.length - 1);
+  const height = expanded ? Math.max(0, offset - GAP) : collapsedH;
+  const region = regionFor(position, layout, collapsedH);
 
   // Nothing to hold the pointer over any more: forget the hover.
   if (!ordered.length && hovered) setHovered(false);
 
+  /* Own lane: the shell adds this to --np-reserve, so the page's card rises
+     to make room and eases back once the last notification goes. In the
+     player bar: the song info steps aside while a card sits over it. */
+  const lane = region.lane && ordered.length && frontH ? collapsedH + layout.gap : 0;
+  const inBar = !!(region.inBar && ordered.length);
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty('--st-toast-lane', `${lane}px`);
+  }, [lane]);
+  useLayoutEffect(() => {
+    document.documentElement.toggleAttribute('data-st-toast-in-bar', inBar);
+  }, [inBar]);
+
+  const top = region.anchor === 'top';
   return (
     <>
       <style>{CSS}</style>
       <div
-        className="st-toasts"
+        className={`st-toasts${top ? ' is-top' : ''}${region.inBar ? ' is-inbar' : ''}`}
         role="region"
         aria-label="Notifications"
-        style={{ height, pointerEvents: ordered.length ? 'auto' : 'none' }}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        style={{ ...region.style, justifyContent: region.justify, alignItems: top ? 'flex-start' : 'flex-end' }}
       >
-        {ordered.map((t, i) => (
-          <ToastRow
-            key={t.id}
-            toast={t}
-            index={i}
-            expanded={expanded}
-            offset={offsets[i]}
-            frontHeight={frontH}
-            paused={hovered}
-            onHeight={setHeight}
-            onDismiss={onDismiss}
-          />
-        ))}
+        <div
+          className="st-toast-deck"
+          style={{ height, pointerEvents: ordered.length ? 'auto' : 'none' }}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          {ordered.map((t, i) => (
+            <ToastRow
+              key={t.id}
+              toast={t}
+              index={i}
+              dir={top ? 1 : -1}
+              expanded={expanded}
+              offset={offsets[i]}
+              frontHeight={frontH}
+              paused={hovered}
+              onHeight={setHeight}
+              onDismiss={onDismiss}
+            />
+          ))}
+        </div>
       </div>
     </>
+  );
+}
+
+/* ── Settings control ─────────────────────────────────────────── */
+
+/** A thumbnail of the window with the notification's spot lit. */
+const SPOT = {
+  lane: [26, 25.5, 20, 4],
+  player: [18, 32.5, 15, 4],
+  right: [40, 23.5, 17, 4],
+  left: [2.5, 23.5, 11, 4],
+  'top-right': [40, 7.5, 17, 4],
+  'top-center': [28, 7.5, 18, 4],
+};
+function PlacementMap({ id }) {
+  const [x, y, w, h] = SPOT[id] || SPOT.right;
+  return (
+    <svg width="48" height="32" viewBox="0 0 60 40" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <rect x="0.5" y="0.5" width="59" height="39" rx="4" fill="rgba(var(--st-fg-rgb, 255,255,255), 0.05)" stroke="rgba(var(--st-fg-rgb, 255,255,255), 0.16)" />
+      <rect x="2.5" y="6" width="11" height={id === 'lane' ? 18 : 23} rx="1.5" fill="rgba(var(--st-fg-rgb, 255,255,255), 0.1)" />
+      <rect x="16" y="6" width="41.5" height={id === 'lane' ? 18 : 23} rx="2" fill="rgba(var(--st-fg-rgb, 255,255,255), 0.14)" />
+      <rect x="16" y="31" width="41.5" height="6.5" rx="2" fill="rgba(var(--st-fg-rgb, 255,255,255), 0.22)" />
+      <rect x={x} y={y} width={w} height={h} rx="1.6" fill="rgb(var(--st-acc-rgb, 200,200,200))" />
+    </svg>
+  );
+}
+
+export function ToastPositionPicker() {
+  const { position } = useToastPlacement();
+  const pushToast = useToast();
+  const [open, setOpen] = useState(false);
+  const wrap = useRef(null);
+  const current = TOAST_POSITIONS.find((p) => p.id === position) || TOAST_POSITIONS[0];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  const pick = (id) => {
+    setToastPosition(id);
+    setOpen(false);
+    // Show one there, so the choice is seen rather than imagined.
+    pushToast?.({ message: 'Notifications will show here.', kind: 'info', durationMs: 3500, dedupeKey: 'toast-position-preview' });
+  };
+
+  return (
+    <div ref={wrap} style={{ position: 'relative', flexShrink: 0 }}>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}
+        aria-label={`Notification position: ${current.name}`}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, height: 40, padding: '0 12px 0 6px', minWidth: 210,
+          borderRadius: 8, border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 600,
+          background: 'rgba(var(--st-fg-rgb), 0.08)', color: 'var(--st-text)',
+        }}>
+        <PlacementMap id={current.id} />
+        <span style={{ flex: 1, textAlign: 'left' }}>{current.name}</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      </button>
+      {open ? (
+        <div role="listbox" aria-label="Notification position" className="sth-libsortmenu" style={{ left: 0, right: 'auto', minWidth: 300 }}>
+          {TOAST_POSITIONS.map((p) => (
+            <button key={p.id} type="button" role="option" aria-selected={p.id === position}
+              className={`sth-libsortitem${p.id === position ? ' is-on' : ''}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 11 }}
+              onClick={() => pick(p.id)}>
+              <PlacementMap id={p.id} />
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block' }}>{p.name}</span>
+                <span style={{ display: 'block', fontSize: 11.5, fontWeight: 500, color: 'rgba(var(--st-fg-rgb), 0.45)', marginTop: 1 }}>{p.note}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -213,7 +407,7 @@ function KindIcon({ kind }) {
   return <svg {...common}><line x1="12" y1="11" x2="12" y2="18" /><line x1="12" y1="6.5" x2="12" y2="6.51" /></svg>;
 }
 
-function ToastRow({ toast, index, expanded, offset, frontHeight, paused, onHeight, onDismiss }) {
+function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, onHeight, onDismiss }) {
   const [mounted, setMounted] = useState(false);
   const [exiting, setExiting] = useState(null);   // null | exit direction (-1 / 1)
   const [drag, setDrag] = useState(0);
@@ -274,22 +468,23 @@ function ToastRow({ toast, index, expanded, offset, frontHeight, paused, onHeigh
   const behind = index > 0 && !expanded;
   const hidden = index > DEPTH;
 
+  // dir: -1 grows upward from a bottom edge, 1 downward from a top one.
   let transform;
   let opacity = 1;
   if (!mounted) {
-    transform = 'translateY(18px) scale(0.96)';
+    transform = `translateY(${-dir * 18}px) scale(0.96)`;
     opacity = 0;
   } else if (exiting) {
-    transform = `translate(${exiting * 110}%, ${expanded ? -offset : 0}px)`;
+    transform = `translate(${exiting * 110}%, ${expanded ? dir * offset : 0}px)`;
     opacity = 0;
   } else if (expanded) {
-    transform = `translate(${drag}px, ${-offset}px)`;
+    transform = `translate(${drag}px, ${dir * offset}px)`;
   } else {
-    // Scaled from the bottom edge, so lift by what the scale took off the
-    // top as well: each card behind shows exactly PEEK more than the last.
+    // Scaled from the anchored edge, so shift by what the scale took off the
+    // far edge as well: each card behind shows exactly PEEK more than the last.
     const s = 1 - index * 0.045;
     const lift = index * PEEK + (frontHeight || 0) * (1 - s);
-    transform = `translate(${drag}px, ${-lift}px) scale(${s})`;
+    transform = `translate(${drag}px, ${dir * lift}px) scale(${s})`;
     if (hidden) opacity = 0;
   }
   if (drag && !exiting) opacity = Math.max(0.2, 1 - Math.abs(drag) / 220);
