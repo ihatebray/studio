@@ -956,12 +956,13 @@ export async function artistTopTracksFast(artistId) {
   }));
 }
 
-/** An artist by name in the Client ID's spotifyArtistByName shape: the
- *  search above plus the overview the artist page loads anyway (both cached). */
-export async function artistInfoFast(name) {
+/** An artist by name in the Client ID's spotifyArtistByName shape: an
+ *  artist search (`find`, the helper's by default in main) plus the
+ *  overview the artist page loads anyway (cached). */
+export async function artistInfoFast(name, find = (n) => searchFast('artists', n)) {
   const want = String(name || '').trim().toLowerCase();
   if (!want) return null;
-  const hits = await searchFast('artists', name);
+  const hits = (await find(name)) || [];
   const hit = hits.find((a) => a.name.toLowerCase() === want) || hits[0];
   if (!hit) return null;
   const o = await cachedOverview(hit.id).catch(() => null);

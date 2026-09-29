@@ -204,13 +204,21 @@ function helperArtistCached(id) {
   return hit.promise;
 }
 
+/* When the web player has no search query to find (the scan comes up
+   empty), stop trying for an hour and say so once, not on every keystroke. */
+let pathfinderSearchOffUntil = 0;
 async function viaPathfinder(kind, q) {
-  if (!partnerState().connected) return null;
+  if (!partnerState().connected || Date.now() < pathfinderSearchOffUntil) return null;
   try {
     const rows = await partnerSearchFast(kind, q);
     return Array.isArray(rows) && rows.length ? rows : null;
   } catch (e) {
-    console.warn(`[search:${kind}] web player route failed:`, e?.message || e);
+    if (e?.step === 'hash') {
+      pathfinderSearchOffUntil = Date.now() + 60 * 60 * 1000;
+      console.info('[search] the web player search query isn’t available; using the helper and the Web API for an hour');
+    } else {
+      console.warn(`[search:${kind}] web player route failed:`, e?.message || e);
+    }
     return null;
   }
 }
@@ -1602,7 +1610,9 @@ ipcMain.handle('spotify:artistInfo', async (_event, name) => {
     }
 
     if (partnerState().connected) {
-      const data = await artistInfoFast(name).catch((e) => { console.warn('[spotify:artistInfo] web player route failed:', e?.message || e); return null; });
+      // Found through the helper's search (Pathfinder has no search query to use).
+      const data = await artistInfoFast(name, (n) => viaHelper('artists', n))
+        .catch((e) => { console.warn('[spotify:artistInfo] account route failed:', e?.message || e); return null; });
       if (data) { setArtistInfoCache(name, data); return data; }
     }
     if (spotifyCredentialsConfigured()) {
