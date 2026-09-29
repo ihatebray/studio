@@ -23,6 +23,8 @@ import { spotifyIdOf } from './spotifyMediaElement.js';
 
 export const CompactVizContext = createContext(null);
 export const COMPACT_VIZ_KEY = 'studio:compactViz';
+/** '0' draws every style in white instead of the cover's colours. */
+export const COMPACT_VIZ_COVER_KEY = 'studio:compactVizCover';
 
 const reduceMotion = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -40,7 +42,11 @@ const canvasStyleFor = (style) => {
 
 /** Cover colours as [r,g,b], lifted towards white so they read on the
  *  accent-tinted bar. Falls back to the accent, then to white. */
-export function vizPalette(palette, accent) {
+const WHITE = [[255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255]];
+
+/* With `useCover` off, plain white: it reads on any album's bar colour. */
+export function vizPalette(palette, accent, useCover = true) {
+  if (!useCover) return WHITE;
   const parse = (c) => String(c || '').split(',').map((n) => Number(n.trim())).filter((n) => Number.isFinite(n));
   let cols = (palette || []).map(parse).filter((c) => c.length === 3);
   if (!cols.length && accent) cols = [parse(accent)].filter((c) => c.length === 3);
@@ -65,10 +71,11 @@ const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(
 
 function CompactVisualizer({
   style, analyserRef, onNeedAnalyser, currentTrack, isPlaying, currentTime = 0, duration = 0, onSeek, palette, accent,
+  coverColours = true,
 }) {
   const canvasRef = useRef(null);
   const [tip, setTip] = useState(null);       // { x (0–1), text }
-  const pal = useMemo(() => vizPalette(palette, accent), [palette, accent]);
+  const pal = useMemo(() => vizPalette(palette, accent, coverColours), [palette, accent, coverColours]);
 
   /* The loop reads the latest props through a ref, so a React render never
      restarts it. `clockAt` lets progress run smoothly between the ~4 Hz
@@ -248,9 +255,9 @@ function TilePreview({ style, animate, palette }) {
   return <canvas ref={ref} aria-hidden style={{ ...canvasStyleFor(style), height: 34 }} />;
 }
 
-export function CompactVizPicker({ value, onPick, palette, accent }) {
+export function CompactVizPicker({ value, onPick, palette, accent, coverColours = true }) {
   const [hot, setHot] = useState(null);
-  const pal = useMemo(() => vizPalette(palette, accent), [palette, accent]);
+  const pal = useMemo(() => vizPalette(palette, accent, coverColours), [palette, accent, coverColours]);
   const tiles = [{ id: 'off', name: 'Off', note: 'Leave the space empty' }, ...VIZ_STYLES];
   return (
     <div role="radiogroup" aria-label="Compact bar visualizer"

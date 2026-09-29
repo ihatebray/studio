@@ -24,7 +24,7 @@ import ArtistPage from './ArtistPage.jsx';
 import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPlayer.jsx';
 import ArtistGrid from './ArtistGrid.jsx';
 import { hoverPreload } from './spotifyMediaElement.js';
-import { CompactVizContext, CompactVizSlot, CompactVizPicker, COMPACT_VIZ_KEY } from './CompactVisualizer.jsx';
+import { CompactVizContext, CompactVizSlot, CompactVizPicker, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from './compactVizStyles.js';
 import { NewReleases, HomeRail, HOME_CSS } from './HomeReleases.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
@@ -512,6 +512,11 @@ export default function StudioHome({
     try { const v = localStorage.getItem(COMPACT_VIZ_KEY); return v && (v === 'off' || VIZ_IDS.has(v)) ? v : 'off'; } catch { return 'off'; }
   });
   const pickCompactViz = useCallback((v) => { setCompactViz(v); try { localStorage.setItem(COMPACT_VIZ_KEY, v); } catch { /* ignore */ } }, []);
+  /* Whether it takes the playing cover's colours (default) or draws in white. */
+  const [compactVizCover, setCompactVizCover] = useState(() => { try { return localStorage.getItem(COMPACT_VIZ_COVER_KEY) !== '0'; } catch { return true; } });
+  const toggleCompactVizCover = useCallback(() => {
+    setCompactVizCover((on) => { const next = !on; try { localStorage.setItem(COMPACT_VIZ_COVER_KEY, next ? '1' : '0'); } catch { /* ignore */ } return next; });
+  }, []);
   const [listDensity, setListDensity] = useState(() => { try { return localStorage.getItem('studio:listDensity') || 'default'; } catch { return 'default'; } });
   const pickListDensity = useCallback((v) => { setListDensity(v); try { localStorage.setItem('studio:listDensity', v); } catch { /* ignore */ } }, []);
   /* Compact mode. The content card takes the whole window (10px gutters) and
@@ -2866,8 +2871,8 @@ export default function StudioHome({
   const compactVizCtx = useMemo(() => ({
     enabled: compactMode, style: compactViz,
     analyserRef, onNeedAnalyser, currentTrack, isPlaying, currentTime, duration, onSeek,
-    palette: npWashTheme?.palette || null, accent: rawAccent,
-  }), [compactMode, compactViz, analyserRef, onNeedAnalyser, currentTrack, isPlaying, currentTime, duration, onSeek, npWashTheme, rawAccent]);
+    palette: npWashTheme?.palette || null, accent: rawAccent, coverColours: compactVizCover,
+  }), [compactMode, compactViz, analyserRef, onNeedAnalyser, currentTrack, isPlaying, currentTime, duration, onSeek, npWashTheme, rawAccent, compactVizCover]);
 
   return (
     /* Flat black behind everything. The radial gradient that used to lift the
@@ -5665,7 +5670,10 @@ ${HOME_CSS}
                           options={[['standard', 'Standard'], ['compact', 'Compact']]} />
                       </SetRow>
                       <SetRow title="Compact bar visualizer" note="Fills the empty middle of the library bar in compact mode. Follows local files and Saved Spotify songs alike, and stays still when paused or when reduced motion is on.">
-                        <CompactVizPicker value={compactViz} onPick={pickCompactViz} palette={npWashTheme?.palette} accent={rawAccent} />
+                        <CompactVizPicker value={compactViz} onPick={pickCompactViz} palette={npWashTheme?.palette} accent={rawAccent} coverColours={compactVizCover} />
+                      </SetRow>
+                      <SetRow title="Visualizer colours from the cover" note="On, the visualizer takes its colours from the album playing. Off, it's drawn in white, whatever the album." wide={false}>
+                        <SetToggle label="Visualizer colours from the cover" on={compactVizCover} onToggle={toggleCompactVizCover} />
                       </SetRow>
                       <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits about half again as many rows on screen.">
                         <SetSeg label="List density" value={listDensity} onPick={pickListDensity}

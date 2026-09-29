@@ -1,14 +1,16 @@
 /* =========================================================================
  *  studio — the compact-bar visualizer styles
  *
- *  Four ways to fill the empty middle of the library bar in compact mode:
- *  two equalizers (Neon capsules, Pro-Q curve), the song's progress, and
- *  its rhythm. Every style draws into one small canvas from the same frame:
+ *  Nine ways to fill the empty middle of the library bar in compact mode:
+ *  seven equalizers (capsules, strings, dots and analyser curves), the song's
+ *  progress, and its rhythm. Every style draws into one small canvas from
+ *  the same frame:
  *
  *    f = { ctx, w, h, dpr,           canvas and its size in CSS px
  *          src,                      LevelSource (vizLevels.js) or the demo
  *          t, dt, playing,           time that only runs while playing
- *          palette,                  [[r,g,b] × 4] from the cover, lifted
+ *          palette,                  [[r,g,b] × 4]: the cover's, lifted, or
+ *                                    all white when cover colours are off
  *          progress, hover, shape,   for the progress ribbon
  *          s }                       this view's own state
  *
@@ -21,8 +23,13 @@
 import { BANDS } from './vizLevels.js';
 
 export const VIZ_STYLES = [
-  { id: 'neon', name: 'Neon capsules', note: "Glowing bars in the cover's colours", soft: true },
+  { id: 'neon', name: 'Neon capsules', note: 'Glowing bars, mirrored from the centre', soft: true },
+  { id: 'capsuleq', name: 'Capsule EQ', note: 'Capsules on a floor, with a reflection', soft: true },
+  { id: 'strings', name: 'Neon strings', note: 'Thin glowing lines, mirrored', soft: true },
+  { id: 'dots', name: 'Dot matrix', note: 'An LED equalizer, in dots', soft: true },
   { id: 'proq', name: 'Pro-Q curve', note: 'An analyser curve over the spectrum', soft: true },
+  { id: 'peakcurve', name: 'Peak curve', note: 'Pro-Q with a falling peak line', soft: true },
+  { id: 'layers', name: 'Layered curves', note: 'Three curves at three speeds', soft: true },
   { id: 'ribbon', name: 'Progress ribbon', note: 'The song end to end; click to seek' },
   { id: 'steps', name: 'Beat steps', note: 'Sixteen steps, one bar of music' },
 ];
@@ -204,7 +211,233 @@ function steps(f) {
   }
 }
 
-const DRAW = { neon, proq, ribbon, steps };
+/* ---- Capsule EQ ----
+ * Neon's capsules standing on a floor, bass on the left, each over a faint
+ * reflection that fades out below the floor line. */
+function capsuleq(f) {
+  const { ctx, w, h, dpr, src, palette } = f;
+  const span = w * 0.84;
+  const gap = 5;
+  const n = Math.max(6, Math.min(24, Math.floor(span / 13)));
+  const bw = Math.max(3, Math.min(8, (span - gap * (n - 1)) / n));
+  const total = bw * n + gap * (n - 1);
+  const x0 = (w - total) / 2;
+  const floor = h * 0.7;
+  const top = h * 0.08;
+  const refl = h * 0.24;
+  for (let i = 0; i < n; i++) {
+    const x = (i + 0.5) / n;
+    const L = linear(src, x);
+    const bh = Math.max(bw, L * (floor - top));
+    const [r, g, b] = mix(palette, x);
+    const lift = (c) => Math.round(c + (255 - c) * 0.5);
+    const px = (x0 + i * (bw + gap)) * dpr;
+    ctx.shadowColor = `rgba(${r},${g},${b},${0.5 + 0.5 * L})`;
+    ctx.shadowBlur = Math.min(gap * 0.65, 2 + 2.5 * L) * dpr;
+    ctx.fillStyle = `rgba(${lift(r)},${lift(g)},${lift(b)},${0.6 + 0.4 * L})`;
+    ctx.beginPath();
+    rrect(ctx, px, (floor - bh) * dpr, bw * dpr, bh * dpr, (bw / 2) * dpr);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    const rh = Math.min(refl, bh * 0.45);
+    const g2 = ctx.createLinearGradient(0, (floor + 2) * dpr, 0, (floor + 2 + rh) * dpr);
+    g2.addColorStop(0, `rgba(${lift(r)},${lift(g)},${lift(b)},0.22)`);
+    g2.addColorStop(1, `rgba(${lift(r)},${lift(g)},${lift(b)},0)`);
+    ctx.fillStyle = g2;
+    ctx.beginPath();
+    rrect(ctx, px, (floor + 2) * dpr, bw * dpr, rh * dpr, (bw / 2) * dpr);
+    ctx.fill();
+  }
+}
+
+/* ---- Neon strings ----
+ * Many thin glowing lines mirrored from the centre line; the glow stays
+ * narrower than the space between lines. */
+function strings(f) {
+  const { ctx, w, h, dpr, src, palette } = f;
+  const span = w * 0.84;
+  const n = Math.max(12, Math.min(64, Math.floor(span / 7)));
+  const step = span / (n - 1);
+  const x0 = (w - span) / 2;
+  const mid = h / 2;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1);
+    const L = mirrored(src, x);
+    const half = Math.max(0.8, L * (mid - 3));
+    const [r, g, b] = mix(palette, x);
+    const lift = (q) => Math.round(q + (255 - q) * 0.55);
+    ctx.strokeStyle = `rgba(${lift(r)},${lift(g)},${lift(b)},${0.55 + 0.45 * L})`;
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.shadowColor = `rgba(${r},${g},${b},${0.6 + 0.4 * L})`;
+    ctx.shadowBlur = Math.min(step * 0.6, 2 + 2 * L) * dpr;
+    const px = (x0 + i * step) * dpr;
+    ctx.beginPath();
+    ctx.moveTo(px, (mid - half) * dpr);
+    ctx.lineTo(px, (mid + half) * dpr);
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+}
+
+/* ---- Dot matrix ----
+ * A grid of round dots, columns bass to treble, lit from the bottom up; the
+ * unlit dots stay faintly visible. */
+function dots(f) {
+  const { ctx, w, h, dpr, src, palette, playing } = f;
+  const rows = 6;
+  const pitchY = (h * 0.84) / rows;
+  const rad = Math.max(1, Math.min(2.2, pitchY * 0.32));
+  const pitchX = Math.max(5, rad * 3.2);
+  const cols = Math.max(8, Math.floor((w * 0.86) / pitchX));
+  const x0 = (w - (cols - 1) * pitchX) / 2;
+  const y0 = h * 0.08 + pitchY / 2;
+  for (let c = 0; c < cols; c++) {
+    const x = c / (cols - 1);
+    const lit = Math.max(playing ? 0 : 1, Math.round(linear(src, x) * rows));
+    const [r, g, b] = mix(palette, x);
+    const lift = (q) => Math.round(q + (255 - q) * 0.45);
+    for (let row = 0; row < rows; row++) {
+      const on = rows - 1 - row < lit;
+      if (on) {
+        ctx.fillStyle = `rgb(${lift(r)},${lift(g)},${lift(b)})`;
+        ctx.shadowColor = `rgba(${r},${g},${b},0.8)`;
+        ctx.shadowBlur = Math.min(pitchX * 0.5, 3) * dpr;
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.shadowBlur = 0;
+      }
+      ctx.beginPath();
+      ctx.arc((x0 + c * pitchX) * dpr, (y0 + row * pitchY) * dpr, rad * dpr, 0, 7);
+      ctx.fill();
+    }
+  }
+  ctx.shadowBlur = 0;
+}
+
+/* ---- analyser curves (Pro-Q family) ---- */
+const AX = (w) => ({ x0: w * 0.07, x1: w * 0.93 });
+function gridlines(ctx, x0, x1, top, floor, dpr) {
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  for (const hz of [100, 1000, 10000]) {
+    const gx = x0 + (Math.log(hz / 40) / Math.log(16000 / 40)) * (x1 - x0);
+    ctx.fillRect(gx * dpr, top * dpr, 1 * dpr, (floor - top) * dpr);
+  }
+}
+/** Traces a smooth curve through valueAt(0–1) across [x0, x1]. */
+function tracePath(ctx, dpr, x0, x1, top, floor, valueAt) {
+  const pts = [];
+  for (let px = x0; px <= x1; px += 3) pts.push([px, floor - valueAt((px - x0) / (x1 - x0)) * (floor - top)]);
+  if (pts.length < 3) return false;
+  ctx.moveTo(pts[0][0] * dpr, pts[0][1] * dpr);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const xc = (pts[i][0] + pts[i + 1][0]) / 2;
+    const yc = (pts[i][1] + pts[i + 1][1]) / 2;
+    ctx.quadraticCurveTo(pts[i][0] * dpr, pts[i][1] * dpr, xc * dpr, yc * dpr);
+  }
+  return true;
+}
+const sampler = (arr) => (x) => {
+  const k = arr.length - 1;
+  const f = Math.min(1, Math.max(0, x)) * k;
+  const i = Math.floor(f);
+  const t = f - i;
+  return arr[i] * (1 - t) + arr[Math.min(k, i + 1)] * t;
+};
+
+/* ---- Peak curve ----
+ * The Pro-Q curve and fill, plus a dashed line holding each band's recent
+ * peak for half a second before it sinks. */
+function peakcurve(f) {
+  const { ctx, w, h, dpr, src, palette, s, dt } = f;
+  const { x0, x1 } = AX(w);
+  const floor = h * 0.9;
+  const top = h * 0.08;
+  if (x1 - x0 < 8) return;
+  const K = 80;
+  if (!s.peak) { s.peak = new Float32Array(K); s.hold = new Float32Array(K); }
+  for (let k = 0; k < K; k++) {
+    const L = linear(src, k / (K - 1));
+    if (L >= s.peak[k]) { s.peak[k] = L; s.hold[k] = 0.5; } else if ((s.hold[k] -= dt) <= 0) s.peak[k] = Math.max(0, s.peak[k] - dt * 0.35);
+  }
+  gridlines(ctx, x0, x1, top, floor, dpr);
+  const col = palette[0];
+  const now = (x) => linear(src, x);
+  ctx.beginPath();
+  if (!tracePath(ctx, dpr, x0, x1, top, floor, now)) return;
+  ctx.lineTo(x1 * dpr, floor * dpr);
+  ctx.lineTo(x0 * dpr, floor * dpr);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, top * dpr, 0, floor * dpr);
+  g.addColorStop(0, rgba(col, 0.5));
+  g.addColorStop(1, rgba(col, 0.02));
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.beginPath();
+  tracePath(ctx, dpr, x0, x1, top, floor, sampler(s.peak));
+  ctx.strokeStyle = rgba(col, 0.9);
+  ctx.lineWidth = 1 * dpr;
+  ctx.setLineDash([3 * dpr, 3 * dpr]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  tracePath(ctx, dpr, x0, x1, top, floor, now);
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineWidth = 1.6 * dpr;
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = rgba(col, 0.9);
+  ctx.shadowBlur = 5 * dpr;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+/* ---- Layered curves ----
+ * Three curves in three palette colours following the music at three speeds
+ * (fast, medium, slow), each filled softly down to the floor. Only the curves
+ * get a line, so there is no hard edge at the floor or the ends. */
+function layers(f) {
+  const { ctx, w, h, dpr, src, palette, s, dt } = f;
+  const { x0, x1 } = AX(w);
+  const floor = h * 0.9;
+  const top = h * 0.1;
+  if (x1 - x0 < 8) return;
+  const K = 48;
+  if (!s.layers) s.layers = [new Float32Array(K), new Float32Array(K), new Float32Array(K)];
+  const speeds = [30, 9, 3];
+  s.layers.forEach((arr, li) => {
+    const k2 = 1 - Math.exp(-dt * speeds[li]);
+    for (let k = 0; k < K; k++) arr[k] += (linear(src, k / (K - 1)) * (1 - li * 0.08) - arr[k]) * k2;
+  });
+  /* Adding light blends three different colours nicely, but three whites
+     (cover colours off) only pile up into a solid wash; stack those normally
+     and more faintly instead. */
+  const distinct = palette[0].join() !== palette[1].join() || palette[1].join() !== palette[2].join();
+  const fillK = distinct ? 1 : 0.55;
+  ctx.globalCompositeOperation = distinct ? 'lighter' : 'source-over';
+  for (let li = 2; li >= 0; li--) {
+    const at = sampler(s.layers[li]);
+    const col = palette[li % palette.length];
+    ctx.beginPath();
+    if (!tracePath(ctx, dpr, x0, x1, top, floor, at)) break;
+    ctx.lineTo(x1 * dpr, floor * dpr);
+    ctx.lineTo(x0 * dpr, floor * dpr);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, top * dpr, 0, floor * dpr);
+    g.addColorStop(0, rgba(col, (0.2 + li * 0.06) * fillK));
+    g.addColorStop(1, rgba(col, 0));
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.beginPath();
+    tracePath(ctx, dpr, x0, x1, top, floor, at);
+    ctx.strokeStyle = rgba(col, 0.45 + (2 - li) * 0.2);
+    ctx.lineWidth = (1 + (2 - li) * 0.3) * dpr;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+const DRAW = { neon, capsuleq, strings, dots, proq, peakcurve, layers, ribbon, steps };
 
 export function drawViz(style, f) {
   const fn = DRAW[style];
@@ -221,6 +454,7 @@ export function drawViz(style, f) {
     f.ctx.shadowBlur = 0;
     f.ctx.globalAlpha = 1;
     f.ctx.globalCompositeOperation = 'source-over';
+    f.ctx.setLineDash?.([]);
   }
 }
 
