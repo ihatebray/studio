@@ -8,9 +8,10 @@
  *    renderer ──ipc──▶ here ──stdin──▶ studio-spotify ──▶ speakers
  *    renderer ◀─ipc─── here ◀─stdout── (events: playing, position, ended…)
  *
- *  Lifecycle: started on first use (not at launch, so Studio opens as fast
- *  as before), signed in with the same token the Spotify account in
- *  Settings holds, restarted with backoff if it dies, stopped on quit.
+ *  Lifecycle: started in the background a few seconds after launch when
+ *  you're signed in (so the first play doesn't wait for it to connect), or
+ *  on first use otherwise; signed in with the same token the Spotify account
+ *  in Settings holds, restarted with backoff if it dies, stopped on quit.
  *  Commands sent while it's starting or signing in are queued and sent once
  *  it's connected.
  * ========================================================================= */
@@ -160,6 +161,17 @@ function start() {
   });
 }
 
+const WARM_START_DELAY_MS = 3000;
+
+/** Start the helper ahead of the first play, if it could sign in now. */
+function warmUp() {
+  if (proc || quitting || !spotifyHelperInstalled()) return;
+  const st = partnerState();
+  if (!st.connected || st.canStream === false) return;
+  restarts = 0;
+  start();
+}
+
 /** Queue or send a command; starts the helper if it isn't running. */
 function command(cmd) {
   if (status === 'ready' && proc) { write(cmd); return { ok: true }; }
@@ -194,6 +206,8 @@ export function registerSpotifyPlayerIpc(ipcMain) {
   });
   ipcMain.handle('spotifyPlayer:load', (_e, id, opts = {}) => command({
     cmd: 'load', id: String(id || ''), play: opts.play !== false, positionMs: Math.max(0, Math.round(opts.positionMs || 0)),
+    // false only for a natural advance, so the old track's tail isn't cut.
+    cut: opts.cut !== false,
   }));
   ipcMain.handle('spotifyPlayer:preload', (_e, id) => command({ cmd: 'preload', id: String(id || '') }));
   ipcMain.handle('spotifyPlayer:play', () => command({ cmd: 'play' }));
@@ -204,13 +218,25 @@ export function registerSpotifyPlayerIpc(ipcMain) {
 
   app.on('before-quit', stopHelper);
 
+  /* Warm start. Launching the helper, connecting to Spotify and signing in
+     takes a second or more, which used to land on the first press of play.
+     A few seconds after launch, when the window has had its turn, it starts
+     in the background instead, so the first play is as quick as the rest. */
+  app.whenReady().then(() => {
+    const t = setTimeout(warmUp, WARM_START_DELAY_MS);
+    if (typeof t.unref === 'function') t.unref();
+  });
+
   /* Follow the Settings sign-in: a new sign-in re-authenticates a running
      helper; signing out stops playback and the helper with it. */
   onPartnerChange((st) => {
     if (st?.connected) {
       lastError = null;
       if (proc) signIn();
-      else if (status === 'error') setStatus('stopped');
+      else {
+        if (status === 'error') setStatus('stopped');
+        warmUp();
+      }
     } else if (proc) {
       intentionalStop = true;
       write({ cmd: 'stop' });

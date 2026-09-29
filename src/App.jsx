@@ -8,7 +8,7 @@ import {
   loadGoogleFontForPreset,
 } from './uiFonts.js';
 import { useToastBus, ToastStack, ToastContext } from './Toasts.jsx';
-import { SpotifyMediaElement, spotifyIdOf } from './spotifyMediaElement.js';
+import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from './spotifyMediaElement.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
 import { useMiniPlayerBridge } from './useMiniPlayerBridge.js';
 import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
@@ -1913,12 +1913,7 @@ export default function App() {
          start) and let the natural 'ended' advance the queue. */
       const dur = el.duration;
       if (!Number.isFinite(dur) || dur - el.currentTime > 10 || repeat === 'one') return;
-      const nxt = peekNext();
-      const nid = spotifyIdOf(nxt?.track);
-      if (nid && preloadedKeyRef.current !== `sp:${nid}`) {
-        preloadedKeyRef.current = `sp:${nid}`;
-        window.electronAPI?.spotifyPlayerPreload?.(nid)?.catch?.(() => {});
-      }
+      preloadStreamed(peekNext()?.track);
       return;
     }
     const mode = transitionModeRef.current;
@@ -1926,7 +1921,12 @@ export default function App() {
     if (repeat === 'one') return;            // loops via the seek path instead
     /* Next up is streamed: the standby element can't hold it (and may still
        hold a stale file), so no gapless/crossfade — 'ended' advances. */
-    if (spotifyIdOf(peekNext()?.track)) return;
+    const upcoming = peekNext()?.track;
+    if (spotifyIdOf(upcoming)) {
+      const d = el.duration;
+      if (Number.isFinite(d) && d - el.currentTime <= 10) preloadStreamed(upcoming);
+      return;
+    }
     const dur = el.duration;
     if (!Number.isFinite(dur) || dur <= 0) return;
     const remaining = dur - el.currentTime;

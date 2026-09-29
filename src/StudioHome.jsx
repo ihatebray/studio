@@ -23,6 +23,7 @@ import { songKey } from './instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
 import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPlayer.jsx';
 import ArtistGrid from './ArtistGrid.jsx';
+import { hoverPreload } from './spotifyMediaElement.js';
 import { NewReleases, HomeRail, HOME_CSS } from './HomeReleases.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT, TOKENS_CSS } from './accentTokens.js';
 
@@ -5219,7 +5220,8 @@ ${HOME_CSS}
                                          window, 57px is the real figure. */
                                       style={{ gridTemplateColumns: cols, padding: '7px 8px' }}
                                       onDoubleClick={() => onPlayTrack?.(t, detailTracks)}
-                                      onContextMenu={canManage ? (e) => openRowMenu(e, t) : undefined}>
+                                      onContextMenu={canManage ? (e) => openRowMenu(e, t) : undefined}
+                                      {...hoverPreload(t)}>
                                       <div className="sth-lrow-n" style={{ height: 42 }}>
                                         {playing
                                           ? <PlayingBars acc={pageAccUI} playing={isPlaying} />
@@ -8493,7 +8495,8 @@ function QueueRow({
          row here sets `font: inherit` explicitly. */
       <div role="button" tabIndex={0} onClick={onClick}
         onKeyDown={(e) => { if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); } }}
-        onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+        onMouseEnter={() => { setHot(true); hoverPreload(t)?.onMouseEnter(); }}
+        onMouseLeave={() => { setHot(false); hoverPreload(t)?.onMouseLeave(); }}
         draggable={!!onReorder && !playing}
         onDragStart={(e) => {
           if (!onReorder || playing) return;
@@ -10457,6 +10460,7 @@ const LibRow = React.memo(function LibRow({ t, index, playing, isPlaying, acc, a
       className={`sth-lrow${playing ? ' is-playing' : ''}`}
       onDoubleClick={() => onPlay(t)}
       onContextMenu={canManage ? (e) => onMenu(e, t) : undefined}
+      {...hoverPreload(t)}
     >
       <div className="sth-lrow-n">
         {playing
@@ -11761,6 +11765,7 @@ function DetailTrackRow({ n, track, active = false, playing = false, highlight =
       tabIndex={0}
       className={`sth-drow${active ? ' is-active' : ''}`}
       onClick={onPlay}
+      {...hoverPreload(track)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPlay?.(); } }}
       onContextMenu={onMore || undefined}
       style={highlight && !active ? { background: 'rgba(var(--st-fg-rgb), 0.035)' } : undefined}

@@ -5,14 +5,15 @@
 //! it over stdin/stdout, one JSON object per line.
 //!
 //! Audio goes from librespot's decoder straight to the sound card through
-//! the rodio backend, and nowhere else. The helper takes no option for a
+//! output.rs (rodio, like librespot's own backend, but with pause and skip
+//! that don't wait for the queue), and nowhere else. The helper takes no option for a
 //! different backend, a pipe, or a file: there is no path for the decoded
 //! audio to reach Studio or the disk. librespot's own cache is only used for
 //! credentials, so no audio is cached either.
 //!
 //! Commands (stdin):
 //!   {"cmd":"auth","token":"<access token>"}   sign in (token optional once cached)
-//!   {"cmd":"load","id":"<track id>","play":true,"positionMs":0}
+//!   {"cmd":"load","id":"<track id>","play":true,"positionMs":0,"cut":true}
 //!   {"cmd":"preload","id":"<track id>"}
 //!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"stop"}
 //!   {"cmd":"seek","positionMs":12345}
@@ -36,14 +37,16 @@ use std::time::Duration;
 use librespot_core::authentication::Credentials;
 use librespot_core::cache::Cache;
 use librespot_core::{Session, SessionConfig, SpotifyUri};
-use librespot_playback::audio_backend;
-use librespot_playback::config::{AudioFormat, Bitrate, PlayerConfig, VolumeCtrl};
-use librespot_playback::mixer::softmixer::SoftMixer;
-use librespot_playback::mixer::{Mixer, MixerConfig};
+use librespot_playback::audio_backend::Sink;
+use librespot_playback::config::{Bitrate, PlayerConfig};
+use librespot_playback::mixer::NoOpVolume;
 use librespot_playback::player::{Player, PlayerEvent};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
+
+mod output;
+use output::{Cue, CuedSink, Silence};
 
 /// Spotify's desktop client ID — the same one Studio signs in with, so the
 /// token Studio already holds is accepted here.
@@ -56,7 +59,18 @@ const ACCOUNT_WAIT: Duration = Duration::from_secs(4);
 #[serde(tag = "cmd", rename_all = "camelCase")]
 enum Command {
     Auth { token: Option<String> },
-    Load { id: String, #[serde(default = "yes")] play: bool, #[serde(default, rename = "positionMs")] position_ms: u32 },
+    /// `cut: false` is a natural advance after "ended": the old track's
+    /// tail is still in the output queue and plays out into the new one.
+    /// Anything else (a skip, a click) cuts the old audio off at once.
+    Load {
+        id: String,
+        #[serde(default = "yes")]
+        play: bool,
+        #[serde(default, rename = "positionMs")]
+        position_ms: u32,
+        #[serde(default = "yes")]
+        cut: bool,
+    },
     Preload { id: String },
     Play,
     Pause,
@@ -73,7 +87,7 @@ fn yes() -> bool {
 struct Engine {
     session: Session,
     player: Arc<Player>,
-    mixer: Arc<SoftMixer>,
+    cue: Cue,
 }
 
 #[tokio::main]
@@ -84,6 +98,8 @@ async fn main() {
     send(json!({ "event": "ready", "version": env!("CARGO_PKG_VERSION") }));
 
     let mut engine: Option<Engine> = None;
+    // Kept across re-sign-ins, so a new engine starts at the current volume.
+    let mut volume: f32 = 1.0;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
@@ -108,7 +124,7 @@ async fn main() {
                 }
                 match connect(cache_dir.clone(), token).await {
                     Ok((session, account)) => {
-                        let e = start_player(session.clone());
+                        let e = start_player(session.clone(), volume);
                         send(json!({
                             "event": "connected",
                             "user": session.username(),
@@ -122,14 +138,25 @@ async fn main() {
                     }
                 }
             }
+            Command::Volume { value } => {
+                volume = value.clamp(0.0, 1.0) as f32;
+                if let Some(e) = engine.as_ref() {
+                    e.cue.set_volume(volume);
+                }
+            }
             other => {
                 let Some(e) = engine.as_ref() else {
                     send(json!({ "event": "error", "message": "not signed in" }));
                     continue;
                 };
                 match other {
-                    Command::Load { id, play, position_ms } => match track_uri(&id) {
-                        Some(uri) => e.player.load(uri, play, position_ms),
+                    Command::Load { id, play, position_ms, cut } => match track_uri(&id) {
+                        Some(uri) => {
+                            if cut {
+                                e.cue.clear(uri.to_id().ok());
+                            }
+                            e.player.load(uri, play, position_ms);
+                        }
                         None => send(json!({ "event": "error", "message": format!("not a track id: {id}") })),
                     },
                     Command::Preload { id } => {
@@ -139,13 +166,15 @@ async fn main() {
                     }
                     Command::Play => e.player.play(),
                     Command::Pause => e.player.pause(),
-                    Command::Stop => e.player.stop(),
-                    Command::Seek { position_ms } => e.player.seek(position_ms),
-                    Command::Volume { value } => {
-                        let v = (value.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16;
-                        e.mixer.set_volume(v);
+                    Command::Stop => {
+                        e.cue.clear(None);
+                        e.player.stop();
                     }
-                    Command::Auth { .. } | Command::Quit => unreachable!(),
+                    Command::Seek { position_ms } => {
+                        e.cue.clear(None);
+                        e.player.seek(position_ms);
+                    }
+                    Command::Auth { .. } | Command::Volume { .. } | Command::Quit => unreachable!(),
                 }
             }
         }
@@ -226,12 +255,7 @@ async fn connect(cache_dir: Option<PathBuf>, token: Option<String>) -> Result<(S
     }
 }
 
-fn start_player(session: Session) -> Engine {
-    // Linear: Studio sends the amplitude it wants (its volume slider is
-    // already on a perceptual curve), so a second log curve here would make
-    // the lower half of the slider near-silent.
-    let mixer_config = MixerConfig { volume_ctrl: VolumeCtrl::Linear, ..MixerConfig::default() };
-    let mixer = Arc::new(SoftMixer::open(mixer_config).expect("software mixer"));
+fn start_player(session: Session, volume: f32) -> Engine {
     let config = PlayerConfig {
         bitrate: Bitrate::Bitrate320,
         gapless: true,
@@ -239,22 +263,43 @@ fn start_player(session: Session) -> Engine {
         position_update_interval: Some(Duration::from_millis(500)),
         ..Default::default()
     };
-    // The sound card, and only the sound card.
-    let backend = audio_backend::find(Some("rodio".to_string())).expect("rodio backend compiled in");
-    let player = Player::new(config, session.clone(), mixer.get_soft_volume(), move || {
-        backend(None, AudioFormat::default())
+    // The sound card, and only the sound card: output.rs, which also makes
+    // pause/skip/seek/volume take effect at once. Volume is applied there,
+    // so librespot's own volume stage is a no-op.
+    let cue = Cue::new(volume);
+    let sink_cue = cue.clone();
+    let player = Player::new(config, session.clone(), Box::new(NoOpVolume), move || -> Box<dyn Sink> {
+        match CuedSink::open(sink_cue) {
+            Ok(sink) => Box::new(sink),
+            Err(message) => {
+                eprintln!("studio-spotify: {message}");
+                emit(json!({ "event": "error", "message": message }));
+                Box::new(Silence)
+            }
+        }
     });
 
     let mut events = player.get_player_event_channel();
+    let event_cue = cue.clone();
     tokio::spawn(async move {
         while let Some(ev) = events.recv().await {
+            // The player announcing the new track or position is what lets
+            // audio through the output again after a skip or seek.
+            match &ev {
+                PlayerEvent::Loading { track_id, .. }
+                | PlayerEvent::Playing { track_id, .. }
+                | PlayerEvent::Seeked { track_id, .. } => event_cue.announce(&track_id.to_id().unwrap_or_default()),
+                PlayerEvent::TrackChanged { audio_item } => event_cue.announce(&audio_item.track_id.to_id().unwrap_or_default()),
+                PlayerEvent::PositionChanged { .. } | PlayerEvent::PositionCorrection { .. } => event_cue.position(),
+                _ => {}
+            }
             if let Some(v) = translate(ev) {
                 emit(v);
             }
         }
     });
 
-    Engine { session, player, mixer }
+    Engine { session, player, cue }
 }
 
 fn translate(ev: PlayerEvent) -> Option<Value> {

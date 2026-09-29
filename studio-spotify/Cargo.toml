@@ -7,7 +7,9 @@ publish = false
 
 [dependencies]
 librespot-core = { version = "0.8.0", default-features = false, features = ["rustls-tls-webpki-roots"] }
-librespot-playback = { version = "0.8.0", default-features = false, features = ["rodio-backend", "rustls-tls-webpki-roots"] }
+librespot-playback = { version = "0.8.0", default-features = false, features = ["rustls-tls-webpki-roots"] }
+# The output (src/output.rs). Same rodio librespot's backend uses.
+rodio = { version = "0.21", default-features = false, features = ["playback"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "io-std", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

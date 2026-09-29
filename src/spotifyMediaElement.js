@@ -26,6 +26,43 @@ export function spotifyIdOf(track) {
   return typeof p === 'string' && p.startsWith(SPOTIFY_PREFIX) ? p.slice(SPOTIFY_PREFIX.length) : null;
 }
 
+/* ---- preloading ------------------------------------------------------
+ * librespot holds one preloaded track. Loading that track afterwards skips
+ * every network round-trip (metadata, key, file, first chunk), so playback
+ * starts at once. Studio asks for it the way Sonora does: when the pointer
+ * rests on a row for a moment, and for the next track in the queue near the
+ * end of the current one. */
+
+let preloaded = null;
+let currentId = null;
+
+/** Ask the helper to fetch a Saved track ahead. No-op for local files, the
+ *  playing track, or the one already preloaded. */
+export function preloadStreamed(track) {
+  const id = spotifyIdOf(track) || (typeof track === 'string' ? track : null);
+  if (!id || id === preloaded || id === currentId) return;
+  const api = typeof window !== 'undefined' ? window.electronAPI : null;
+  if (!api?.spotifyPlayerPreload) return;
+  preloaded = id;
+  api.spotifyPlayerPreload(id)?.catch?.(() => { if (preloaded === id) preloaded = null; });
+}
+
+export const HOVER_PRELOAD_MS = 200;
+
+/** onMouseEnter / onMouseLeave for a track row: preload after a short rest,
+ *  so sweeping the pointer across a list doesn't fetch every row. */
+let hoverTimer = null;
+const cancelHover = () => { clearTimeout(hoverTimer); hoverTimer = null; };
+/* One pointer, one pending hover: the timer lives here rather than per row,
+   so a row re-rendering mid-hover can't leave an orphaned timer behind. */
+export function hoverPreload(track) {
+  if (!spotifyIdOf(track)) return null;
+  return {
+    onMouseEnter: () => { cancelHover(); hoverTimer = setTimeout(() => preloadStreamed(track), HOVER_PRELOAD_MS); },
+    onMouseLeave: cancelHover,
+  };
+}
+
 const TICK_MS = 250;
 
 export class SpotifyMediaElement extends EventTarget {
@@ -71,6 +108,7 @@ export class SpotifyMediaElement extends EventTarget {
     this._setPos(t);
     this._ended = false;
     const ms = Math.round(t * 1000);
+    this._seamless = false;
     if (this._pending) this._pending.positionMs = ms;
     else if (this.id) this._call(() => this.api.spotifyPlayerSeek(ms));
     this._emit('timeupdate');
@@ -89,7 +127,14 @@ export class SpotifyMediaElement extends EventTarget {
   /** Stage a track. Nothing is sent until play() so a load + play is one
    *  command to the helper, not two. */
   loadTrack(id, durationSec = 0) {
+    /* Straight after the previous track ended, its last half-second is
+       still in the helper's output queue: let it play into this one. Any
+       other load (a skip, a click) cuts the old audio off at once. */
+    this._seamless = this._ended;
     this.id = String(id || '') || null;
+    currentId = this.id;
+    // Loading consumes the helper's preload slot either way.
+    preloaded = null;
     this._pending = { positionMs: 0 };
     this._running = false;
     this._paused = true;
@@ -114,11 +159,13 @@ export class SpotifyMediaElement extends EventTarget {
     if (wasPaused) this._emit('play');
     if (this._pending) {
       const { positionMs } = this._pending;
+      const cut = !this._seamless;
       this._pending = null;
+      this._seamless = false;
       // The helper's mixer starts at 50% and forgets on restart, so every
       // fresh load carries the current volume ahead of it.
       this.api?.spotifyPlayerVolume?.(this._volume)?.catch?.(() => {});
-      return this._call(() => this.api.spotifyPlayerLoad(this.id, { play: true, positionMs }));
+      return this._call(() => this.api.spotifyPlayerLoad(this.id, { play: true, positionMs, cut }));
     }
     return this._call(() => this.api.spotifyPlayerPlay());
   }
@@ -134,6 +181,7 @@ export class SpotifyMediaElement extends EventTarget {
   /** Stop the helper and forget the track (src = ''). */
   unload() {
     const had = this.id && !this._pending;
+    currentId = null;
     this._freeze();
     this._stopTick();
     this.id = null;
