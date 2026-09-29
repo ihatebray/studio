@@ -2541,6 +2541,10 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
+  /* Missing details for Saved tracks are filled in by main in the background;
+     it says so here, and the library re-reads from the DB. */
+  useEffect(() => window.electronAPI?.onLibraryChanged?.(() => { reloadLibrary(); }), [reloadLibrary]);
+
   /* ---------- Discord rich presence ---------------------------------- */
 
   /**

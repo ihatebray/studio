@@ -150,7 +150,7 @@ import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc } from './spotifyPlayer.js';
-import { saveSpotifyTrack, isStreamedPath } from './spotifyLibrary.js';
+import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import { registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch } from './spotifyPartner.js';
 
 /* Search fallback chain: Client ID → signed-in Spotify account → iTunes.
@@ -181,7 +181,49 @@ registerSpotifyPlayerIpc(ipcMain);
    (spotify:track:<id>, played by the helper) and hearts it on Spotify.
    Nothing is downloaded. */
 ipcMain.handle('library:saveSpotify', async (_e, meta) => {
-  try { return await saveSpotifyTrack(meta); } catch (e) { return { ok: false, error: String(e?.message || e), noPicker: true }; }
+  try {
+    const res = await saveSpotifyTrack(meta);
+    // Saved while every metadata source was refusing: try again shortly.
+    if (res?.ok && (res.track?.album === 'Unknown Album' || !res.track?.coverArt || !(res.track?.duration > 0))) {
+      scheduleMetadataRepair(60_000);
+    }
+    return res;
+  } catch (e) { return { ok: false, error: String(e?.message || e), noPicker: true }; }
+});
+
+/* Saved tracks missing an album, cover or length get looked up again in the
+   background (spotifyLibrary.repairStreamedRows): shortly after launch, every
+   15 minutes, and a minute after a Save that came out short. The renderer
+   reloads the library when anything was filled in. */
+let repairTimer = null;
+function scheduleMetadataRepair(delayMs) {
+  clearTimeout(repairTimer);
+  repairTimer = setTimeout(async () => {
+    repairTimer = null;
+    await repairStreamedRows({
+      onFixed: (n) => {
+        for (const w of BrowserWindow.getAllWindows()) {
+          try { w.webContents.send('library:changed', { reason: 'metadata', count: n }); } catch { /* closing */ }
+        }
+      },
+    });
+  }, delayMs);
+  if (typeof repairTimer.unref === 'function') repairTimer.unref();
+}
+app.whenReady().then(() => {
+  scheduleMetadataRepair(20_000);
+  const every = setInterval(() => { if (!repairTimer) scheduleMetadataRepair(0); }, 15 * 60_000);
+  if (typeof every.unref === 'function') every.unref();
+});
+
+/* Metadata editor → Refetch: fresh catalogue details as pending edits. */
+ipcMain.handle('library:refetchTrackMetadata', async (_e, trackId) => {
+  try {
+    const track = (await loadAllTracks()).find((t) => t.id === trackId);
+    return await refetchMetadata(track);
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 });
 
 /* Preview before you get: resolves the YouTube match a download would use to
@@ -4203,6 +4245,8 @@ ipcMain.handle('playlist:importBatch', async (event, params = {}) => {
   await Promise.all(workers);
 
   const completed = completedAt.filter((x) => x);
+  // Any saved while metadata lookups were refusing get filled in shortly.
+  if (source !== 'soulseek' && completed.length) scheduleMetadataRepair(60_000);
 
   return {
     ok: true,

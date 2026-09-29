@@ -853,6 +853,31 @@ export async function trackById(id) {
   };
 }
 
+/**
+ * The same track through the web player's own API (Pathfinder getTrack), in
+ * trackById's shape. A different endpoint with its own rate limit, so it
+ * usually still answers when the Web API is refusing.
+ */
+export async function trackByIdPathfinder(id) {
+  const data = await query('getTrack', { uri: `spotify:track:${id}` });
+  const t = data?.trackUnion;
+  if (!t?.name) return null;
+  const album = t.albumOfTrack || {};
+  const names = [...(t.firstArtist?.items || []), ...(t.otherArtists?.items || []), ...(t.artists?.items || [])]
+    .map((a) => a?.profile?.name).filter(Boolean);
+  const d = album.date || {};
+  return {
+    spotifyId: id, title: t.name,
+    artists: [...new Set(names)].join(', '),
+    album: album.name || '', albumId: idOf(album.uri),
+    albumArtUrl: img(album.coverArt?.sources, 640) || '',
+    durationMs: t.duration?.totalMilliseconds || 0,
+    explicit: t.contentRating?.label ? t.contentRating.label === 'EXPLICIT' : undefined,
+    trackNumber: num(t.trackNumber), discNumber: num(t.discNumber),
+    releaseDate: d.isoString ? String(d.isoString).slice(0, 10) : (d.year ? String(d.year) : ''),
+  };
+}
+
 const fold = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
   .replace(/\(.*?\)|\[.*?\]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
@@ -860,14 +885,15 @@ const fold = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u
  * The Spotify track for a title + artist that came from somewhere else
  * (the iTunes charts, a release list). Field-filtered search first, then a
  * plain one; the pick must share the title and the first artist, and the
- * closest duration wins among those.
+ * closest duration wins among those. `search` defaults to the signed-in
+ * account; Save passes the Client ID search when that one is rate-limited.
  */
-export async function findTrack(title, artists, durationMs = 0) {
+export async function findTrack(title, artists, durationMs = 0, search = (q) => searchCatalogue('tracks', q)) {
   const first = String(artists || '').split(/,|&| feat\.? | ft\.? | x /i)[0].trim();
   const want = fold(title);
   const wantArtist = fold(first);
   for (const q of [`track:${title} artist:${first}`, `${first} ${title}`]) {
-    const hits = await searchCatalogue('tracks', q);
+    const hits = await search(q);
     const ok = hits.filter((h) => fold(h.title) === want && fold(h.artists).includes(wantArtist));
     if (ok.length) {
       if (!(durationMs > 0)) return ok[0];

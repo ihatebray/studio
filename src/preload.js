@@ -46,6 +46,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resetStats: () => ipcRenderer.invoke('library:resetStats'),
   rescanMetadata: () => ipcRenderer.invoke('library:rescanMetadata'),
   refetchTrackMetadata: (trackId) => ipcRenderer.invoke('library:refetchTrackMetadata', trackId),
+  /** The library changed in the background (missing details filled in). */
+  onLibraryChanged: (cb) => {
+    const listener = (_event, payload) => cb(payload);
+    ipcRenderer.on('library:changed', listener);
+    return () => ipcRenderer.removeListener('library:changed', listener);
+  },
   onRescanProgress: (cb) => {
     const listener = (_event, payload) => cb(payload);
     ipcRenderer.on('library:rescanProgress', listener);
