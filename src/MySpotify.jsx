@@ -613,14 +613,14 @@ function usePanel() {
 
 /* ------------------------------------------------------------------ Home */
 
-/* Which of Spotify's home shelves Home shows. Only the ones about you (your
-   mixes, Made For You, Discover and the like) and Fresh New Music; the
-   editorial and mood shelves (Today's Biggest Hits, Focus, genre shelves)
-   are left to Spotify. Never: its new-releases shelf (New Releases does
-   that, for artists you pick), albums featuring songs you like, and its
-   Jump back in / Recently played, which go into Home's own Jump Back In. */
+/* Spotify's home shelves Home leaves out: the editorial and mood ones you
+   asked to drop (Today's Biggest Hits, Focus, Kick back and relax, bedroom
+   rave), its new-releases shelf (New Releases does that, for artists you
+   pick), albums featuring songs you like, and its Jump back in / Recently
+   played, which go into Home's own Jump Back In. Everything else stays,
+   with Fresh New Music always first. */
 const FRESH_SHELF = /fresh new music/i;
-const KEEP_SHELVES = /made for you|mix|for you|discover|radar|recommended|based on|more (of what|like)|your (favou?rite|top)|picks/i;
+const DROPPED_SHELVES = /today.?s biggest hits|^focus$|kick back and relax|bedroom rave/i;
 const NEVER_SHELVES = /new release|albums? featuring songs you like|jump back in|recently played/i;
 const RECENT_SHELVES = /jump back in|recently played/i;
 
@@ -721,7 +721,6 @@ export function SpotifyHome({ bridge }) {
       const seen = new Set();
       return list.filter((x) => { const k = key(x); if (!k || seen.has(k)) return false; seen.add(k); return true; });
     };
-    const when = (t) => (typeof t.playedAt === 'number' ? t.playedAt : Date.parse(t.playedAt || '') || 0);
     const noDj = (items) => (items || []).filter((it) => !isDj(it));
     const mixes = m.mixes || [];
     const mixById = new Map(mixes.map((x) => [x.id, x]));
@@ -731,7 +730,7 @@ export function SpotifyHome({ bridge }) {
     const fresh = allShelves.find((sh) => FRESH_SHELF.test(sh.title || '')) || (c.fresh?.items?.length ? { ...c.fresh, items: noDj(c.fresh.items) } : null);
     const shelves = [
       ...(fresh ? [{ ...fresh, fresh: true }] : []),
-      ...allShelves.filter((sh) => !FRESH_SHELF.test(sh.title || '') && !NEVER_SHELVES.test(sh.title || '') && KEEP_SHELVES.test(sh.title || '')),
+      ...allShelves.filter((sh) => !FRESH_SHELF.test(sh.title || '') && !NEVER_SHELVES.test(sh.title || '') && !DROPPED_SHELVES.test((sh.title || '').trim())),
     ];
 
     const studioRepeat = (m.onRepeat || []).length >= STUDIO_ENOUGH.onRepeat;
@@ -750,7 +749,6 @@ export function SpotifyHome({ bridge }) {
       ], (it) => it?.id && `${it.kind}:${it.id}`),
       mixes,
       todaysMix: m.todaysMix || [],
-      recentTracks: uniq([...(m.recentTracks || []), ...(e.recentTracks || [])].sort((a, b) => when(b) - when(a)), (t) => t.spotifyId),
       onRepeat: studioRepeat || !e.onRepeat?.length ? (m.onRepeat || []) : e.onRepeat,
       onRepeatFrom: studioRepeat || !e.onRepeat?.length ? 'studio' : 'spotify',
       allTime: studioAll || !e.allTime?.length ? (m.allTime || []) : e.allTime,
@@ -847,34 +845,24 @@ export function SpotifyHome({ bridge }) {
                 </section>
               ) : null}
 
-              {/* ---- On repeat / Recently played ---- */}
-              {data.onRepeat.length || data.recentTracks.length ? (
-                <div className={cx('msp-duo', !(data.onRepeat.length && data.recentTracks.length) && 'is-one')}>
-                  {data.onRepeat.length ? (
-                    <section className="msp-sec">
-                      <SectionHead title="On Repeat" meta={data.onRepeatFrom === 'studio' ? 'Most played this month' : 'Last four weeks on Spotify'} />
-                      <div className="msp-list">
-                        {data.onRepeat.slice(0, 8).map((t, i) => (
-                          <TrackRow key={t.spotifyId} row={t} n={i + 1} list={data.onRepeat} index={i} bridge={bridge}
+              {/* ---- On repeat ---- */}
+              {data.onRepeat.length ? (
+                <section className="msp-sec">
+                  <SectionHead title="On Repeat" meta={data.onRepeatFrom === 'studio' ? 'Most played this month' : 'Last four weeks on Spotify'} />
+                  <div className="msp-duo">
+                    {[data.onRepeat.slice(0, 5), data.onRepeat.slice(5, 10)].filter((col) => col.length).map((col, c) => (
+                      <div key={c} className="msp-list">
+                        {col.map((t, i) => (
+                          <TrackRow key={t.spotifyId} row={t} n={c * 5 + i + 1} list={data.onRepeat} index={c * 5 + i} bridge={bridge}
                             meta={t.plays ? `${t.plays} plays` : fmtDur(t.durationMs)} />
                         ))}
                       </div>
-                    </section>
-                  ) : null}
-                  {data.recentTracks.length ? (
-                    <section className="msp-sec">
-                      <SectionHead title="Recently Played" />
-                      <div className="msp-list">
-                        {data.recentTracks.slice(0, 8).map((t, i) => (
-                          <TrackRow key={`${t.spotifyId}:${t.playedAt}`} row={t} n={<span style={{ fontSize: 10 }}>•</span>} list={data.recentTracks} index={i} bridge={bridge} meta={ago(t.playedAt)} />
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-                </div>
+                    ))}
+                  </div>
+                </section>
               ) : null}
 
-              {/* ---- Spotify's shelves about you, Fresh New Music first ---- */}
+              {/* ---- Spotify's shelves, Fresh New Music first ---- */}
               {data.shelves.map((sh, n) => (
                 <section key={`${sh.title}:${n}`} className="msp-sec">
                   <SectionHead title={sh.title || 'For You'}
