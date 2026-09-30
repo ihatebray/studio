@@ -44,7 +44,7 @@ const CSS = `
   border-radius: 999px; font-size: 9.5px; font-weight: 800; line-height: 16px; text-align: center;
   background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 2px rgb(var(--st-bg-rgb, 0,0,0)); }
 .stn-badge.is-bad { background: rgb(243, 114, 114); color: #1a0b0b; }
-.stn-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 96; width: min(420px, calc(100vw - 32px));
+.stn-panel { -webkit-app-region: no-drag; position: absolute; top: calc(100% + 8px); right: 0; z-index: 96; width: min(420px, calc(100vw - 32px));
   max-height: min(72vh, 600px); display: flex; flex-direction: column; overflow: hidden;
   border-radius: 14px; background: rgba(22, 22, 24, 0.985); border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55); transform-origin: top right;
@@ -102,6 +102,13 @@ export default function NotificationsButton() {
     return () => window.removeEventListener(OPEN_NOTICES_EVENT, onOpen);
   });
 
+  // The compact top bar hid (StudioHome): close with it.
+  useEffect(() => {
+    const onHidden = () => setOpen(false);
+    window.addEventListener('studio:topbar-hidden', onHidden);
+    return () => window.removeEventListener('studio:topbar-hidden', onHidden);
+  }, []);
+
   // Open means read, including anything that arrives while it's open.
   useEffect(() => { if (open) markNoticesSeen(); }, [open, items]);
 
@@ -129,7 +136,7 @@ export default function NotificationsButton() {
         {unread ? <span className={`stn-badge${unreadBad ? ' is-bad' : ''}`}>{unread > 9 ? '9+' : unread}</span> : null}
       </button>
       {open ? (
-        <div className="stn-panel" role="dialog" aria-label="Notifications">
+        <div className="stn-panel" role="dialog" aria-label="Notifications" data-topbar-dropdown>
           <div className="stn-head">
             <b>Notifications</b>
             {items.length ? <span>{items.length}</span> : null}

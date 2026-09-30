@@ -522,6 +522,11 @@ export default function StudioHome({
     try { localStorage.setItem('studio:compact', n ? '1' : '0'); } catch { /* ignore */ }
   }, []);
   const [chromePeek, setChromePeek] = useState(null); // null | 'top' | 'side'
+  /* When the compact top bar tucks away, whatever dropped down from it goes
+     too, rather than waiting open and invisible for the next peek. */
+  useEffect(() => {
+    if (compactMode && chromePeek !== 'top') window.dispatchEvent(new Event('studio:topbar-hidden'));
+  }, [compactMode, chromePeek]);
   /* Fullscreen Now Playing. Takes the whole window (10px edges) over the
      top bar, sidebar, content card and Now Playing bar; the side panel is
      unavailable while it's up, so lyrics / queue / info live in the view's
@@ -1116,8 +1121,11 @@ export default function StudioHome({
     const onMove = (e) => {
       if (e.buttons) return;
       const x = e.clientX; const y = e.clientY;
+      /* Anything that drops down from the top bar (notifications) hangs
+         below it; the bar stays out while the pointer is over one. */
+      const overDropdown = !!e.target?.closest?.('[data-topbar-dropdown]');
       setChromePeek((p) => {
-        if (p === 'top') return y > TOPBAR_H + 16 ? null : p;
+        if (p === 'top') return y > TOPBAR_H + 16 && !overDropdown ? null : p;
         if (p === 'side') return x > SIDEBAR_W + 28 ? null : p;
         if (y <= EDGE) return 'top';
         if (x <= EDGE) return 'side';
