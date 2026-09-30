@@ -450,7 +450,7 @@ function PopularRow({ n, t, owned, playing, isPlaying, accent, dl, progress, onP
 /** A release in the discography grid. Every release looks like a record —
  *  the page is the artist's catalogue, not a list of gaps — and the ones you
  *  already have carry a small "In library" mark. */
-function DiscCard({ r, owned, accent, onClick, opensTracklist = false }) {
+function DiscCard({ r, owned, accent, onClick, opensTracklist = false, open = false }) {
   const [hot, setHot] = useState(false);
   const kind = r.group === 'appears_on' ? (r.artists || 'Appears on')
     : r.type === 'compilation' || r.group === 'compilation' ? 'Compilation'
@@ -467,8 +467,8 @@ function DiscCard({ r, owned, accent, onClick, opensTracklist = false }) {
       <div style={{
         position: 'relative', width: '100%', aspectRatio: '1', borderRadius: 9, overflow: 'hidden',
         background: r.albumArtUrl ? `url("${String(r.albumArtUrl).replace(/"/g, '%22')}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
-        boxShadow: hot ? '0 16px 34px rgba(0,0,0,0.5)' : '0 10px 26px rgba(0,0,0,0.4)',
-        transform: hot ? 'translateY(-3px)' : 'none',
+        boxShadow: `${hot || open ? '0 16px 34px rgba(0,0,0,0.5)' : '0 10px 26px rgba(0,0,0,0.4)'}${open ? `, 0 0 0 2px rgb(${readableAccent(accent)})` : ''}`,
+        transform: hot || open ? 'translateY(-3px)' : 'none',
         transition: 'transform 0.22s cubic-bezier(0.22,0.9,0.3,1), box-shadow 0.22s ease',
       }}>
         {owned ? (
@@ -632,6 +632,237 @@ function RelatedArtist({ a, inLibrary, onClick }) {
   );
 }
 
+/* ---- Releases opened in place (the full page) -------------------------
+ * Outside the search panel, a release you don't own opens right under its
+ * row of cards instead of sending you to search: cover, Play / Shuffle /
+ * Save all, and the tracklist, each song playable straight away and
+ * savable on its own. A notch points up at the card it belongs to. */
+
+const releaseTracksCache = new Map();   // albumId → rows
+
+const GRID_GAP = 22;
+
+/** The discography grid, with room for one open release after the row that
+ *  holds it. Measures its own column count so the panel lands after the
+ *  right card, whatever the window's width. */
+function DiscGrid({ items, keyOf, openKey, renderCard, renderOpen }) {
+  const ref = useRef(null);
+  const [cols, setCols] = useState(1);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => setCols(Math.max(1, getComputedStyle(el).gridTemplateColumns.split(' ').filter(Boolean).length));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const at = openKey == null ? -1 : items.findIndex((r) => keyOf(r) === openKey);
+  const rowEnd = at < 0 ? -1 : Math.min(items.length - 1, Math.floor(at / cols) * cols + cols - 1);
+  const col = at < 0 ? 0 : at % cols;
+  const notch = `calc((100% - ${(cols - 1) * GRID_GAP}px) / ${cols} * ${col + 0.5} + ${col * GRID_GAP}px)`;
+  return (
+    <div ref={ref} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(158px, 1fr))', gap: `26px ${GRID_GAP}px` }}>
+      {items.map((r, i) => (
+        <React.Fragment key={keyOf(r)}>
+          {renderCard(r)}
+          {i === rowEnd ? renderOpen(items[at], notch) : null}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+const relKind = (r) => (r.group === 'appears_on' ? 'Appears on'
+  : r.type === 'compilation' || r.group === 'compilation' ? 'Compilation'
+    : r.group === 'single' ? (r.totalTracks > 1 ? 'EP' : 'Single') : 'Album');
+
+function ReleaseInline({ release, notch, accent, bridge, artistName, onClose }) {
+  const id = release.albumId;
+  const [rows, setRows] = useState(() => releaseTracksCache.get(id) || null);
+  const [err, setErr] = useState('');
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    setRows(releaseTracksCache.get(id) || null);
+    setErr('');
+    if (releaseTracksCache.has(id)) return undefined;
+    let live = true;
+    Promise.resolve(api()?.spotifyGetAlbumTracks?.(id)).then((r) => {
+      if (r?.ok === false) throw new Error(r.error || 'Couldn’t load this release.');
+      const list = (r?.tracks || r?.data?.tracks || []).map((t) => ({
+        ...t, albumId: id, album: t.album || release.name, albumArtUrl: t.albumArtUrl || release.albumArtUrl,
+      }));
+      releaseTracksCache.set(id, list);
+      if (live) setRows(list);
+    }).catch((e) => { if (live) setErr(String(e?.message || e)); });
+    return () => { live = false; };
+  }, [id, release]);
+
+  // Bring it into view once it opens (only as far as needed).
+  useEffect(() => {
+    const t = setTimeout(() => boxRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 60);
+    return () => clearTimeout(t);
+  }, [id]);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const context = { kind: 'album', id, name: release.name, sub: `${relKind(release)} · ${release.artists || artistName}`, image: release.albumArtUrl || null };
+  const totalMs = (rows || []).reduce((n, t) => n + (t.durationMs || 0), 0);
+  const unsaved = (rows || []).filter((t) => !bridge.saveState(t));
+  const year = release.year || String(release.releaseDate || '').slice(0, 4);
+  const two = (rows?.length || 0) >= 10;
+
+  return (
+    <div className="apx-rel" ref={boxRef} style={{ '--apx-notch': notch, '--apx-acc': accent }}>
+      <div className="apx-rel-card">
+        <div className="apx-rel-side">
+          <div className="apx-rel-cover" style={{ backgroundImage: release.albumArtUrl ? `url("${String(release.albumArtUrl).replace(/"/g, '%22')}")` : 'none' }} />
+          <div className="apx-rel-eyebrow">{[relKind(release), year].filter(Boolean).join(' · ')}</div>
+          <div className="apx-rel-title">{release.name}</div>
+          <div className="apx-rel-meta">
+            {release.artists || artistName}
+            {rows?.length ? ` · ${rows.length} song${rows.length === 1 ? '' : 's'} · ${Math.max(1, Math.round(totalMs / 60000))} min` : ''}
+          </div>
+          <div className="apx-rel-actions">
+            <button type="button" className="apx-btn is-primary" disabled={!rows?.length}
+              onClick={() => bridge.playRows(rows, 0, { context })}>
+              <PlayIcon size={12} /> Play
+            </button>
+            <button type="button" className="apx-btn" disabled={!rows?.length} title="Shuffle"
+              onClick={() => bridge.playRows(rows, 0, { shuffle: true, context })}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
+            </button>
+            {unsaved.length > 1 ? (
+              <button type="button" className="apx-btn" onClick={() => unsaved.forEach((t) => bridge.saveRow(t))} title="Add every song here to your library">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+                Save all
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className={`apx-rel-list${two ? ' is-two' : ''}`} style={two ? { '--apx-rows': Math.ceil(rows.length / 2) } : null}>
+          {err ? <div className="apx-rel-note">{err}</div> : null}
+          {!rows && !err ? Array.from({ length: Math.min(8, release.totalTracks || 6) }, (_, i) => <div key={i} className="apx-rel-sk" />) : null}
+          {rows && !rows.length ? <div className="apx-rel-note">No songs to show for this one.</div> : null}
+          {(rows || []).map((t, i) => {
+            const on = bridge.isCurrent(t);
+            const st = bridge.saveState(t);
+            const feat = t.artists && t.artists !== (release.artists || artistName) ? t.artists : '';
+            return (
+              <div key={`${t.spotifyId}:${i}`} className={`apx-trk${on ? ' is-on' : ''}`} role="button" tabIndex={0}
+                onClick={() => bridge.playRows(rows, i, { context })}
+                onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}
+                {...(bridge.hoverProps?.(t) || {})}>
+                <span className="n">
+                  {on && bridge.isPlaying ? <span className="apx-eq"><i /><i /><i /></span> : <span className="num">{i + 1}</span>}
+                  <span className="pl"><PlayIcon size={11} /></span>
+                </span>
+                <span className="tt">
+                  <span className="t">{t.explicit ? <span className="e">E</span> : null}{t.title}</span>
+                  {feat ? <span className="a">{feat}</span> : null}
+                </span>
+                <span className="d">{fmtDur((t.durationMs || 0) / 1000)}</span>
+                {st === 'saved' ? (
+                  <span className="sv is-saved" title="In your library">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
+                  </span>
+                ) : st === 'busy' ? (
+                  <span className="sv is-busy" title="Saving…"><span className="apx-spin" /></span>
+                ) : (
+                  <button type="button" className="sv" title="Save to your library" aria-label={`Save ${t.title}`}
+                    onClick={(e) => { e.stopPropagation(); bridge.saveRow(t); }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <button type="button" className="apx-rel-x" onClick={onClose} aria-label="Close" title="Close (Esc)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const RELEASE_INLINE_CSS = `
+.apx-rel { grid-column: 1 / -1; position: relative; margin: -8px 0 4px; animation: apxRelIn 0.32s cubic-bezier(0.22,1,0.36,1) both; }
+@keyframes apxRelIn { from { opacity: 0; transform: translateY(-8px); } }
+/* The notch: points up at the card this belongs to. */
+.apx-rel::before { content: ''; position: absolute; top: -7px; left: var(--apx-notch); width: 14px; height: 14px; margin-left: -7px;
+  transform: rotate(45deg); border-radius: 3px 0 0 0; background: rgb(var(--st-bg-rgb));
+  background-image: linear-gradient(135deg, rgba(var(--apx-acc), 0.2), rgba(var(--apx-acc), 0.2));
+  box-shadow: -1px -1px 0 rgba(var(--st-fg-rgb), 0.1); transition: left 0.24s cubic-bezier(0.22,1,0.36,1); }
+.apx-rel-card { position: relative; container-type: inline-size; display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 28px;
+  padding: 22px 22px 18px; border-radius: 16px; overflow: hidden;
+  background: linear-gradient(135deg, rgba(var(--apx-acc), 0.2) 0%, rgba(var(--apx-acc), 0.05) 45%, rgba(var(--st-fg-rgb), 0.025) 100%);
+  box-shadow: inset 0 0 0 1px rgba(var(--st-fg-rgb), 0.1), 0 18px 40px rgba(0,0,0,0.28); }
+.apx-rel-side { display: flex; flex-direction: column; min-width: 0; }
+.apx-rel-cover { width: 100%; aspect-ratio: 1; border-radius: 10px; background: rgba(var(--st-fg-rgb), 0.07) center/cover no-repeat;
+  box-shadow: 0 14px 34px rgba(0,0,0,0.45); margin-bottom: 14px; }
+.apx-rel-eyebrow { font-size: 10.5px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; color: rgba(var(--st-sub-rgb), 0.55); }
+.apx-rel-title { margin-top: 4px; font-size: 19px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.15; color: var(--st-text);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.apx-rel-meta { margin-top: 5px; font-size: 12px; color: rgba(var(--st-sub-rgb), 0.55); line-height: 1.45; }
+.apx-rel-actions { display: flex; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
+.apx-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; min-width: 32px; padding: 0 12px; border-radius: 8px;
+  border: none; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap;
+  background: rgba(var(--st-fg-rgb), 0.08); color: var(--st-text); transition: background 0.15s ease, filter 0.15s ease; }
+.apx-btn:hover { background: rgba(var(--st-fg-rgb), 0.14); }
+.apx-btn.is-primary { background: rgb(var(--apx-acc)); color: #0b0b0c; }
+.apx-btn.is-primary:hover { filter: brightness(1.08); background: rgb(var(--apx-acc)); }
+.apx-btn:disabled { opacity: 0.45; cursor: default; }
+.apx-rel-list { min-width: 0; align-self: start; }
+@container (min-width: 760px) {
+  .apx-rel-list.is-two { display: grid; grid-auto-flow: column; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: repeat(var(--apx-rows), auto); column-gap: 18px; }
+}
+@container (max-width: 560px) {
+  .apx-rel-card { grid-template-columns: minmax(0, 1fr); }
+  .apx-rel-cover { width: 132px; }
+}
+.apx-trk { display: grid; grid-template-columns: 26px minmax(0, 1fr) 42px 28px; align-items: center; gap: 10px; height: 40px; padding: 0 6px 0 8px;
+  border-radius: 8px; cursor: pointer; transition: background 0.12s ease; }
+.apx-trk:hover { background: rgba(var(--st-fg-rgb), 0.06); }
+.apx-trk .n { position: relative; display: flex; align-items: center; font-size: 12px; font-variant-numeric: tabular-nums; color: rgba(var(--st-sub-rgb), 0.45); }
+.apx-trk .n .pl { display: none; color: var(--st-text); }
+.apx-trk:hover .n .num, .apx-trk:hover .n .apx-eq { display: none; }
+.apx-trk:hover .n .pl { display: flex; }
+.apx-trk .tt { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.apx-trk .t { font-size: 13.5px; font-weight: 600; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
+.apx-trk.is-on .t { color: rgb(var(--apx-acc)); }
+.apx-trk .a { font-size: 12px; color: rgba(var(--st-sub-rgb), 0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 2; }
+.apx-trk .e { display: inline-block; margin-right: 6px; padding: 0 4px; border-radius: 3px; font-size: 9px; font-weight: 800; line-height: 14px;
+  background: rgba(var(--st-fg-rgb), 0.16); color: rgba(var(--st-fg-rgb), 0.7); vertical-align: 1px; }
+.apx-trk .d { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; color: rgba(var(--st-sub-rgb), 0.45); }
+.apx-trk .sv { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer;
+  border: 1px solid rgba(var(--st-fg-rgb), 0.16); background: transparent; color: rgba(var(--st-fg-rgb), 0.6); opacity: 0; transition: opacity 0.12s ease, background 0.12s ease; }
+.apx-trk:hover .sv, .apx-trk .sv.is-saved, .apx-trk .sv.is-busy { opacity: 1; }
+.apx-trk .sv:hover { background: rgba(var(--st-fg-rgb), 0.1); color: var(--st-text); }
+.apx-trk .sv.is-saved { border-color: transparent; background: rgba(123,224,176,0.12); color: rgb(123,224,176); cursor: default; }
+.apx-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; color: rgb(var(--apx-acc)); }
+.apx-eq i { width: 2.5px; border-radius: 1px; background: currentColor; animation: apxEq 0.9s ease-in-out infinite; }
+.apx-eq i:nth-child(2) { animation-delay: -0.3s; } .apx-eq i:nth-child(3) { animation-delay: -0.6s; }
+@keyframes apxEq { 0%, 100% { height: 3px; } 50% { height: 12px; } }
+.apx-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.6px solid rgba(var(--st-fg-rgb), 0.2); border-top-color: var(--st-text); animation: apxSpin 0.7s linear infinite; }
+@keyframes apxSpin { to { transform: rotate(360deg); } }
+.apx-rel-sk { height: 30px; margin: 5px 0; border-radius: 8px; background: linear-gradient(90deg, rgba(var(--st-fg-rgb),0.04), rgba(var(--st-fg-rgb),0.09), rgba(var(--st-fg-rgb),0.04));
+  background-size: 200% 100%; animation: apxSk 1.4s ease-in-out infinite; }
+@keyframes apxSk { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.apx-rel-note { padding: 10px 8px; font-size: 12.5px; color: rgba(var(--st-sub-rgb), 0.55); }
+.apx-rel-x { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 8px; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; background: transparent; color: rgba(var(--st-fg-rgb), 0.5); }
+.apx-rel-x:hover { background: rgba(var(--st-fg-rgb), 0.1); color: var(--st-text); }
+@media (prefers-reduced-motion: reduce) { .apx-rel, .apx-eq i, .apx-rel-sk { animation: none; } }
+`;
+
 /* ========================================================================= */
 
 /**
@@ -663,6 +894,7 @@ export default function ArtistPage({
   embedded = false,       // rendered inside the search panel: no back button, no header editing
   onOpenRelease,          // (spotifyRelease) → open it in place (the panel's album frame)
   onOpenFullPage,         // () → leave the panel for the full artist page
+  spotifyBridge = null,   // the full page: play / save Spotify rows (StudioHome's My Spotify bridge)
 }) {
   const [profile, setProfile] = useState(() => {
     const c = cachedProfile(artist?.key || '');
@@ -692,6 +924,10 @@ export default function ArtistPage({
   const [disc, setDisc] = useState({ status: 'idle', list: null });
   const [discTab, setDiscTab] = useState('album');
   const [discAll, setDiscAll] = useState(false);
+  // The release open in place on the full page (its albumId).
+  const [openRel, setOpenRel] = useState(null);
+  const closeRel = useCallback(() => setOpenRel(null), []);
+  useEffect(() => { setOpenRel(null); }, [artist?.key]);
   const spData = sp.status === 'done' ? sp.data : null;
   useEffect(() => {
     const a = api();
@@ -1275,6 +1511,7 @@ export default function ArtistPage({
       position: 'relative', flex: 1, minWidth: 0, minHeight: 0, height: '100%',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
+      <style>{RELEASE_INLINE_CSS}</style>
       <style>{`
         @keyframes sthArtistIn { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: none; } }
         /* Full-bleed means full-bleed: a scrollbar gutter would hold the hero
@@ -1615,11 +1852,22 @@ export default function ArtistPage({
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.42)' }}>loading the full catalogue…</span>
                   ) : null}
                 </div>
-                <CardGrid>
-                  {discShown.map((r) => {
+                <DiscGrid
+                  items={discShown}
+                  keyOf={(r) => r.albumId || r.name}
+                  openKey={openRel}
+                  renderOpen={(r, notch) => (
+                    <ReleaseInline key={`open:${r.albumId}`} release={r} notch={notch} accent={pageAccUI}
+                      bridge={spotifyBridge} artistName={name} onClose={closeRel} />
+                  )}
+                  renderCard={(r) => {
                     const own = ownedRelease(r);
+                    /* Opens in place: in the search panel, its album frame;
+                       on the full page, right under this row of cards. */
+                    const inline = !onOpenRelease && !own && !!spotifyBridge && !!r.albumId;
                     return (
-                      <DiscCard key={r.albumId || r.name} r={r} owned={!!own} accent={pageAcc} opensTracklist={!!onOpenRelease}
+                      <DiscCard r={r} owned={!!own} accent={pageAcc} opensTracklist={!!onOpenRelease || inline}
+                        open={inline && openRel === r.albumId}
                         onClick={() => {
                           /* In the search panel every release opens its tracklist
                              there — owned or not — so you can see what you have and
@@ -1631,13 +1879,15 @@ export default function ArtistPage({
                                which has no album page — play it instead. */
                             if ((own.tracks?.length || 0) === 1) onPlayTrack?.(own.tracks[0], own.tracks);
                             else onOpenAlbum?.(own.key);
+                          } else if (inline) {
+                            setOpenRel((cur) => (cur === r.albumId ? null : r.albumId));
                           } else {
                             onJumpToFind?.(`${r.group === 'appears_on' ? '' : `${name} `}${r.name}`.trim(), 'spotify');
                           }
                         }} />
                     );
-                  })}
-                </CardGrid>
+                  }}
+                />
                 {discList.length > DISC_PAGE && !discAll ? (
                   <div style={{ marginTop: 18 }}>
                     <PillBtn onClick={() => setDiscAll(true)}>{`Show all ${discList.length}`}</PillBtn>

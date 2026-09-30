@@ -2615,19 +2615,25 @@ export default function InstantSearch({
 const STYLES = `
 .isx-scrim { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.6);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: isxFade 0.16s ease both; }
-.isx-panel { position: fixed; top: 84px; left: 50%; transform: translateX(-50%); z-index: 91;
-  width: min(720px, calc(100vw - 80px)); border-radius: 18px; overflow: hidden;
+/* Centred on the content column (StudioHome sets --isx-shift to half the
+   sidebar), but never pushed past the window's right edge: the clamp keeps
+   a 16px margin on both sides whatever the panel's width. */
+.isx-panel { position: fixed; top: 84px; z-index: 91;
+  --isx-w: min(720px, calc(100vw - 80px));
+  width: var(--isx-w);
+  left: clamp(calc(var(--isx-w) / 2 + 16px), calc(50% + var(--isx-shift, 0px)), calc(100vw - var(--isx-w) / 2 - 16px));
+  transform: translateX(-50%); border-radius: 18px; overflow: hidden;
   border: 1px solid rgba(var(--st-fg-rgb), 0.13); background: rgba(15,15,17,0.975);
   box-shadow: 0 40px 100px rgba(0,0,0,0.75); display: flex; flex-direction: column;
   max-height: calc(100vh - 180px);
   transition: width 0.22s cubic-bezier(0.22,1,0.3,1);
   animation: isxIn 0.18s cubic-bezier(0.22,0.9,0.3,1) both; }
-.isx-panel.is-wide { width: min(880px, calc(100vw - 60px)); }
+.isx-panel.is-wide { --isx-w: min(880px, calc(100vw - 60px)); }
 .isx-mi.is-link { cursor: pointer; border-radius: 3px; }
 .isx-mi.is-link:hover { color: var(--st-text); text-decoration: underline; text-underline-offset: 2px; }
 /* The artist view is a page, so the panel becomes page-sized while it's up:
    near full width, a fixed height the view scrolls inside. */
-.isx-panel.is-artist { width: min(1120px, calc(100vw - 48px)); top: 56px; height: calc(100vh - 112px); max-height: none; }
+.isx-panel.is-artist { --isx-w: min(1120px, calc(100vw - 48px)); top: 56px; height: calc(100vh - 112px); max-height: none; }
 .isx-artistbody { flex: 1; min-height: 0; display: flex; position: relative; }
 @keyframes isxFade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes isxIn { from { opacity: 0; transform: translateX(-50%) translateY(-8px) } to { opacity: 1; transform: translateX(-50%) } }
@@ -2903,7 +2909,7 @@ const STYLES = `
 @keyframes isxSpin { to { transform: rotate(360deg); } }
 
 @media (max-width: 820px) {
-  .isx-panel, .isx-panel.is-wide { width: calc(100vw - 32px); top: 70px; }
+  .isx-panel, .isx-panel.is-wide { --isx-w: calc(100vw - 32px); top: 70px; }
   .isx-trk { grid-template-columns: 24px minmax(0,1fr) 44px 126px; }
   .isx-tq { display: none; }
   .isx-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }

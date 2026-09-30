@@ -2797,6 +2797,8 @@ export default function StudioHome({
       '--st-sub-rgb': theme.sub,
       // Falls back to `text` so themes saved before fg existed still resolve.
       '--st-fg-rgb': theme.fg || theme.text,
+      // InstantSearch centres on the content column, right of the sidebar.
+      '--isx-shift': compactMode ? '0px' : `${SIDEBAR_W / 2}px`,
       '--st-text': `rgb(${theme.text})`,
       /* --st-acc-rgb / --st-acc-ink are NOT set here any more: accentTokens
          writes them on :root and cross-fades them on track change. Setting
@@ -3037,18 +3039,17 @@ export default function StudioHome({
            Pill, not the 11–13px radius used elsewhere: nothing else in the app
            is a text field, and the shape is what says "type here" before you
            read anything. */
-        .sth-searchbar { display: flex; align-items: center; gap: 8px; width: 100%; height: 42px; padding: 0 8px 0 14px; box-sizing: border-box;
-          border-radius: 999px; cursor: text; background: rgba(var(--st-fg-rgb), 0.05); border: 1px solid rgba(var(--st-fg-rgb), 0.08);
+        .sth-searchbar { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px 0 14px; box-sizing: border-box;
+          border-radius: 11px; cursor: text; background: rgba(var(--st-fg-rgb), 0.055); border: 1px solid rgba(var(--st-fg-rgb), 0.07);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
           transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; }
-        .sth-searchbar:hover { background: rgba(var(--st-fg-rgb), 0.075); border-color: rgba(var(--st-fg-rgb), 0.13); }
+        .sth-searchbar:hover { background: rgba(var(--st-fg-rgb), 0.08); border-color: rgba(var(--st-fg-rgb), 0.12); }
         .sth-searchbar:focus-within { background: rgba(var(--st-fg-rgb), 0.08); border-color: rgba(var(--st-acc-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--st-acc-rgb), 0.1); }
-        /* Typed but not yet run — the field itself carries the state, so no
-           separate "Find" button is needed to tell you there's something to do. */
         .sth-searchbar.is-dirty { border-color: rgba(var(--st-acc-rgb), 0.32); }
         .sth-searchbar-icon { flex-shrink: 0; color: rgba(var(--st-fg-rgb), 0.4); transition: color 0.18s ease; }
         .sth-searchbar:focus-within .sth-searchbar-icon { color: rgb(var(--st-acc-rgb)); }
         .sth-searchbar-input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; font-family: inherit;
-          color: var(--st-text); font-size: 14px; font-weight: 500; padding: 0; }
+          color: var(--st-text); font-size: 13.5px; font-weight: 500; padding: 0; cursor: text; }
         .sth-searchbar-input::placeholder { color: rgba(var(--st-sub-rgb), 0.38); font-weight: 500; }
         .sth-searchbar-end { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .sth-searchbar-hint { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 10.5px; font-weight: 650; color: rgba(var(--st-sub-rgb), 0.42); }
@@ -3056,8 +3057,8 @@ export default function StudioHome({
           background: rgba(var(--st-fg-rgb), 0.09); border: 1px solid rgba(var(--st-fg-rgb), 0.1); font-size: 10px; font-weight: 700;
           color: rgba(var(--st-fg-rgb), 0.5); font-family: inherit; line-height: 1; }
         /* The / hint is a whisper — it disappears the moment you engage. */
-        .sth-searchbar-slash { opacity: 0.75; transition: opacity 0.18s ease; }
-        .sth-searchbar:hover .sth-searchbar-slash, .sth-searchbar:focus-within .sth-searchbar-slash { opacity: 0; }
+        .sth-searchbar-slash { opacity: 0.6; transition: opacity 0.18s ease; }
+        .sth-searchbar:hover .sth-searchbar-slash { opacity: 1; }
         /* Bare glyph, no filled square. The old X sat in its own grey tile at
            the field's edge and read as a separate widget parked next to the
            search rather than part of it. */
@@ -4243,8 +4244,15 @@ export default function StudioHome({
            36px icon, "between them" sat a long way right of the window's
            centre. Two minmax(0, 1fr) columns are exactly equal regardless of
            what's in them, so the middle column lands on the true centre. */
-        display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr) auto',
-        alignItems: 'center', gap: 16, padding: '0 16px 0 0',
+        /* The search is centred over the CONTENT column (right of the
+           sidebar), which is where your eye is: the grid is the sidebar's
+           width then the rest, the search sits in the middle of the rest,
+           and the buttons float at the right edge on top of it. With them
+           as a third column (auto), the middle column's centre sat half
+           their width left of the page's, and the search was pinned to its
+           left edge besides. */
+        display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)',
+        alignItems: 'center', gap: 0, padding: 0,
         background: `rgb(${theme.bg})`,
         borderBottom: 'none',
         animation: compactMode ? 'none' : 'stFadeIn 0.6s ease both',
@@ -4276,11 +4284,11 @@ export default function StudioHome({
         {/* Column 2: the search, on the window's centre line. Width is clamped
             so it neither shrinks to a slot nor stretches into a text area on a
             wide monitor. */}
-        <div style={{ width: 'clamp(260px, 30vw, 420px)', WebkitAppRegion: 'no-drag' }}>{topbarSearch}</div>
+        <div style={{ width: 'clamp(260px, 34vw, 480px)', justifySelf: 'center', WebkitAppRegion: 'no-drag' }}>{topbarSearch}</div>
 
         {/* Column 3: mirrors column 1's width, so whatever sits here can't
             pull the search off centre. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, minWidth: 0, WebkitAppRegion: 'no-drag' }}>
+        <div style={{ position: 'absolute', right: 16, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, WebkitAppRegion: 'no-drag' }}>
           <ReloadButton />
           <NotificationsButton />
           <button
@@ -4615,6 +4623,7 @@ export default function StudioHome({
                     onTogglePlay={onTogglePlay}
                     onOpenAlbum={(key) => setLibDetail({ kind: 'album', key })}
                     onJumpToFind={openPalette}
+                    spotifyBridge={mySpotifyBridge}
                     onBack={() => setLibDetail(null)}
                     following={isFollowing(openArtist)}
                     onToggleFollow={() => toggleFollow(openArtist)}
