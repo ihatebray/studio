@@ -677,7 +677,7 @@ const relKind = (r) => (r.group === 'appears_on' ? 'Appears on'
   : r.type === 'compilation' || r.group === 'compilation' ? 'Compilation'
     : r.group === 'single' ? (r.totalTracks > 1 ? 'EP' : 'Single') : 'Album');
 
-function ReleaseInline({ release, notch, accent, bridge, artistName, onClose }) {
+function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, onOpenLibrary = null }) {
   const id = release.albumId;
   const [rows, setRows] = useState(() => releaseTracksCache.get(id) || null);
   const [err, setErr] = useState('');
@@ -714,6 +714,7 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose }) 
   const totalMs = (rows || []).reduce((n, t) => n + (t.durationMs || 0), 0);
   const unsaved = (rows || []).filter((t) => !bridge.saveState(t));
   const year = release.year || String(release.releaseDate || '').slice(0, 4);
+  const haveCount = (rows || []).filter((t) => bridge.saveState(t) === 'saved').length;
   const two = (rows?.length || 0) >= 10;
 
   return (
@@ -727,6 +728,12 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose }) 
             {release.artists || artistName}
             {rows?.length ? ` · ${rows.length} song${rows.length === 1 ? '' : 's'} · ${Math.max(1, Math.round(totalMs / 60000))} min` : ''}
           </div>
+          {haveCount ? (
+            <div className="apx-rel-have">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
+              {haveCount === rows.length ? 'All in your library' : `${haveCount} of ${rows.length} in your library`}
+            </div>
+          ) : null}
           <div className="apx-rel-actions">
             <button type="button" className="apx-btn is-primary" disabled={!rows?.length}
               onClick={() => bridge.playRows(rows, 0, { context })}>
@@ -736,6 +743,12 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose }) 
               onClick={() => bridge.playRows(rows, 0, { shuffle: true, context })}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
             </button>
+            {onOpenLibrary ? (
+              <button type="button" className="apx-btn" onClick={onOpenLibrary} title="Open your copy of this album">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z" /><path d="M8 7h6" /></svg>
+                In library
+              </button>
+            ) : null}
             {unsaved.length > 1 ? (
               <button type="button" className="apx-btn" onClick={() => unsaved.forEach((t) => bridge.saveRow(t))} title="Add every song here to your library">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
@@ -811,6 +824,8 @@ const RELEASE_INLINE_CSS = `
 .apx-rel-title { margin-top: 4px; font-size: 19px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.15; color: var(--st-text);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .apx-rel-meta { margin-top: 5px; font-size: 12px; color: rgba(var(--st-sub-rgb), 0.55); line-height: 1.45; }
+.apx-rel-have { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; width: fit-content; padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; background: rgba(123,224,176,0.12); color: rgb(123,224,176); }
 .apx-rel-actions { display: flex; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
 .apx-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; min-width: 32px; padding: 0 12px; border-radius: 8px;
   border: none; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap;
@@ -1856,15 +1871,22 @@ export default function ArtistPage({
                   items={discShown}
                   keyOf={(r) => r.albumId || r.name}
                   openKey={openRel}
-                  renderOpen={(r, notch) => (
-                    <ReleaseInline key={`open:${r.albumId}`} release={r} notch={notch} accent={pageAccUI}
-                      bridge={spotifyBridge} artistName={name} onClose={closeRel} />
-                  )}
+                  renderOpen={(r, notch) => {
+                    const own = ownedRelease(r);
+                    return (
+                      <ReleaseInline key={`open:${r.albumId}`} release={r} notch={notch} accent={pageAccUI}
+                        bridge={spotifyBridge} artistName={name} onClose={closeRel}
+                        onOpenLibrary={own && (own.tracks?.length || 0) > 1 ? () => onOpenAlbum?.(own.key) : null} />
+                    );
+                  }}
                   renderCard={(r) => {
                     const own = ownedRelease(r);
                     /* Opens in place: in the search panel, its album frame;
                        on the full page, right under this row of cards. */
-                    const inline = !onOpenRelease && !own && !!spotifyBridge && !!r.albumId;
+                    /* Every release with a Spotify id opens here, owned or
+                       not: the tracklist marks what you have (and plays your
+                       copies), and an owned album keeps a way to its page. */
+                    const inline = !onOpenRelease && !!spotifyBridge && !!r.albumId;
                     return (
                       <DiscCard r={r} owned={!!own} accent={pageAcc} opensTracklist={!!onOpenRelease || inline}
                         open={inline && openRel === r.albumId}
@@ -1874,13 +1896,13 @@ export default function ArtistPage({
                              Get the rest. Playing an owned single instead left no way
                              to reach the other tracks. */
                           if (onOpenRelease) { onOpenRelease(r); return; }
-                          if (own) {
+                          if (inline) {
+                            setOpenRel((cur) => (cur === r.albumId ? null : r.albumId));
+                          } else if (own) {
                             /* A one-track record in the library is a loose single,
                                which has no album page — play it instead. */
                             if ((own.tracks?.length || 0) === 1) onPlayTrack?.(own.tracks[0], own.tracks);
                             else onOpenAlbum?.(own.key);
-                          } else if (inline) {
-                            setOpenRel((cur) => (cur === r.albumId ? null : r.albumId));
                           } else {
                             onJumpToFind?.(`${r.group === 'appears_on' ? '' : `${name} `}${r.name}`.trim(), 'spotify');
                           }
