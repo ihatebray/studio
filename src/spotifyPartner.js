@@ -77,6 +77,9 @@ const OPERATIONS = {
   // Your Library, both from the web player, not the Web API.
   home: 'query',
   libraryV3: 'query',
+  // One home shelf by its section uri, for Fresh New Music when the home
+  // feed leaves it out.
+  homeSection: 'query',
 };
 
 /* ------------------------------------------------------------ file store */
@@ -1051,6 +1054,8 @@ function libraryCard(uri, d) {
 const cardOk = (c) => c && c.id && c.name;
 
 /** Spotify's own home feed: `{ recents, shelves: [{ title, items }] }`. */
+const FRESH_TITLE = /fresh new music/i;
+
 export async function homeFeed() {
   const data = await query('home', {
     homeEndUserIntegration: 'INTEGRATION_WEB_PLAYER',
@@ -1062,14 +1067,32 @@ export async function homeFeed() {
   const shelves = [];
   for (const sec of sections) {
     const kind = sec?.data?.__typename;
+    const title = sec?.data?.title?.transformedLabel || '';
     const items = (sec?.sectionItems?.items || []).map((it) => libraryCard(it?.uri, it?.content?.data)).filter(cardOk);
     if (kind === 'HomeShortsSectionData' && !recents.length) recents = items;
-    else if (kind === 'HomeGenericSectionData' && items.length) {
-      shelves.push({ title: sec.data?.title?.transformedLabel || '', items });
+    // Fresh New Music is kept whatever kind of section it arrives as.
+    else if ((kind === 'HomeGenericSectionData' || FRESH_TITLE.test(title)) && items.length) {
+      shelves.push({ title, uri: sec?.uri || sec?.data?.uri || null, items });
     }
   }
   if (!recents.length && !shelves.length) throw new StepError('query', 'the home feed had nothing Studio can show');
   return { recents, shelves };
+}
+
+/** One home shelf by its section uri (spotify:section:…), as a list of
+ *  cards. The response is read loosely: the first list of section items in
+ *  it, wherever Spotify put it. */
+export async function homeSectionItems(uri) {
+  const data = await query('homeSection', {
+    uri, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', sp_t: '', limit: 20, offset: 0,
+  });
+  const find = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 8) return null;
+    if (Array.isArray(node?.sectionItems?.items)) return node.sectionItems.items;
+    for (const v of Object.values(node)) { const hit = find(v, depth + 1); if (hit) return hit; }
+    return null;
+  };
+  return (find(data) || []).map((it) => libraryCard(it?.uri, it?.content?.data)).filter(cardOk);
 }
 
 /** Your Library, most recently played first: playlists, albums, artists

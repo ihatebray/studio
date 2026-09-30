@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
-import { webApi, webApiRateLimit, paged, partnerState, homeFeed, libraryItems } from './spotifyPartner.js';
+import { webApi, webApiRateLimit, paged, partnerState, homeFeed, homeSectionItems, libraryItems } from './spotifyPartner.js';
 import { helperReleases, helperPlaylist, helperLiked, helperArtists } from './spotifyPlayer.js';
 import { listeningSummary } from './listening.js';
 import { listFollows, onFollowsChange } from './follows.js';
@@ -121,8 +121,19 @@ async function buildHome(prev) {
   /* Fresh New Music comes and goes from Spotify's home feed. Home always
      shows it, so keep the last one seen for the visits it's missing from. */
   const freshNow = feed.ok ? feed.v.shelves.find((sh) => FRESH_SHELF.test(sh.title || '') && sh.items?.length) : null;
+  let fresh = freshNow ? { ...freshNow, seenAt: Date.now() } : old.fresh || null;
+  if (!freshNow && feed.ok) {
+    console.info(`[home] no Fresh New Music in Spotify's feed this time (${fresh ? 'using the last one seen' : 'none seen yet'}); its shelves: ${feed.v.shelves.map((sh) => sh.title).join(' | ') || 'none'}`);
+    // Ask for that one shelf by itself, when we know where it lives.
+    if (fresh?.uri) {
+      try {
+        const items = await homeSectionItems(fresh.uri);
+        if (items.length) fresh = { ...fresh, items, seenAt: Date.now() };
+      } catch (e) { console.info('[home] Fresh New Music on its own:', e?.message || e); }
+    }
+  }
   return {
-    fresh: freshNow ? { ...freshNow, seenAt: Date.now() } : old.fresh || null,
+    fresh,
     user: { name: st.displayName || old.user?.name || '', image: old.user?.image || null },
     recents: feed.ok ? feed.v.recents : old.recents || [],
     shelves: feed.ok ? feed.v.shelves : old.shelves || [],
