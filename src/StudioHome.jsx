@@ -2797,8 +2797,6 @@ export default function StudioHome({
       '--st-sub-rgb': theme.sub,
       // Falls back to `text` so themes saved before fg existed still resolve.
       '--st-fg-rgb': theme.fg || theme.text,
-      // InstantSearch centres on the content column, right of the sidebar.
-      '--isx-shift': compactMode ? '0px' : `${SIDEBAR_W / 2}px`,
       '--st-text': `rgb(${theme.text})`,
       /* --st-acc-rgb / --st-acc-ink are NOT set here any more: accentTokens
          writes them on :root and cross-fades them on track change. Setting
@@ -4244,15 +4242,15 @@ export default function StudioHome({
            36px icon, "between them" sat a long way right of the window's
            centre. Two minmax(0, 1fr) columns are exactly equal regardless of
            what's in them, so the middle column lands on the true centre. */
-        /* The search is centred over the CONTENT column (right of the
-           sidebar), which is where your eye is: the grid is the sidebar's
-           width then the rest, the search sits in the middle of the rest,
-           and the buttons float at the right edge on top of it. With them
-           as a third column (auto), the middle column's centre sat half
-           their width left of the page's, and the search was pinned to its
-           left edge besides. */
-        display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)',
-        alignItems: 'center', gap: 0, padding: 0,
+        /* The search sits on the WINDOW's centre line. Two equal outer
+           columns (minmax(0, 1fr) each, whatever they hold: the wordmark on
+           the left, the buttons on the right) put the middle column exactly
+           in the middle. With `auto` outer columns the middle one was
+           pulled toward the narrower side. */
+        display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+        // No side padding: it would be uneven (the wordmark brings its own),
+        // and uneven padding moves the centre. The buttons pad themselves.
+        alignItems: 'center', gap: 16, padding: 0,
         background: `rgb(${theme.bg})`,
         borderBottom: 'none',
         animation: compactMode ? 'none' : 'stFadeIn 0.6s ease both',
@@ -4284,11 +4282,11 @@ export default function StudioHome({
         {/* Column 2: the search, on the window's centre line. Width is clamped
             so it neither shrinks to a slot nor stretches into a text area on a
             wide monitor. */}
-        <div style={{ width: 'clamp(260px, 34vw, 480px)', justifySelf: 'center', WebkitAppRegion: 'no-drag' }}>{topbarSearch}</div>
+        <div style={{ width: 'clamp(260px, 34vw, 480px)', WebkitAppRegion: 'no-drag' }}>{topbarSearch}</div>
 
         {/* Column 3: mirrors column 1's width, so whatever sits here can't
             pull the search off centre. */}
-        <div style={{ position: 'absolute', right: 16, top: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, WebkitAppRegion: 'no-drag' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, minWidth: 0, paddingRight: 16, WebkitAppRegion: 'no-drag' }}>
           <ReloadButton />
           <NotificationsButton />
           <button

@@ -2615,9 +2615,9 @@ export default function InstantSearch({
 const STYLES = `
 .isx-scrim { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.6);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: isxFade 0.16s ease both; }
-/* Centred on the content column (StudioHome sets --isx-shift to half the
-   sidebar), but never pushed past the window's right edge: the clamp keeps
-   a 16px margin on both sides whatever the panel's width. */
+/* Centred on the window, under the top bar's search. --isx-shift can move
+   it off that line; the clamp keeps a 16px margin on both sides whatever the
+   panel's width. */
 .isx-panel { position: fixed; top: 84px; z-index: 91;
   --isx-w: min(720px, calc(100vw - 80px));
   width: var(--isx-w);
