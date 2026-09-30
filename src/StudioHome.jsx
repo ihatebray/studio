@@ -10457,8 +10457,13 @@ function CoverLightbox({ url, track, accent, albumKey, onPin, onClose }) {
  * they're the two people reach for mid-song; info is one tab away once either
  * is open.
  */
-function NowPlayingBar({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, animatedBg = false, solidWash = null, currentTime = 0, onSeek, onExpand, onToggleImmerse, immerseOn = false, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
-  if (!track) return null;
+/* The early return lives out here: the bar's body calls hooks, and a return
+   above them changes how many run the moment playback stops (React throws). */
+function NowPlayingBar(props) {
+  return props.track ? <NowPlayingBarBody {...props} /> : null;
+}
+
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, animatedBg = false, solidWash = null, currentTime = 0, onSeek, onExpand, onToggleImmerse, immerseOn = false, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
   const acc = readableAccent(accent);
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything

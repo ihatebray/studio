@@ -5227,25 +5227,35 @@ ipcMain.handle('charts:fetch', async () => {
   }
 });
 
+// The iTunes Search API's base; the lookups below were written against a
+// constant that was never declared.
+const ITUNES_API = 'https://itunes.apple.com';
+
 ipcMain.handle('charts:lookupSong', async (_e, id) => {
   try {
     if (!id) return { ok: false, error: 'no id' };
     
-    // Charts IDs are iTunes track IDs, so this is a direct lookup.
-    const track = await itunesGetTrackById(id);
-    if (!track) return { ok: false, error: 'not found' };
+    // Charts IDs are iTunes track IDs, so this is a direct lookup. (It used
+    // to call an itunesGetTrackById that never existed, so it always failed.)
+    const res = await net.fetch(`${ITUNES_API}/lookup?${new URLSearchParams({ id: String(id), entity: 'song' })}`, {
+      headers: { 'User-Agent': 'Immerse/1.0' },
+    });
+    if (!res.ok) throw new Error(`iTunes lookup ${res.status}`);
+    const json = await res.json();
+    const t = (Array.isArray(json?.results) ? json.results : []).find((r) => r?.wrapperType === 'track' || r?.kind === 'song');
+    if (!t) return { ok: false, error: 'not found' };
 
     return {
       ok: true,
       track: {
-        trackId: track.itunesId || id,
-        trackName: track.title || '',
-        artistName: track.artists || '',
-        collectionName: track.album || '',
-        artworkUrl: track.albumArtUrl || '',
-        trackTimeMillis: track.durationMs || 0,
-        trackNumber: track.trackNumber ?? null,
-        explicit: !!track.explicit,
+        trackId: t.trackId || id,
+        trackName: t.trackName || '',
+        artistName: t.artistName || '',
+        collectionName: t.collectionName || '',
+        artworkUrl: String(t.artworkUrl100 || '').replace(/\/\d+x\d+bb\./, '/600x600bb.'),
+        trackTimeMillis: t.trackTimeMillis || 0,
+        trackNumber: t.trackNumber ?? null,
+        explicit: t.trackExplicitness === 'explicit',
       },
     };
   } catch (e) {

@@ -782,14 +782,18 @@ function SyncedLyrics({
  * extend the range. Blank lines (verse separators) are skipped — selecting
  * them would just be empty space in the share card.
  */
-function PlainLyrics({
+function PlainLyrics(props) {
+  // Early return outside the component that calls hooks (see below).
+  return props.text ? <PlainLyricsBody {...props} /> : null;
+}
+
+function PlainLyricsBody({
   text, fontSize = 13, lineHeight = 1.55,
   accent = '128, 128, 128',
   selection = null,
   onSelectLine,
   onSelectStart,
 }) {
-  if (!text) return null;
   const lines = text.split('\n');
   const selecting = !!selection;
 

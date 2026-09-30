@@ -281,6 +281,28 @@ function itunesGate(run, priority = 'core') {
   });
 }
 
+/* Requests to hosts other than the iTunes API (Apple Music artist pages,
+   Deezer) for artist photos. Their own small queue: two at a time, so a
+   page of artists can't fire a burst at either. These were called through
+   `otherGate` without it ever being defined, so every such lookup threw
+   and came back empty. */
+const OTHER_MAX_CONCURRENT = 2;
+let otherActive = 0;
+const otherQueue = [];
+function otherPump() {
+  while (otherQueue.length && otherActive < OTHER_MAX_CONCURRENT) {
+    const job = otherQueue.shift();
+    otherActive += 1;
+    job().finally(() => { otherActive -= 1; otherPump(); });
+  }
+}
+function otherGate(run) {
+  return new Promise((resolve, reject) => {
+    otherQueue.push(() => Promise.resolve().then(run).then(resolve, reject));
+    otherPump();
+  });
+}
+
 /** Snapshot/restore so a restart doesn't re-earn requests we already spent. */
 export function itunesResponseCacheSnapshot() {
   const out = {};
