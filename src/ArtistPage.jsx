@@ -925,7 +925,12 @@ export default function ArtistPage({
 
 
   const name = artist?.name || 'Unknown artist';
-  const key = artist?.key || '';
+  /* The page's identity: the artist's name, lowercased. NOT artist.key,
+     which is `sp:<id>` for someone not in your library and their name once
+     they are, so saving one of their songs changed it mid-visit: the page
+     reloaded everything (the "random refresh" on Save), and a header saved
+     under one key was looked for under the other and never found. */
+  const key = String(artist?.name || '').trim().toLowerCase() || artist?.key || '';
 
   /* ---- Spotify account data --------------------------------------------
    * Only when the full Spotify account is connected (Settings → Connections).
@@ -942,7 +947,7 @@ export default function ArtistPage({
   // The release open in place on the full page (its albumId).
   const [openRel, setOpenRel] = useState(null);
   const closeRel = useCallback(() => setOpenRel(null), []);
-  useEffect(() => { setOpenRel(null); }, [artist?.key]);
+  useEffect(() => { setOpenRel(null); }, [key]);
   const spData = sp.status === 'done' ? sp.data : null;
   useEffect(() => {
     const a = api();
@@ -971,7 +976,13 @@ export default function ArtistPage({
     const a = api();
     if (!a?.loadArtistHeaders) { setOverride(null); return undefined; }
     a.loadArtistHeaders()
-      .then((res) => { if (!dead) setOverride(res?.headers?.[key] || null); })
+      .then((res) => {
+        if (dead) return;
+        const h = res?.headers || {};
+        // Headers saved before the key was the name live under the old one.
+        const legacy = [artist?.key, artist?.spotifyId ? `sp:${artist.spotifyId}` : null, `sp:${key}`].filter(Boolean);
+        setOverride(h[key] || legacy.map((k) => h[k]).find(Boolean) || null);
+      })
       .catch(() => { if (!dead) setOverride(null); });
     return () => { dead = true; };
   }, [key]);
@@ -1018,6 +1029,17 @@ export default function ArtistPage({
       }
     } catch { /* the in-memory value stands for this session */ }
   }, [key]);
+
+  /* Save whatever framing is pending. The slider used to save only on a
+     mouseup over the slider itself, so letting go anywhere else (or pressing
+     Done straight after) dropped the change. */
+  const draftRef = useRef(null);
+  const commitDraft = useCallback(() => {
+    const d = draftRef.current;
+    draftRef.current = null;
+    setDraft(null);
+    if (d) saveHeader(d);
+  }, [saveHeader]);
 
   const resetHeader = useCallback(async () => {
     setOverride(null);
@@ -1075,7 +1097,6 @@ export default function ArtistPage({
    * and horizontal slack appears, so both axes come alive. Inverted, because
    * you're dragging the picture, not a window onto it.
    */
-  const draftRef = useRef(null);
   const onDragStart = useCallback((e) => {
     if (!editing) return;
     e.preventDefault();
@@ -1644,8 +1665,9 @@ export default function ArtistPage({
                     /* Commit from the ref, not from `frame` — `frame` is the
                        value this render closed over, which is one step behind
                        the slider by the time the mouse comes up. */
-                    onMouseUp={() => { const d = draftRef.current; draftRef.current = null; setDraft(null); if (d) saveHeader(d); }}
-                    onKeyUp={() => { const d = draftRef.current; draftRef.current = null; setDraft(null); if (d) saveHeader(d); }}
+                    onPointerUp={commitDraft}
+                    onKeyUp={commitDraft}
+                    onBlur={commitDraft}
                   />
                 </label>
                 {override ? (
@@ -1653,7 +1675,7 @@ export default function ArtistPage({
                     Reset
                   </button>
                 ) : null}
-                <button type="button" className="sth-artist-editbtn is-on" onClick={() => { setEditing(false); setDraft(null); }}>
+                <button type="button" className="sth-artist-editbtn is-on" onClick={() => { commitDraft(); setEditing(false); }}>
                   Done
                 </button>
               </>

@@ -18,7 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 import { webApi, webApiRateLimit, paged, partnerState, homeFeed, homeSectionItems, libraryItems } from './spotifyPartner.js';
-import { helperReleases, helperPlaylist, helperLiked, helperArtists } from './spotifyPlayer.js';
+import { helperReleases, helperPlaylist, helperLiked } from './spotifyPlayer.js';
 import { listeningSummary } from './listening.js';
 import { listFollows, onFollowsChange } from './follows.js';
 
@@ -342,23 +342,15 @@ function peek(key) {
 
 /* ------------------------------------------------ your Studio listening */
 
-/* Liked Songs (for the daily mix) and artist portraits change slowly; keep
-   them a while so the Studio sections cost nothing to redraw. */
+/* Liked Songs (for the mixes) change slowly; keep them a while so the
+   Studio sections cost nothing to redraw. */
 let likedCache = { at: 0, rows: [] };
-const portraitCache = new Map(); // artist id → image | null
 
 async function studioHome() {
   if (Date.now() - likedCache.at > 6 * 60 * 60 * 1000) {
     try { likedCache = { at: Date.now(), rows: await helperLiked() }; } catch { likedCache.at = Date.now() - 5 * 60 * 60 * 1000; }
   }
   const s = listeningSummary({ liked: likedCache.rows });
-  const want = s.topArtists.map((a) => a.id).filter((id) => id && !portraitCache.has(id));
-  if (want.length) {
-    try {
-      for (const a of await helperArtists(want)) portraitCache.set(a.id, a.image || null);
-    } catch { /* portraits are a nicety; album art stands in */ }
-  }
-  s.topArtists = s.topArtists.map((a) => ({ ...a, image: (a.id && portraitCache.get(a.id)) || null }));
   return s;
 }
 

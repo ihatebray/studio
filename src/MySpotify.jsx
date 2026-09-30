@@ -615,12 +615,12 @@ function usePanel() {
 
 /* Spotify's home shelves Home leaves out: the editorial and mood ones you
    asked to drop (Today's Biggest Hits, Focus, Kick back and relax, bedroom
-   rave), its new-releases shelf (New Releases does that, for artists you
+   rave, your favorite artists), its new-releases shelf (New Releases does that, for artists you
    pick), albums featuring songs you like, and its Jump back in / Recently
    played, which go into Home's own Jump Back In. Everything else stays,
    with Fresh New Music always first. */
 const FRESH_SHELF = /fresh new music/i;
-const DROPPED_SHELVES = /today.?s biggest hits|^focus$|kick back and relax|bedroom rave/i;
+const DROPPED_SHELVES = /today.?s biggest hits|^focus$|kick back and relax|bedroom rave|your favou?rite artists/i;
 const NEVER_SHELVES = /new release|albums? featuring songs you like|jump back in|recently played/i;
 const RECENT_SHELVES = /jump back in|recently played/i;
 
@@ -629,7 +629,7 @@ const isDj = (it) => it?.id === '37i9dQZF1EYkqdzj48dyYq' || /^dj( x)?$/i.test(St
 
 /* Studio's own history takes over a list once it has this much in it;
    before that, Spotify's (from listening elsewhere) fills in. */
-const STUDIO_ENOUGH = { onRepeat: 4, allTime: 8, artists: 3 };
+const STUDIO_ENOUGH = { onRepeat: 4, allTime: 8 };
 
 function HomeSkeleton() {
   return (
@@ -737,7 +737,6 @@ export function SpotifyHome({ bridge }) {
 
     const studioRepeat = (m.onRepeat || []).length >= STUDIO_ENOUGH.onRepeat;
     const studioAll = (m.allTime || []).length >= STUDIO_ENOUGH.allTime;
-    const studioArtists = (m.topArtists || []).length >= STUDIO_ENOUGH.artists;
     return {
       user: { name: e.user?.name || c.user?.name || '', image: e.user?.image || null },
       pulse: m.pulse || null,
@@ -754,12 +753,6 @@ export function SpotifyHome({ bridge }) {
       onRepeat: studioRepeat || !e.onRepeat?.length ? (m.onRepeat || []) : e.onRepeat,
       onRepeatFrom: studioRepeat || !e.onRepeat?.length ? 'studio' : 'spotify',
       allTime: studioAll || !e.allTime?.length ? (m.allTime || []) : e.allTime,
-      topArtists: studioArtists
-        ? m.topArtists.map((a) => ({ id: a.id, name: a.name, image: a.image || a.art, sub: `${a.plays} play${a.plays === 1 ? '' : 's'} this month` }))
-        : e.topArtists?.length
-          ? e.topArtists.map((a) => ({ ...a, sub: a.genres?.[0] || 'Artist' }))
-          : (c.artists || []).map((a) => ({ id: a.id, name: a.name, image: a.image, sub: 'Artist' })),
-      artistsTitle: studioArtists || e.topArtists?.length ? 'Your Artists Right Now' : 'Artists You Follow',
       shelves,
       playlists: noDj(c.playlists),
       liked: c.liked || null,
@@ -882,25 +875,6 @@ export function SpotifyHome({ bridge }) {
                   </div>
                 </section>
               ))}
-
-              {/* ---- Artists ---- */}
-              {data.topArtists.length ? (
-                <section className="msp-sec">
-                  <SectionHead title={data.artistsTitle} />
-                  <div className="msp-grid is-small is-clip">
-                    {data.topArtists.map((a) => (
-                      <button key={a.id || a.name} type="button" className="msp-tile is-artist"
-                        onClick={() => bridge.onOpenArtist?.({ name: a.name, spotifyId: a.id, image: a.image })}>
-                        <Art src={a.image} round />
-                        <span style={{ minWidth: 0, width: '100%' }}>
-                          <span className="nm" style={{ display: 'block' }}>{a.name}</span>
-                          <span className="sb" style={{ display: 'block' }}>{a.sub}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
 
               {/* ---- Playlists ---- */}
               {data.playlists.length ? (

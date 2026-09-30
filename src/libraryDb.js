@@ -969,7 +969,10 @@ export async function setArtistHeader(artistKey, { image = null, focusX = 50, fo
          focus_y = excluded.focus_y,
          zoom = excluded.zoom,
          updated_at = excluded.updated_at;`,
-      [artistKey, image || null, Number(focusX) || 50, Number(focusY) || 50, Number(zoom) || 1],
+      // Number.isFinite, not `|| 50`: a picture framed right to its top or
+      // left edge is at 0, which `||` turned back into the centre.
+      [artistKey, image || null, Number.isFinite(Number(focusX)) ? Number(focusX) : 50,
+        Number.isFinite(Number(focusY)) ? Number(focusY) : 50, Number(zoom) > 0 ? Number(zoom) : 1],
     );
     persistAtomic();
     return { ok: true };

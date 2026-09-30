@@ -2273,7 +2273,11 @@ export default function StudioHome({
      carries your tracks and records alongside. */
   const openArtist = useMemo(() => {
     if (libDetail?.kind !== 'artist') return null;
-    const hit = libArtists.find((a) => a.key === libDetail.key);
+    /* By key, or by name for a page opened before they were in the library
+       (key `sp:<id>`): saving one of their songs then fills the page in
+       place instead of leaving it an empty shell. */
+    const byName = libDetail.name ? String(libDetail.name).trim().toLowerCase() : null;
+    const hit = libArtists.find((a) => a.key === libDetail.key) || (byName ? libArtists.find((a) => a.key === byName) : null);
     if (hit) return libDetail.spotifyId ? { ...hit, spotifyId: libDetail.spotifyId } : hit;
     if (!libDetail.name) return null;
     return {
@@ -6985,7 +6989,10 @@ export default function StudioHome({
           const art = artistRefFor(ref);
           return (
             <ArtistPage
-              key={art.key}
+              /* By name, not art.key: that flips from `sp:<id>` to the name
+                 when you save one of their songs, which remounted the whole
+                 view mid-visit. */
+              key={String(art.name || '').trim().toLowerCase() || art.key}
               embedded
               artist={art}
               accent={accent}
