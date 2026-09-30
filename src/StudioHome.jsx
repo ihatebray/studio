@@ -5462,25 +5462,27 @@ export default function StudioHome({
 
                   {cat === 'connections' ? (
                     <div style={{ display: 'grid', gap: 16 }}>
+                      {/* The account does the work (playback, My Spotify, artist
+                          pages, search); the developer keys are a backup. */}
+                      <SpotifyAccountPanel />
                       <section className="sth-conn">
                         <div className="sth-conn-head">
                           <div>
-                            <h2>Spotify</h2>
-                            <p>Used to search the catalogue, enrich metadata and copy track links. A free account is enough.</p>
+                            <h2>Spotify developer keys <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· optional</span></h2>
+                            <p>A backup for search and song details when your Spotify sign-in is busy or rate-limited. Any free developer app works.</p>
                           </div>
                           {connState.spotify != null ? (
-                            <span className={`st-status ${connState.spotify ? 'ok' : 'off'}`}>{connState.spotify ? 'Connected' : 'Not connected'}</span>
+                            <span className={`st-status ${connState.spotify ? 'ok' : 'off'}`}>{connState.spotify ? 'Saved' : 'Not set'}</span>
                           ) : null}
                         </div>
                         <SpotifyCredsPanel compact onSaved={onSpotifyCredsSaved}
                           onStatus={(v) => setConnState((c2) => ({ ...c2, spotify: v }))} />
                       </section>
-                      <SpotifyAccountPanel />
                       <section className="sth-conn">
                         <div className="sth-conn-head">
                           <div>
                             <h2>Soulseek</h2>
-                            <p>Used for library discovery and downloads.</p>
+                            <p>Optional. A second download source, usually higher quality. Pick any username; the account is made on first login.</p>
                           </div>
                           {connState.soulseek != null ? (
                             <span className={`st-status ${connState.soulseek ? 'ok' : 'off'}`}>{connState.soulseek ? 'Connected' : 'Not connected'}</span>
@@ -9603,9 +9605,10 @@ function SpotifyAccountPanel() {
         <div>
           <h2>Spotify account</h2>
           <p>
-            Sign in to see play counts, monthly listeners, bios and related artists on artist pages.
-            Read-only, and nothing is played or downloaded through Spotify. This uses Spotify&apos;s
-            private web player interface, which is unofficial and can change without notice.
+            Plays Spotify songs right in Studio (Premium), and powers My Spotify, search and artist
+            pages (play counts, listeners, bios, discography) on any account. Save also hearts a song
+            on Spotify. This uses Spotify&apos;s private web player interface, which is unofficial and
+            can change without notice.
           </p>
         </div>
         {st ? (

@@ -317,7 +317,7 @@ export const TOKENS_CSS = `
 .st-progress > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--accent-line); transition: width 240ms ease; }
 
 /* ---- Inputs --------------------------------------------------------------- */
-.st-input { width: 100%; height: 40px; padding: 0 14px; border-radius: var(--r-ctl-m); background: rgba(255,255,255,0.02);
+.st-input { box-sizing: border-box; width: 100%; height: 40px; padding: 0 14px; border-radius: var(--r-ctl-m); background: rgba(255,255,255,0.02);
   border: 1px solid var(--border-control); color: var(--text); font: inherit; font-size: 13.5px; outline: none; transition: border-color 140ms ease, background 140ms ease; }
 .st-input:focus { border-color: rgba(var(--accent-rgb), 0.6); background: rgba(255,255,255,0.03); }
 .st-input::placeholder { color: var(--text-faint); }
