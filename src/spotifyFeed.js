@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
-import { webApiRateLimit, paged, partnerState, homeFeed, homeSectionItems, libraryItems } from './spotifyPartner.js';
+import { webApiRateLimit, paged, partnerState, homeFeed, homeSectionItems, libraryItems, browseShelves, MADE_FOR_YOU_PAGE } from './spotifyPartner.js';
 import { helperReleases, helperPlaylist, helperLiked } from './spotifyPlayer.js';
 import { listeningSummary } from './listening.js';
 import { listFollows, onFollowsChange } from './follows.js';
@@ -93,8 +93,12 @@ const FRESH_SHELF = /fresh new music/i;
 
 async function buildHome(prev) {
   const st = requireSignIn();
-  const [feed, lib] = await Promise.all([settle(homeFeed()), settle(libraryItems())]);
-  if (!feed.ok && !lib.ok) throw refusedBy([feed, lib]) || feed.e;
+  /* Spotify's home feed plus its Made For You page, as Sonora builds its
+     home: the feed is what Spotify picks for today, Made For You is your
+     Daily Mixes, Discover Weekly, Release Radar and the like, which the
+     feed only sometimes carries. */
+  const [feed, lib, made] = await Promise.all([settle(homeFeed()), settle(libraryItems()), settle(browseShelves(MADE_FOR_YOU_PAGE))]);
+  if (!feed.ok && !lib.ok && !made.ok) throw refusedBy([feed, lib, made]) || feed.e;
   const old = prev || {};
   const items = lib.ok ? lib.v.items : null;
   const of = (kind) => (items ? items.filter((i) => i.kind === kind) : null);
@@ -118,12 +122,15 @@ async function buildHome(prev) {
     user: { name: st.displayName || old.user?.name || '', image: old.user?.image || null },
     recents: feed.ok ? feed.v.recents : old.recents || [],
     shelves: feed.ok ? feed.v.shelves : old.shelves || [],
+    // Made For You's shelves, added after the feed's by the page (titles and
+    // items already on the page are skipped there).
+    madeForYou: made.ok ? made.v : old.madeForYou || [],
     playlists: of('playlist') || old.playlists || [],
     albums: of('album') || old.albums || [],
     artists: of('artist') || old.artists || [],
     liked: liked || old.liked || null,
     fetchedAt: Date.now(),
-    limitedUntil: refusedBy([feed, lib])?.retryAt || null,
+    limitedUntil: refusedBy([feed, lib, made])?.retryAt || null,
   };
 }
 
@@ -162,7 +169,10 @@ async function buildReleases(prev) {
 /* ---------------------------------------------------------------- cached */
 
 const inflight = new Map();
-async function cached(key, ttl, build, force, usesWebApi = false) {
+/* A local calendar day, for feeds that change daily (Daily Mixes). */
+const dayOf = (t) => new Date(t).toDateString();
+
+async function cached(key, ttl, build, force, usesWebApi = false, daily = false) {
   const c = loadCache();
   const hit = c[key];
   const account = partnerState().userId || partnerState().displayName || '';
@@ -170,7 +180,8 @@ async function cached(key, ttl, build, force, usesWebApi = false) {
   /* A copy made while rate-limited is good only until the wait is over, so
      the next visit after that fills in what was missing. */
   const until = prev?.limitedUntil ? Math.min(hit.at + ttl, prev.limitedUntil) : hit?.at + ttl;
-  const fresh = prev && Date.now() < until;
+  // A daily feed is also stale once the day has changed (new Daily Mixes).
+  const fresh = prev && Date.now() < until && (!daily || dayOf(hit.at) === dayOf(Date.now()));
   if (fresh && !force) return { ...prev, stale: false };
   // Still waiting out a rate limit: last copy, without asking Spotify.
   const limited = usesWebApi && webApiRateLimit();
@@ -237,7 +248,7 @@ onFollowsChange(() => {
 
 export function registerSpotifyFeedIpc(ipcMain) {
   ipcMain.handle('spotifyFeed:peek', (_e, key) => (['home', 'releases'].includes(key) ? peek(key) : null));
-  ipcMain.handle('spotifyFeed:home', wrap((force) => cached('home', HOME_TTL_MS, buildHome, !!force)));
+  ipcMain.handle('spotifyFeed:home', wrap((force) => cached('home', HOME_TTL_MS, buildHome, !!force, false, true)));
   ipcMain.handle('spotifyFeed:studio', wrap(() => studioHome()));
   ipcMain.handle('spotifyFeed:releases', wrap((force) => cached('releases', RELEASES_TTL_MS, buildReleases, !!force)));
   ipcMain.handle('spotifyFeed:playlist', wrap((id) => playlistTracks(String(id || ''))));

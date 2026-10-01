@@ -73,8 +73,10 @@ async function describe(id, meta, hints = null) {
   const sources = [
     // The helper's session first: no Web API quota behind it.
     ['helper', async () => (await helperTracks([id]))?.[0] || null],
-    ['web api', () => trackById(id)],
+    // The web player's query (through the helper's session) before the Web
+    // API, whose quota is shared with every Spotify desktop app.
     ['web player', () => trackByIdPathfinder(id)],
+    ['web api', () => trackById(id)],
     ['client id', () => (spotifyCredentialsConfigured() ? spotifyGetTrack(id) : null)],
     ['itunes', async () => {
       take(hints);

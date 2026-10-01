@@ -19,6 +19,9 @@ librespot-protocol = "0.8.0"
 protobuf = "3"
 # The collection service requests (src/library.rs).
 http = "1"
+# Pathfinder requests (src/pathfinder.rs) through the session's HTTP client.
+bytes = "1"
+http-body-util = "0.1"
 
 # The same librespot Sonora ships: upstream 0.8 plus a CDN fallback and a
 # fix for audio keys Spotify refuses. Pinned so a rebuild is reproducible.

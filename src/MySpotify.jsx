@@ -628,6 +628,10 @@ function usePanel() {
 const FRESH_SHELF = /fresh new music/i;
 const DROPPED_SHELVES = /today.?s biggest hits|^focus$|kick back and relax|bedroom rave|your favou?rite artists/i;
 const NEVER_SHELVES = /new release|albums? featuring songs you like|jump back in|recently played/i;
+/* No podcasts or audiobooks: Studio plays music. (Episodes and shows are
+   never turned into tiles, so a podcast shelf is usually empty anyway; this
+   catches shelves of podcast playlists too.) */
+const PODCAST_SHELVES = /podcast|episode|audiobook|\bshows?\b/i;
 const RECENT_SHELVES = /jump back in|recently played/i;
 
 /* Spotify's DJ: an app-only feature that nothing outside Spotify can play. */
@@ -727,7 +731,26 @@ export function SpotifyHome({ bridge }) {
 
     // Spotify titles its personal shelf after your account ("Made For lil bray").
     const retitle = (t) => (/^made for\b/i.test(String(t || '').trim()) ? 'Made for You' : t);
-    const allShelves = (c.shelves || []).map((sh) => ({ ...sh, title: retitle(sh.title), items: noDj(sh.items) })).filter((sh) => sh.items.length);
+    const feedShelves = (c.shelves || []).map((sh) => ({ ...sh, title: retitle(sh.title), items: noDj(sh.items) })).filter((sh) => sh.items.length);
+    /* Made For You goes after the feed, as Sonora adds it. Anything already
+       on the page is skipped, so a Daily Mix shows once; a shelf the feed
+       already has by that title (Made for You itself, often) gets the rest
+       added to it rather than being dropped, so no mix goes missing. */
+    const byTitle = new Map(feedShelves.map((sh) => [sh.title, sh]));
+    const onPage = new Set(feedShelves.flatMap((sh) => sh.items.map((it) => `${it.kind}:${it.id}`)));
+    const madeShelves = [];
+    for (const sh of c.madeForYou || []) {
+      const title = retitle(sh.title);
+      if (!title) continue;
+      const items = noDj(sh.items).filter((it) => { const k = `${it.kind}:${it.id}`; if (onPage.has(k)) return false; onPage.add(k); return true; });
+      if (!items.length) continue;
+      const same = byTitle.get(title);
+      if (same) { same.items = [...same.items, ...items]; continue; }
+      const shelf = { ...sh, title, items, made: true };
+      byTitle.set(title, shelf);
+      madeShelves.push(shelf);
+    }
+    const allShelves = [...feedShelves, ...madeShelves].filter((sh) => !PODCAST_SHELVES.test(sh.title || ''));
     // Fresh New Music first, always: this visit's, or the last one seen.
     const fresh = allShelves.find((sh) => FRESH_SHELF.test(sh.title || '')) || (c.fresh?.items?.length ? { ...c.fresh, items: noDj(c.fresh.items) } : null);
     const shelves = [

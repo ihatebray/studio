@@ -77,6 +77,9 @@ const OPERATIONS = {
   // Your Library, both from the web player, not the Web API.
   home: 'query',
   libraryV3: 'query',
+  // Browse pages, for Made For You (Daily Mixes, Discover Weekly, Release
+  // Radar), which Sonora adds to its home the same way.
+  browsePage: 'query',
   // One home shelf by its section uri, for Fresh New Music when the home
   // feed leaves it out.
   homeSection: 'query',
@@ -546,7 +549,29 @@ async function registry(force = false) {
   }
 }
 
+/* Hashes the web player bundle didn't give up (some queries live in chunks
+   the scan doesn't reach): the shared registry Sonora reads its hashes from.
+   Only hashes, public data, and only for queries the scan couldn't find. */
+const HASH_WORKER = 'https://billowing-resonance-da83.johnwatson.workers.dev/hashes';
+let workerHashes = { at: 0, operations: {} };
+async function workerHash(op, stale = null) {
+  if (stale || Date.now() - workerHashes.at > HASH_MAX_AGE_MS) {
+    try {
+      const url = stale ? `${HASH_WORKER}?stale=${encodeURIComponent(stale)}` : HASH_WORKER;
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const body = res.ok ? await res.json() : null;
+      if (body?.operations && typeof body.operations === 'object') workerHashes = { at: Date.now(), operations: body.operations };
+      else workerHashes.at = Date.now() - HASH_MAX_AGE_MS + 60 * 60 * 1000; // try again in an hour
+    } catch {
+      workerHashes.at = Date.now() - HASH_MAX_AGE_MS + 60 * 60 * 1000;
+    }
+  }
+  const h = workerHashes.operations?.[op];
+  return sane(h) ? h : null;
+}
+
 const rescannedFor = new Map();
+const lastWorkerHash = new Map();
 async function hashFor(op, force = false) {
   const over = readJson(overrideFile());
   if (sane(over?.[op])) return { hash: over[op], version: (await registry().catch(() => null))?.clientVersion || FALLBACK_CLIENT_VERSION, fixed: true };
@@ -558,7 +583,11 @@ async function hashFor(op, force = false) {
     reg = await registry(true);
   }
   const hash = reg.operations?.[op];
-  if (!sane(hash)) throw new StepError('hash', `no hash found for ${op} in the web player`);
+  if (!sane(hash)) {
+    const w = await workerHash(op, force ? (lastWorkerHash.get(op) || null) : null);
+    if (w) { lastWorkerHash.set(op, w); return { hash: w, version: reg.clientVersion || FALLBACK_CLIENT_VERSION, fixed: false }; }
+    throw new StepError('hash', `no hash found for ${op} in the web player`);
+  }
   return { hash, version: reg.clientVersion || FALLBACK_CLIENT_VERSION, fixed: false };
 }
 
@@ -567,8 +596,47 @@ async function hashFor(op, force = false) {
 /* After a 429, Pathfinder isn't asked again until Spotify's wait is over. */
 let pathfinderBlockedUntil = 0;
 
+/* Where Pathfinder queries go first. main.js points this at the playback
+   helper, which sends them the way Sonora does: librespot's own login5 token
+   and client token, through the session's HTTP client and its rate limiter.
+   To Spotify that's a Spotify client asking, not a browser token dressed up
+   as the web player, which is what this module sends below and what Spotify
+   limited so readily. The Node route below is only for when the helper
+   can't be used at all (not built, or not signed in for playback). */
+let pathfinderSource = null;
+export function setPathfinderSource(fn) { pathfinderSource = typeof fn === 'function' ? fn : null; }
+const helperUnavailable = (msg) => /isn’t built|isn't built|isn’t signed in|isn't signed in|not signed in|didn’t answer in time|playback isn’t available/i.test(msg);
+
+function pathfinderLimited(wait) {
+  pathfinderBlockedUntil = Date.now() + wait * 1000;
+  notice({
+    key: 'spotify-pathfinder-limit', kind: 'warning', source: 'Spotify',
+    title: 'Spotify asked Studio to slow down',
+    detail: `Home, artist pages and search details pause for ${waitWords(wait)}. What's already loaded stays on screen, and Studio carries on after the wait.`,
+    repeatAfterMs: 60 * 60 * 1000,
+  });
+  return rateLimited(wait);
+}
+
 async function send(op, variables, hash, version) {
   if (pathfinderBlockedUntil > Date.now()) throw rateLimited((pathfinderBlockedUntil - Date.now()) / 1000);
+  if (pathfinderSource) {
+    try {
+      return await pathfinderSource(op, hash, variables);
+    } catch (e) {
+      const msg = String(e?.message || e);
+      const limit = msg.match(/^ratelimit:(\d+)/);
+      if (limit) throw pathfinderLimited(Math.max(1, Number(limit[1]) || 60));
+      if (msg.startsWith('signin:')) throw new StepError('signin', msg.slice(7).trim());
+      if (msg.startsWith('graphql:')) {
+        const err = new StepError('query', `${op}: ${msg.slice(8).trim()}`);
+        err.stale = /persisted|hash|not found/i.test(msg);
+        throw err;
+      }
+      if (!helperUnavailable(msg)) throw new StepError('query', `${op}: ${msg}`);
+      // The helper can't be used at all: the Node route below.
+    }
+  }
   const [token, ctoken] = await Promise.all([accessToken(), getClientToken()]);
   const res = await fetch(PATHFINDER, {
     method: 'POST',
@@ -588,20 +656,10 @@ async function send(op, variables, hash, version) {
       extensions: { persistedQuery: { version: 1, sha256Hash: hash } },
     }),
   });
-  if (res.status === 429) {
-    const wait = retryAfterOf(res);
-    pathfinderBlockedUntil = Date.now() + wait * 1000;
-    notice({
-      key: 'spotify-pathfinder-limit', kind: 'warning', source: 'Spotify',
-      title: 'Spotify is rate-limiting artist pages',
-      detail: `Monthly listeners, play counts and artist overviews pause for ${waitWords(wait)}. Pages you've already opened still show; Studio tries again after the wait.`,
-      repeatAfterMs: 60 * 60 * 1000,
-    });
-    throw rateLimited(wait);
-  }
+  if (res.status === 429) throw pathfinderLimited(retryAfterOf(res));
   const body = await res.json().catch(() => null);
   if (res.status === 401) { clientToken = null; throw new StepError('signin', 'Spotify rejected the session (401)'); }
-  if (!res.ok || !body) throw new StepError('query', `${op} → HTTP ${res.status}`);
+  if (!body || (!res.ok && !body.errors?.length)) throw new StepError('query', `${op} → HTTP ${res.status}`);
   if (body.errors?.length && !body.data) {
     const msg = body.errors.map((e) => e.message).join('; ');
     const err = new StepError('query', `${op}: ${msg}`);
@@ -618,7 +676,9 @@ async function query(op, variables) {
   } catch (e) {
     /* One retry against a freshly scanned bundle — the usual failure is a
        web player deploy that rotated the hash under us. */
-    if (first.fixed || e.step === 'signin' || e.step === 'clienttoken' || e.step === 'ratelimit') throw e;
+    // Only a hash Spotify no longer knows is worth a rescan; anything else
+    // would fail the same way with a fresh one.
+    if (first.fixed || !e.stale || e.step === 'signin' || e.step === 'clienttoken' || e.step === 'ratelimit') throw e;
     const again = await hashFor(op, true);
     if (again.hash === first.hash && !e.stale) throw e;
     return send(op, variables, again.hash, again.version);
@@ -1094,6 +1154,25 @@ export async function homeSectionItems(uri) {
     return null;
   };
   return (find(data) || []).map((it) => libraryCard(it?.uri, it?.content?.data)).filter(cardOk);
+}
+
+/** A browse page's shelves (`spotify:page:<id>`), as home shelves:
+ *  [{ title, items }]. Made For You is one: Daily Mixes, Discover Weekly,
+ *  Release Radar, On Repeat and the rest of your personal playlists. */
+export const MADE_FOR_YOU_PAGE = '0JQ5DAt0tbjZptfcdMSKl3';
+export async function browseShelves(pageId) {
+  const data = await query('browsePage', {
+    uri: `spotify:page:${pageId}`,
+    pagePagination: { offset: 0, limit: 20 },
+    sectionPagination: { offset: 0, limit: 12 },
+    browseEndUserIntegration: 'INTEGRATION_WEB_PLAYER',
+    includeEpisodeContentRatingsV2: false,
+  });
+  const sections = data?.browse?.sections?.items || [];
+  return sections.map((sec) => ({
+    title: sec?.data?.title?.transformedLabel || '',
+    items: (sec?.sectionItems?.items || []).map((it) => libraryCard(it?.uri, it?.content?.data)).filter(cardOk),
+  })).filter((sh) => sh.items.length);
 }
 
 /** Your Library, most recently played first: playlists, albums, artists
