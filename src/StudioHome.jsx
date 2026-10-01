@@ -4285,7 +4285,22 @@ export default function StudioHome({
         {/* Wordmark. Brief, App shell: the studio wordmark heads the sidebar
             column; Home and Stats stay as tabs at the left of the top bar. */}
         <div style={{ width: SIDEBAR_W, flexShrink: 1, minWidth: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 20 }}>
-          <span aria-hidden style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, background: 'linear-gradient(135deg, var(--accent-line), var(--accent))' }} />
+          {/* The app icon's own mark (src/assets/icon.png): three bars on a
+              dark tile. It used to be a tile filled with the accent, which on
+              the neutral accent was a blank white square. */}
+          <svg aria-hidden width="26" height="26" viewBox="0 0 100 100" style={{ flexShrink: 0, display: 'block' }}>
+            <defs>
+              <linearGradient id="sth-mark-tile" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stopColor="#1c1c20" />
+                <stop offset="1" stopColor="#09090b" />
+              </linearGradient>
+            </defs>
+            <rect x="2" y="2" width="96" height="96" rx="24" fill="url(#sth-mark-tile)" />
+            <rect x="2.5" y="2.5" width="95" height="95" rx="23.5" fill="none" stroke="#ffffff" strokeOpacity="0.14" strokeWidth="3" />
+            <rect x="32" y="26" width="9" height="47" rx="4.5" fill="#f4f4f5" />
+            <rect x="46" y="18" width="9" height="64" rx="4.5" fill="#f4f4f5" />
+            <rect x="59" y="37" width="9" height="24" rx="4.5" fill="#f4f4f5" />
+          </svg>
           <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--text)' }}>studio</span>
         </div>
 
