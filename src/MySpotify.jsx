@@ -188,6 +188,7 @@ const Icon = {
   spark: (s = 16) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden><path d="M12 3l1.9 5.6L19.5 10.5 13.9 12.4 12 18l-1.9-5.6L4.5 10.5l5.6-1.9L12 3z" /><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z" /></svg>,
   search: (s = 14) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>,
   chevron: (s = 14) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polyline points="6 9 12 15 18 9" /></svg>,
+  sliders: (s = 14) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></svg>,
   people: (s = 14) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.6-3.4 3.3-5.5 6.5-5.5s5.9 2.1 6.5 5.5" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.7.8 2.8 2.5 3 5.2" /></svg>,
 };
 
@@ -320,6 +321,21 @@ const CSS = `
 @media (max-width: 980px) { .msp-act-label { display: none; } }
 .msp-btn-glass { background: rgba(255,255,255,0.12); color: #fff; }
 .msp-btn-glass:hover { background: rgba(255,255,255,0.2); }
+
+/* customize home: on/off rows */
+.msp-togs { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 8px; }
+.msp-tog { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 10px; border-radius: 8px; border: none; cursor: pointer;
+  background: transparent; color: inherit; font: inherit; text-align: left; transition: background 0.12s ease; }
+.msp-tog:hover { background: rgba(var(--st-fg-rgb), 0.05); }
+.msp-tog .nm { display: block; font-size: 13px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.12s ease; }
+.msp-tog.is-on .nm { color: var(--st-text, var(--text)); }
+.msp-tog .sb { display: block; font-size: 11px; color: rgba(var(--st-fg-rgb), 0.36); margin-top: 1px; }
+.msp-tog .sw { margin-left: auto; flex-shrink: 0; width: 30px; height: 18px; border-radius: 999px; position: relative;
+  background: rgba(var(--st-fg-rgb), 0.16); transition: background 0.18s ease; }
+.msp-tog .sw i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.35); transition: transform 0.2s cubic-bezier(0.34,1.5,0.5,1); }
+.msp-tog.is-on .sw { background: rgb(var(--accent-rgb)); }
+.msp-tog.is-on .sw i { transform: translateX(12px); }
 
 /* new releases: a library table sorted by date */
 .msp-rtable { container-type: inline-size; display: flex; flex-direction: column; }
@@ -625,8 +641,39 @@ function usePanel() {
    pick), albums featuring songs you like, and its Jump back in / Recently
    played, which go into Home's own Jump Back In. Everything else stays,
    with Fresh New Music always first. */
-const FRESH_SHELF = /fresh new music/i;
-const DROPPED_SHELVES = /today.?s biggest hits|^focus$|kick back and relax|bedroom rave|your favou?rite artists/i;
+// Spotify words it a few ways ("Fresh new music", "Fresh new drops", "Fresh picks").
+const FRESH_SHELF = /^fresh (new )?(music|drops|picks|finds)\b|^new music for you/i;
+/* Off until you turn them on (Customize): editorial and mood shelves,
+   Spotify's own artist/video/concert shelves, and its time-of-day ones. */
+const HIDDEN_BY_DEFAULT = /today.?s biggest hits|^focus$|kick back and relax|bedroom rave|your favou?rite artists|uniquely yours|watch what you love|^made for you$|^soundtrack your|^good (morning|afternoon|evening|night)/i;
+/* Studio's own sections, in page order, and which start off. */
+const STUDIO_SECTIONS = [
+  ['st:jump', 'Jump Back In', true],
+  ['st:made', 'Made in Studio', true],
+  ['st:repeat', 'On Repeat', false],
+  ['st:playlists', 'Your Playlists', false],
+  ['st:albums', 'Albums in Your Library', true],
+  ['st:forever', 'Forever Favourites', false],
+];
+const STUDIO_DEFAULT = Object.fromEntries(STUDIO_SECTIONS.map(([k, , on]) => [k, on]));
+
+/* Which Home sections show: your choices, over the defaults. Kept on this
+   machine; a Spotify shelf is remembered by its title, so one you turn off
+   stays off whenever Spotify brings it back. */
+const SHELF_PREFS_KEY = 'studio:homeShelves';
+function readShelfPrefs() {
+  try { return JSON.parse(localStorage.getItem(SHELF_PREFS_KEY) || '{}') || {}; } catch { return {}; }
+}
+function useShelfPrefs() {
+  const [prefs, setPrefs] = useState(readShelfPrefs);
+  const save = (next) => { setPrefs(next); try { localStorage.setItem(SHELF_PREFS_KEY, JSON.stringify(next)); } catch { /* ignore */ } };
+  const shown = (key, title = '') => {
+    if (key in prefs) return !!prefs[key];
+    if (key in STUDIO_DEFAULT) return STUDIO_DEFAULT[key];
+    return !HIDDEN_BY_DEFAULT.test(String(title || '').trim());
+  };
+  return { shown, set: (key, on) => save({ ...prefs, [key]: on }), reset: () => save({}) };
+}
 const NEVER_SHELVES = /new release|albums? featuring songs you like|jump back in|recently played/i;
 /* No podcasts or audiobooks: Studio plays music. (Episodes and shows are
    never turned into tiles, so a podcast shelf is usually empty anyway; this
@@ -699,11 +746,59 @@ function MixTile({ item, onOpen, onPlay }) {
   );
 }
 
+/** Customize Home: every section, on or off. Inline under the header, like
+ *  New Releases' Following. */
+function ShelfCustomizer({ shelves, prefs, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const Row = ({ k, title, sub }) => {
+    const on = prefs.shown(k, title);
+    return (
+      <button type="button" className={cx('msp-tog', on && 'is-on')} role="switch" aria-checked={on} onClick={() => prefs.set(k, !on)}>
+        <span style={{ minWidth: 0 }}>
+          <span className="nm">{titleCase(title)}</span>
+          {sub ? <span className="sb">{sub}</span> : null}
+        </span>
+        <span className="sw" aria-hidden><i /></span>
+      </button>
+    );
+  };
+  return (
+    <section className="msp-fm" aria-label="Customize Home">
+      <div className="msp-fm-top">
+        <span className="msp-fm-note" style={{ whiteSpace: 'normal' }}>
+          Choose what Home shows. Spotify changes some of its shelves from day to day; one you turn off stays off whenever it comes back.
+        </span>
+        <button type="button" className="msp-act is-sm" onClick={prefs.reset} style={{ marginLeft: 'auto' }}>Reset</button>
+        <button type="button" className="st-icon-btn is-sm" onClick={onClose} aria-label="Close">{Icon.close(13)}</button>
+      </div>
+      <div className="msp-fm-group">
+        <div className="msp-fm-h">From Studio</div>
+        <div className="msp-togs">
+          {STUDIO_SECTIONS.map(([k, title]) => <Row key={k} k={k} title={title} />)}
+        </div>
+      </div>
+      <div className="msp-fm-group">
+        <div className="msp-fm-h">From Spotify<span>{shelves.length}</span></div>
+        <div className="msp-togs">
+          {shelves.map((sh) => <Row key={sh.key} k={sh.key} title={sh.title} sub={`${sh.items.length} ${sh.items.length === 1 ? 'item' : 'items'}`} />)}
+          {!shelves.length ? <div className="msp-fm-empty">Spotify’s shelves show here once Home has loaded them.</div> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function SpotifyHome({ bridge }) {
   const { data: core, error, loading, refresh, limitedUntil } = useFeed('home');
   // What you've played in Studio (listening.js): local, so always fresh.
   const { data: mine, refresh: refreshMine } = useFeed('studio');
   const [panel, openPanel, closePanel] = usePanel();
+  const prefs = useShelfPrefs();
+  const [customizing, setCustomizing] = useState(false);
 
   /* Plays land while the page is open: read Studio's history again every
      minute (it's a local file; nothing goes to Spotify). */
@@ -750,12 +845,45 @@ export function SpotifyHome({ bridge }) {
       byTitle.set(title, shelf);
       madeShelves.push(shelf);
     }
-    const allShelves = [...feedShelves, ...madeShelves].filter((sh) => !PODCAST_SHELVES.test(sh.title || ''));
-    // Fresh New Music first, always: this visit's, or the last one seen.
-    const fresh = allShelves.find((sh) => FRESH_SHELF.test(sh.title || '')) || (c.fresh?.items?.length ? { ...c.fresh, items: noDj(c.fresh.items) } : null);
+    let allShelves = [...feedShelves, ...madeShelves].filter((sh) => !PODCAST_SHELVES.test(sh.title || '') && !NEVER_SHELVES.test(sh.title || ''));
+
+    /* Your Daily Mixes: wherever Spotify put them this time (Made for You,
+       Your top mixes, a time-of-day shelf), gathered into one shelf of their
+       own with Discover Weekly and Release Radar, so they're always in one
+       place and hiding some other shelf can't take them with it. */
+    const mixRank = (it) => {
+      if (it.kind !== 'playlist') return -1;
+      const n = String(it.name || '').trim();
+      const d = n.match(/^daily mix (\d+)$/i);
+      if (d) return Number(d[1]);
+      if (/^discover weekly$/i.test(n)) return 100;
+      if (/^release radar$/i.test(n)) return 101;
+      return -1;
+    };
+    const dailyMixes = [];
+    const mixSeen = new Set();
+    allShelves = allShelves.map((sh) => ({
+      ...sh,
+      items: sh.items.filter((it) => {
+        if (mixRank(it) < 0) return true;
+        if (!mixSeen.has(it.id)) { mixSeen.add(it.id); dailyMixes.push(it); }
+        return false;
+      }),
+    })).filter((sh) => sh.items.length);
+    dailyMixes.sort((x, y) => mixRank(x) - mixRank(y));
+
+    /* Fresh New Music: the feed's shelf plus Browse's New Releases page,
+       built in main so it's there every time. */
+    const feedFresh = allShelves.find((sh) => FRESH_SHELF.test(sh.title || ''));
+    // Without the mixes already in Your Daily Mixes (Release Radar, often).
+    const freshItems = (c.fresh?.items?.length ? noDj(c.fresh.items) : (feedFresh?.items || [])).filter((it) => !mixSeen.has(it.id));
+    allShelves = allShelves.filter((sh) => !FRESH_SHELF.test(sh.title || ''));
+
+    const keyOf = (title) => `sp:${String(title || '').trim().toLowerCase()}`;
     const shelves = [
-      ...(fresh ? [{ ...fresh, fresh: true }] : []),
-      ...allShelves.filter((sh) => !FRESH_SHELF.test(sh.title || '') && !NEVER_SHELVES.test(sh.title || '') && !DROPPED_SHELVES.test((sh.title || '').trim())),
+      ...(freshItems.length ? [{ key: 'sp:fresh new music', title: 'Fresh New Music', items: freshItems, fresh: true }] : []),
+      ...(dailyMixes.length ? [{ key: 'sp:your daily mixes', title: 'Your Daily Mixes', items: dailyMixes, mixes: true }] : []),
+      ...allShelves.map((sh) => ({ ...sh, key: keyOf(sh.title) })),
     ];
 
     return {
@@ -818,10 +946,16 @@ export function SpotifyHome({ bridge }) {
               <button type="button" className="msp-act" disabled={!data} onClick={() => playItem(liked, { shuffle: true })}>
                 {Icon.shuffle(14)} <span className="msp-act-label">Shuffle Liked Songs</span>
               </button>
+              <span className="msp-sep" />
+              <button type="button" className={cx('msp-act', customizing && 'is-on')} aria-expanded={customizing} onClick={() => setCustomizing((v) => !v)}>
+                {Icon.sliders(14)} <span className="msp-act-label">Customize</span>
+              </button>
               <span className="msp-grow" />
               <RefreshButton loading={loading} onClick={refreshAll} at={data?.fetchedAt} />
             </div>
           </header>
+
+          {customizing && data ? <ShelfCustomizer shelves={data.shelves} prefs={prefs} onClose={() => setCustomizing(false)} /> : null}
 
           {data && limitedUntil ? <LimitBanner until={limitedUntil} /> : null}
           {error && data && error.step !== 'ratelimit' && core ? <div className="msp-banner">Showing what Studio saw last time. {error.error || ''}</div> : null}
@@ -831,7 +965,7 @@ export function SpotifyHome({ bridge }) {
           {data ? (
             <>
               {/* ---- Jump back in: Studio's own first, then Spotify's ---- */}
-              {data.jumpBackIn.length ? (
+              {prefs.shown('st:jump') && data.jumpBackIn.length ? (
                 <section className="msp-sec">
                   <SectionHead title="Jump Back In" meta="Where you left off" />
                   <div className="msp-jump">
@@ -852,7 +986,7 @@ export function SpotifyHome({ bridge }) {
               ) : null}
 
               {/* ---- Studio's own mixes, laid out like Spotify's ---- */}
-              {data.mixes.length ? (
+              {prefs.shown('st:made') && data.mixes.length ? (
                 <section className="msp-sec">
                   <SectionHead title="Made in Studio" meta="From what you play here · new every day" />
                   <div className="msp-grid is-clip">
@@ -862,7 +996,7 @@ export function SpotifyHome({ bridge }) {
               ) : null}
 
               {/* ---- On repeat ---- */}
-              {data.onRepeat.length ? (
+              {prefs.shown('st:repeat') && data.onRepeat.length ? (
                 <section className="msp-sec">
                   <SectionHead title="On Repeat" meta="Most played this month" />
                   <div className="msp-duo">
@@ -879,10 +1013,10 @@ export function SpotifyHome({ bridge }) {
               ) : null}
 
               {/* ---- Spotify's shelves, Fresh New Music first ---- */}
-              {data.shelves.map((sh, n) => (
+              {data.shelves.filter((sh) => prefs.shown(sh.key, sh.title)).map((sh, n) => (
                 <section key={`${sh.title}:${n}`} className="msp-sec">
                   <SectionHead title={sh.title || 'For You'}
-                    meta={sh.fresh ? 'From Spotify · new music from everyone, not just who you follow' : 'From Spotify'} />
+                    meta={sh.fresh ? 'From Spotify · new music from everyone, not just who you follow' : sh.mixes ? 'From Spotify · Daily Mixes, Discover Weekly, Release Radar' : 'From Spotify'} />
                   <div className="msp-grid is-clip">
                     {sh.items.map((it) => (it.kind === 'artist' ? (
                       <button key={`${it.kind}:${it.id}`} type="button" className="msp-tile is-artist" onClick={() => openItem(it)}>
@@ -898,7 +1032,7 @@ export function SpotifyHome({ bridge }) {
               ))}
 
               {/* ---- Playlists ---- */}
-              {data.playlists.length ? (
+              {prefs.shown('st:playlists') && data.playlists.length ? (
                 <section className="msp-sec">
                   <SectionHead title="Your Playlists" meta={data.likedCount ? `${data.likedCount.toLocaleString()} liked songs` : null} />
                   <div className="msp-grid is-clip" style={{ '--rows': 3 }}>
@@ -909,7 +1043,7 @@ export function SpotifyHome({ bridge }) {
               ) : null}
 
               {/* ---- Saved albums ---- */}
-              {data.savedAlbums.length ? (
+              {prefs.shown('st:albums') && data.savedAlbums.length ? (
                 <section className="msp-sec">
                   <SectionHead title="Albums in Your Library" meta="Most recently played first" />
                   <div className="msp-grid is-clip" style={{ '--rows': 2 }}>
@@ -919,7 +1053,7 @@ export function SpotifyHome({ bridge }) {
               ) : null}
 
               {/* ---- All time ---- */}
-              {data.allTime.length ? (
+              {prefs.shown('st:forever') && data.allTime.length ? (
                 <section className="msp-sec">
                   <SectionHead title="Forever Favourites" meta="Your most played, all time" />
                   <div className="msp-grid is-small is-clip" style={{ '--rows': 2 }}>

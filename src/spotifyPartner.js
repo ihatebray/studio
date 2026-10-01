@@ -80,6 +80,8 @@ const OPERATIONS = {
   // Browse pages, for Made For You (Daily Mixes, Discover Weekly, Release
   // Radar), which Sonora adds to its home the same way.
   browsePage: 'query',
+  // Browse's index of category pages, to find New Releases by name.
+  browseAll: 'query',
   // One home shelf by its section uri, for Fresh New Music when the home
   // feed leaves it out.
   homeSection: 'query',
@@ -1173,6 +1175,25 @@ export async function browseShelves(pageId) {
     title: sec?.data?.title?.transformedLabel || '',
     items: (sec?.sectionItems?.items || []).map((it) => libraryCard(it?.uri, it?.content?.data)).filter(cardOk),
   })).filter((sh) => sh.items.length);
+}
+
+/** Browse's category pages: [{ id, name }] (`spotify:page:<id>`). */
+export async function browseCards() {
+  const data = await query('browseAll', {
+    pagePagination: { offset: 0, limit: 10 },
+    sectionPagination: { offset: 0, limit: 99 },
+    browseEndUserIntegration: 'INTEGRATION_WEB_PLAYER',
+  });
+  const out = [];
+  for (const sec of data?.browseStart?.sections?.items || []) {
+    for (const it of sec?.sectionItems?.items || []) {
+      const d = it?.content?.data;
+      const id = String(it?.uri || '').startsWith('spotify:page:') ? it.uri.slice('spotify:page:'.length) : null;
+      const name = d?.data?.cardRepresentation?.title?.transformedLabel || '';
+      if (d?.__typename === 'BrowseSectionContainer' && id && name) out.push({ id, name });
+    }
+  }
+  return out;
 }
 
 /** Your Library, most recently played first: playlists, albums, artists

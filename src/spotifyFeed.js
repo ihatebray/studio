@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
-import { webApiRateLimit, paged, partnerState, homeFeed, homeSectionItems, libraryItems, browseShelves, MADE_FOR_YOU_PAGE } from './spotifyPartner.js';
+import { webApiRateLimit, paged, partnerState, homeFeed, libraryItems, browseShelves, browseCards, MADE_FOR_YOU_PAGE } from './spotifyPartner.js';
 import { helperReleases, helperPlaylist, helperLiked } from './spotifyPlayer.js';
 import { listeningSummary } from './listening.js';
 import { listFollows, onFollowsChange } from './follows.js';
@@ -89,7 +89,50 @@ const refusedBy = (results) => results.find((r) => !r.ok && r.e?.step === 'ratel
    player's "recents" and its shelves, Made For You and the rest) and Your
    Library, both through Pathfinder. Neither touches the Web API, whose
    quota is shared by every app signing in as Spotify's desktop client. */
-const FRESH_SHELF = /fresh new music/i;
+// Spotify words it a few ways ("Fresh new music", "Fresh new drops", "Fresh picks").
+const FRESH_SHELF = /^fresh (new )?(music|drops|picks|finds)\b|^new music for you/i;
+
+/* Fresh New Music, every time. Spotify's home feed only sometimes carries
+   its "Fresh new music" shelf, so the dependable source is Browse's New
+   Releases page, which Spotify keeps current (New Music Friday, Release
+   Radar, the week's new albums and singles). Which page that is gets looked
+   up by name in Browse once a week. */
+const NEW_RELEASES_CARD = /^new releases$/i;
+async function newReleasesPageId() {
+  const c = loadCache();
+  const known = c.newReleasesPage;
+  if (known?.id && Date.now() - (known.at || 0) < 7 * 24 * 60 * 60 * 1000) return known.id;
+  try {
+    const cards = await browseCards();
+    const card = cards.find((x) => NEW_RELEASES_CARD.test(x.name.trim())) || cards.find((x) => /new releases|new music/i.test(x.name));
+    if (card) { c.newReleasesPage = { id: card.id, name: card.name, at: Date.now() }; saveCache(); return card.id; }
+    console.info(`[home] no New Releases page in Browse; its cards: ${cards.map((x) => x.name).join(' | ')}`);
+  } catch (e) {
+    console.info('[home] Browse index:', e?.message || e);
+  }
+  return known?.id || null;
+}
+
+async function freshNewMusic(feedShelf) {
+  const out = [];
+  const seen = new Set();
+  const add = (items) => {
+    for (const it of items || []) {
+      const k = `${it.kind}:${it.id}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(it);
+    }
+  };
+  // Spotify's own shelf first, when the feed has it this time.
+  add(feedShelf?.items);
+  const pageId = await newReleasesPageId();
+  if (pageId) {
+    // The page's first few shelves are the new music; further down is older.
+    for (const sh of (await browseShelves(pageId)).slice(0, 3)) add(sh.items);
+  }
+  return out.slice(0, 30);
+}
 
 async function buildHome(prev) {
   const st = requireSignIn();
@@ -103,19 +146,17 @@ async function buildHome(prev) {
   const items = lib.ok ? lib.v.items : null;
   const of = (kind) => (items ? items.filter((i) => i.kind === kind) : null);
   const liked = items?.find((i) => i.kind === 'liked') || null;
-  /* Fresh New Music comes and goes from Spotify's home feed. Home always
-     shows it, so keep the last one seen for the visits it's missing from. */
+  /* Fresh New Music: the feed's own shelf when it's there, plus Browse's
+     New Releases page, so it's on Home every time. The last good copy
+     stands in if both are unavailable. */
   const freshNow = feed.ok ? feed.v.shelves.find((sh) => FRESH_SHELF.test(sh.title || '') && sh.items?.length) : null;
-  let fresh = freshNow ? { ...freshNow, seenAt: Date.now() } : old.fresh || null;
-  if (!freshNow && feed.ok) {
-    console.info(`[home] no Fresh New Music in Spotify's feed this time (${fresh ? 'using the last one seen' : 'none seen yet'}); its shelves: ${feed.v.shelves.map((sh) => sh.title).join(' | ') || 'none'}`);
-    // Ask for that one shelf by itself, when we know where it lives.
-    if (fresh?.uri) {
-      try {
-        const items = await homeSectionItems(fresh.uri);
-        if (items.length) fresh = { ...fresh, items, seenAt: Date.now() };
-      } catch (e) { console.info('[home] Fresh New Music on its own:', e?.message || e); }
-    }
+  let fresh = old.fresh || null;
+  try {
+    const items = await freshNewMusic(freshNow);
+    if (items.length) fresh = { title: 'Fresh New Music', items, seenAt: Date.now() };
+  } catch (e) {
+    console.info('[home] Fresh New Music:', e?.message || e);
+    if (freshNow) fresh = { ...freshNow, title: 'Fresh New Music', seenAt: Date.now() };
   }
   return {
     fresh,
