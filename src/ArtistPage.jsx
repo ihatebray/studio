@@ -1230,9 +1230,14 @@ export default function ArtistPage({
 
   /* A short rate limit retries itself when it lifts; a long one waits for
      the Try again button rather than keeping a timer alive for an hour. */
+  /* Once per visit: retrying after every short wait kept a page asking
+     every minute while Spotify kept saying wait. */
+  const autoRetried = useRef(false);
+  useEffect(() => { autoRetried.current = false; }, [key]);
   useEffect(() => {
     if (sp.status !== 'error' || sp.step !== 'ratelimit' || !sp.retryAfter || sp.retryAfter > 180) return undefined;
-    const t = setTimeout(() => setRetry((n) => n + 1), (sp.retryAfter + 1) * 1000);
+    if (autoRetried.current) return undefined;
+    const t = setTimeout(() => { autoRetried.current = true; setRetry((n) => n + 1); }, (sp.retryAfter + 1) * 1000);
     return () => clearTimeout(t);
   }, [sp]);
 
@@ -1243,11 +1248,16 @@ export default function ArtistPage({
   useEffect(() => {
     setFbTop(null);
     const a = api();
-    if (sp.status !== 'error' || !sp.id || !a?.spotifyPartnerTopTracks) return undefined;
+    if (sp.status !== 'error' || !sp.id || !a?.spotifyArtistTopTracks) return undefined;
     let dead = false;
-    a.spotifyPartnerTopTracks(sp.id).then((r) => { if (!dead && r?.ok) setFbTop(r.data || []); }).catch(() => {});
+    /* Main's artist route: the playback helper's session first. (This used
+       the Web API, whose shared quota is what was rate-limited.) */
+    a.spotifyArtistTopTracks(sp.id, name).then((r) => {
+      const rows = Array.isArray(r) ? r : (r?.ok ? r.data : null);
+      if (!dead && Array.isArray(rows)) setFbTop(rows);
+    }).catch(() => {});
     return () => { dead = true; };
-  }, [sp.status, sp.id]);
+  }, [sp.status, sp.id, name]);
 
   /* The complete discography, after the overview is up. Until it lands the
      grid shows the releases the overview already carried. */

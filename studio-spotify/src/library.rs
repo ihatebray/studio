@@ -382,6 +382,77 @@ pub async fn releases(session: &Session, days: u32, extra: &[String], spotify: b
     }))
 }
 
+/// An artist's whole discography from the session (no Web API): albums,
+/// singles and EPs, compilations, and a capped run of "appears on", newest
+/// first, deduped the way Spotify's own clients show it.
+/// `[{ albumId, name, group, type, releaseDate, year, albumArtUrl, totalTracks, artists }]`.
+pub async fn discography(session: &Session, id: &str) -> Result<Value, String> {
+    const APPEARS_ON_CAP: usize = 60;
+    let uri = format!("{ARTIST_PREFIX}{id}");
+    let got = extended(session, &[uri.clone()], ExtensionKind::ARTIST_V4).await?;
+    let Some((_, bytes)) = got.into_iter().next() else { return Err("artist not found".into()) };
+    let a = ArtistMessage::parse_from_bytes(&bytes).map_err(|e| format!("artist: {e}"))?;
+
+    // album uri → its group, first seen wins (an album is never in two).
+    let mut wanted: Vec<(String, &'static str)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (groups, name, cap) in [
+        (&a.album_group, "album", usize::MAX),
+        (&a.single_group, "single", usize::MAX),
+        (&a.compilation_group, "compilation", usize::MAX),
+        (&a.appears_on_group, "appears_on", APPEARS_ON_CAP),
+    ] {
+        for g in groups.iter().take(cap) {
+            // Each group lists a release's regional versions; the first is the one shown.
+            if let Some(gid) = g.album.first().and_then(|x| base62(x.gid())) {
+                let au = format!("{ALBUM_PREFIX}{gid}");
+                if seen.insert(au.clone()) {
+                    wanted.push((au, name));
+                }
+            }
+        }
+    }
+
+    let groups: HashMap<String, &'static str> = wanted.iter().cloned().collect();
+    let uris: Vec<String> = wanted.into_iter().map(|(u, _)| u).collect();
+    let mut out: Vec<Value> = Vec::new();
+    for chunk in uris.chunks(BATCH) {
+        for (u, b) in extended(session, chunk, ExtensionKind::ALBUM_V4).await? {
+            let Ok(al) = AlbumMessage::parse_from_bytes(&b) else { continue };
+            let Some(aid) = u.strip_prefix(ALBUM_PREFIX) else { continue };
+            let date = date_of(&al);
+            let kind = match al.type_.map(|t| t.enum_value_or(AlbumType::ALBUM)) {
+                Some(AlbumType::COMPILATION) => "compilation",
+                Some(AlbumType::EP) | Some(AlbumType::SINGLE) => "single",
+                _ => "album",
+            };
+            let total: usize = al.disc.iter().map(|d| d.track.len()).sum();
+            let cover = al.cover_group.as_ref();
+            out.push(json!({
+                "albumId": aid,
+                "name": al.name(),
+                "group": groups.get(&u).copied().unwrap_or("album"),
+                "type": kind,
+                "releaseDate": date,
+                "year": date.get(..4).and_then(|y| y.parse::<u32>().ok()),
+                "albumArtUrl": cover.and_then(|g| image_url(&g.image, ImageSize::DEFAULT)).unwrap_or_default(),
+                "totalTracks": total,
+                "artists": al.artist.iter().map(|x| x.name().to_owned()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", "),
+            }));
+        }
+    }
+    out.sort_by(|x, y| y["releaseDate"].as_str().cmp(&x["releaseDate"].as_str()));
+    // Clean and explicit cuts, regional reissues: same group, name and year is one record.
+    let mut keys = std::collections::HashSet::new();
+    out.retain(|r| keys.insert(format!(
+        "{}|{}|{}",
+        r["group"].as_str().unwrap_or(""),
+        r["name"].as_str().unwrap_or("").to_lowercase(),
+        r["year"].as_u64().unwrap_or(0)
+    )));
+    Ok(Value::Array(out))
+}
+
 /// Names and portraits for these artist ids, in one batch: `[{ id, name, image }]`.
 pub async fn artists(session: &Session, ids: &[String]) -> Result<Value, String> {
     let uris: Vec<String> = ids.iter().filter(|id| !id.is_empty()).map(|id| format!("{ARTIST_PREFIX}{id}")).collect();

@@ -149,7 +149,7 @@ import * as twitchOverlay from './twitchOverlay.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { initMiniWindow } from './miniWindow.js';
-import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist } from './spotifyPlayer.js';
+import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist, helperDiscography } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { registerFollowsIpc } from './follows.js';
 import { registerListeningIpc } from './listening.js';
@@ -157,8 +157,11 @@ import { notice } from './notices.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
 import {
   registerSpotifyPartnerIpc, partnerState, albumTracks as partnerAlbumTracks, searchCatalogue as partnerSearch,
-  searchFast as partnerSearchFast, artistTopTracksFast, artistAlbumsFast, artistInfoFast,
+  searchFast as partnerSearchFast, artistTopTracksFast, artistAlbumsFast, artistInfoFast, setDiscographySource,
 } from './spotifyPartner.js';
+
+// Artist pages' discography: the helper's session, not the Web API.
+setDiscographySource(helperDiscography);
 
 /* Search fallback chain: Client ID → signed-in Spotify account → iTunes.
    The account has its own rate-limit bucket, so when the Client ID is

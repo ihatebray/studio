@@ -595,7 +595,7 @@ async function send(op, variables, hash, version) {
       key: 'spotify-pathfinder-limit', kind: 'warning', source: 'Spotify',
       title: 'Spotify is rate-limiting artist pages',
       detail: `Monthly listeners, play counts and artist overviews pause for ${waitWords(wait)}. Pages you've already opened still show; Studio tries again after the wait.`,
-      repeatAfterMs: Math.min(wait * 1000, 30 * 60 * 1000),
+      repeatAfterMs: 60 * 60 * 1000,
     });
     throw rateLimited(wait);
   }
@@ -650,9 +650,10 @@ export async function webApi(p, attempt = 0, method = 'GET') {
     webApiBlockedUntil = Math.max(webApiBlockedUntil, Date.now() + wait * 1000);
     notice({
       key: 'spotify-webapi-limit', kind: 'warning', source: 'Spotify',
-      title: 'Spotify is rate-limiting your account data',
-      detail: `Spotify asked Studio to wait ${waitWords(wait)} before reading your account again. Until then, My Spotify (Home, New Releases), playlists and some Save details show what Studio already has. Playback and search keep working, and Studio picks up again by itself.`,
-      repeatAfterMs: Math.min(wait * 1000, 30 * 60 * 1000),
+      title: 'Spotify’s Web API is busy',
+      detail: `Spotify asked Studio to wait ${waitWords(wait)} before using its Web API again. That limit is shared with every Spotify desktop app, so it can trip without Studio doing much. Studio only uses it as a last resort now; playback, search, Home, New Releases and artist pages go through your own Spotify session instead.`,
+      // Once an hour at most: a 59-second wait used to mean a toast a minute.
+      repeatAfterMs: 60 * 60 * 1000,
     });
     throw rateLimited(wait);
   }
@@ -1314,6 +1315,11 @@ async function cachedOverview(id) {
   return data;
 }
 
+/* Where artist discographies come from first. main.js points this at the
+   playback helper (which imports this module, so it can't be imported back). */
+let discographySource = null;
+export function setDiscographySource(fn) { discographySource = typeof fn === 'function' ? fn : null; }
+
 export function registerSpotifyPartnerIpc(ipcMain) {
   ipcMain.handle('spotifyPartner:state', () => state_());
   ipcMain.handle('spotifyPartner:signIn', () => beginSignIn());
@@ -1325,7 +1331,19 @@ export function registerSpotifyPartnerIpc(ipcMain) {
   ipcMain.handle('spotifyPartner:discography', wrap(async (id) => {
     const hit = discogCache.get(id);
     if (hit && Date.now() - hit.at < 60 * 60 * 1000) return hit.data;
-    const data = await artistDiscography(id);
+    /* The playback helper's session first: it reads the discography the
+       way Spotify's own clients do, with no Web API quota behind it. The
+       Web API (one to eight requests per artist, on a client ID shared
+       with every Spotify desktop app) is the fallback, and not even that
+       while it's already rate-limiting. */
+    let data = null;
+    if (discographySource) {
+      try { data = await discographySource(id); } catch (e) { console.warn('[discography] helper route failed:', e?.message || e); }
+    }
+    if (!Array.isArray(data)) {
+      if (webApiRateLimit()) throw rateLimited((webApiBlockedUntil - Date.now()) / 1000);
+      data = await artistDiscography(id);
+    }
     discogCache.set(id, { at: Date.now(), data });
     return data;
   }));

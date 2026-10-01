@@ -33,6 +33,7 @@ import {
 /* ------------------------------------------------------------------ data */
 
 const feedCache = {};   // key → { data, error }, survives page switches
+const autoRetryAt = {}; // key → when the page last retried by itself after a rate limit
 
 function useFeed(key) {
   const [state, setState] = useState(() => feedCache[key] || { data: null, error: null });
@@ -45,7 +46,7 @@ function useFeed(key) {
   const load = useCallback(async (force) => {
     const api = typeof window !== 'undefined' ? window.electronAPI : null;
     const fetcher = {
-      home: api?.spotifyFeedHome, releases: api?.spotifyFeedReleases, extras: api?.spotifyFeedExtras, studio: api?.spotifyFeedStudio,
+      home: api?.spotifyFeedHome, releases: api?.spotifyFeedReleases, studio: api?.spotifyFeedStudio,
     }[key];
     if (!fetcher) { setState({ data: null, error: { step: 'unavailable', error: 'Spotify isn’t available in this build.' } }); return; }
     setLoading(true);
@@ -70,13 +71,18 @@ function useFeed(key) {
      that's within half an hour; longer, and it's left to Refresh). */
   const limitedUntil = state.data?.limitedUntil
     || (state.error?.step === 'ratelimit' && state.error.retryAfter ? Date.now() + state.error.retryAfter * 1000 : 0);
+  /* Once per 15 minutes per page at most. Retrying the moment each wait
+     ended was a loop: Spotify answered "wait 59 seconds" again every time,
+     so the page asked every minute for as long as it was open, and the
+     limit never got the quiet it needed to lift. */
   useEffect(() => {
     if (!limitedUntil) return undefined;
     const wait = limitedUntil - Date.now();
     if (wait > 30 * 60 * 1000) return undefined;
-    const t = setTimeout(() => load(false), Math.max(1500, wait + 1500));
+    if (Date.now() - (autoRetryAt[key] || 0) < 15 * 60 * 1000) return undefined;
+    const t = setTimeout(() => { autoRetryAt[key] = Date.now(); load(false); }, Math.max(1500, wait + 1500));
     return () => clearTimeout(t);
-  }, [limitedUntil, load]);
+  }, [limitedUntil, load, key]);
 
   return { ...state, loading, refresh: () => load(true), limitedUntil };
 }
@@ -627,9 +633,6 @@ const RECENT_SHELVES = /jump back in|recently played/i;
 /* Spotify's DJ: an app-only feature that nothing outside Spotify can play. */
 const isDj = (it) => it?.id === '37i9dQZF1EYkqdzj48dyYq' || /^dj( x)?$/i.test(String(it?.name || '').trim());
 
-/* Studio's own history takes over a list once it has this much in it;
-   before that, Spotify's (from listening elsewhere) fills in. */
-const STUDIO_ENOUGH = { onRepeat: 4, allTime: 8 };
 
 function HomeSkeleton() {
   return (
@@ -694,8 +697,6 @@ function MixTile({ item, onOpen, onPlay }) {
 
 export function SpotifyHome({ bridge }) {
   const { data: core, error, loading, refresh, limitedUntil } = useFeed('home');
-  // What only the Web API has: optional, shown when it comes.
-  const { data: extra, refresh: refreshExtras } = useFeed('extras');
   // What you've played in Studio (listening.js): local, so always fresh.
   const { data: mine, refresh: refreshMine } = useFeed('studio');
   const [panel, openPanel, closePanel] = usePanel();
@@ -713,10 +714,9 @@ export function SpotifyHome({ bridge }) {
      enough to say; Spotify's home feed and Your Library supply the shelves,
      playlists and albums, and fill in until Studio has history of its own. */
   const data = useMemo(() => {
-    if (!core && !mine?.pulse?.total && !mine?.mixes?.length && !extra) return null;
+    if (!core && !mine?.pulse?.total && !mine?.mixes?.length) return null;
     const c = core || {};
     const m = mine || {};
-    const e = extra || {};
     const uniq = (list, key) => {
       const seen = new Set();
       return list.filter((x) => { const k = key(x); if (!k || seen.has(k)) return false; seen.add(k); return true; });
@@ -735,10 +735,8 @@ export function SpotifyHome({ bridge }) {
       ...allShelves.filter((sh) => !FRESH_SHELF.test(sh.title || '') && !NEVER_SHELVES.test(sh.title || '') && !DROPPED_SHELVES.test((sh.title || '').trim())),
     ];
 
-    const studioRepeat = (m.onRepeat || []).length >= STUDIO_ENOUGH.onRepeat;
-    const studioAll = (m.allTime || []).length >= STUDIO_ENOUGH.allTime;
     return {
-      user: { name: e.user?.name || c.user?.name || '', image: e.user?.image || null },
+      user: { name: c.user?.name || '', image: null },
       pulse: m.pulse || null,
       /* Studio's own places first, then Spotify's (its recents and its
          Jump back in / Recently played shelves), one tile each. A mix you
@@ -750,9 +748,9 @@ export function SpotifyHome({ bridge }) {
       ], (it) => it?.id && `${it.kind}:${it.id}`),
       mixes,
       todaysMix: m.todaysMix || [],
-      onRepeat: studioRepeat || !e.onRepeat?.length ? (m.onRepeat || []) : e.onRepeat,
-      onRepeatFrom: studioRepeat || !e.onRepeat?.length ? 'studio' : 'spotify',
-      allTime: studioAll || !e.allTime?.length ? (m.allTime || []) : e.allTime,
+      // Studio's own listening only: Spotify's versions came from the Web API.
+      onRepeat: m.onRepeat || [],
+      allTime: m.allTime || [],
       shelves,
       playlists: noDj(c.playlists),
       liked: c.liked || null,
@@ -760,10 +758,10 @@ export function SpotifyHome({ bridge }) {
       savedAlbums: c.albums || [],
       fetchedAt: c.fetchedAt || m.fetchedAt || null,
     };
-  }, [core, extra, mine]);
+  }, [core, mine]);
 
   const name = data?.user?.name ? data.user.name.split(' ')[0] : '';
-  const refreshAll = () => { refresh(); refreshExtras(); refreshMine(); };
+  const refreshAll = () => { refresh(); refreshMine(); };
 
   const openItem = (it) => {
     if (it.kind === 'artist' && bridge.onOpenArtist) { bridge.onOpenArtist({ name: it.name, spotifyId: it.id, image: it.image }); return; }
@@ -843,7 +841,7 @@ export function SpotifyHome({ bridge }) {
               {/* ---- On repeat ---- */}
               {data.onRepeat.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="On Repeat" meta={data.onRepeatFrom === 'studio' ? 'Most played this month' : 'Last four weeks on Spotify'} />
+                  <SectionHead title="On Repeat" meta="Most played this month" />
                   <div className="msp-duo">
                     {[data.onRepeat.slice(0, 5), data.onRepeat.slice(5, 10)].filter((col) => col.length).map((col, c) => (
                       <div key={c} className="msp-list">
