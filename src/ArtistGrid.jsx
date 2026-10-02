@@ -108,7 +108,7 @@ export default function ArtistGrid({
      they take recordWashSource, which a card and its page now share. The
      prop stayed accepted-and-ignored, which is worse than absent: it looks
      like the colour is configurable here when it isn't. */
-  artists = [], accent = '120,120,120', playEvents = [], onOpen, onPlay, emptyNote,
+  artists = [], playEvents = [], onOpen, onPlay, emptyNote,
 }) {
   const [portraits, setPortraits] = useState(() => seedFromArtistPageCache());
   const [overrides, setOverrides] = useState({});

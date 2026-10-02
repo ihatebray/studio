@@ -275,7 +275,7 @@ export default function App() {
   /** Manual follow-overrides: [{ artistName, action: 'add' | 'exclude', itunesArtistId }]. */
   const [followOverrides, setFollowOverrides] = useState([]);
   /** True while the main process is actively hitting iTunes to refresh the cache. */
-  const [releasesRefreshing, setReleasesRefreshing] = useState(false);
+  const [, setReleasesRefreshing] = useState(false);
   const [spotifyImportOpen, setSpotifyImportOpen] = useState(false);
   const [queue, setQueue] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
@@ -420,24 +420,7 @@ export default function App() {
 
 
 
-  const [nowPlayingSliderStyle] = useState(() => {
-    try {
-      const value = typeof window !== 'undefined' ? window.localStorage.getItem('immerse:nowPlayingSliderStyle') : null;
-      return value === 'heart' ? 'heart' : 'circle';
-    } catch { return 'circle'; }
-  });
 
-  // Fullscreen lyrics presentation: 'side' (column beside the cover) or
-  // 'flip' (press L to flip the artwork over to a lyric card).
-  const [fullscreenLyricsMode, setFullscreenLyricsMode] = useState(() => {
-    try {
-      const v = window.localStorage.getItem('immerse:fullscreenLyricsMode');
-      return v === 'flip' ? 'flip' : 'side';
-    } catch { return 'side'; }
-  });
-  useEffect(() => {
-    try { window.localStorage.setItem('immerse:fullscreenLyricsMode', fullscreenLyricsMode); } catch { /* ignore */ }
-  }, [fullscreenLyricsMode]);
 
   /* ---------- Experimental (Dev) toggles ----------------------------------
    *
@@ -2500,38 +2483,6 @@ export default function App() {
     }).sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [library, followOverrides]);
 
-  /**
-   * Releases actually shown anywhere (New Releases tab + welcome screen).
-   * The cache in the DB keeps records for artists you've since un-followed (and
-   * can hold albums from a different artist that shares a name), so we filter to
-   * the current followed set here. When a followed artist is pinned to a
-   * specific iTunes artist ID, only that artist's releases pass — so following a
-   * particular "Moors" doesn't surface every other "Moors".
-   */
-  const visibleReleases = useMemo(() => {
-    const primaryArtist = (str) => (str ? str.split(/,|feat\.|ft\.|&|\bx\b/i)[0].trim().toLowerCase() : '');
-    const byKey = new Map();
-    const followedIds = new Set();
-    for (const a of followedArtists) {
-      byKey.set(a.key, a);
-      if (a.itunesArtistId) followedIds.add(Number(a.itunesArtistId));
-    }
-    return (releases || []).filter((r) => {
-      /* ID first, name second. Every cached row carries the iTunes artist ID
-         it was fetched under, and those IDs are resolved and stored for
-         auto-followed artists too — so the ID is the authoritative link.
-         Name matching alone dropped collaborations: a record credited
-         "Artist A & Artist B" reduces to "artist a", so if you follow B it
-         looked like someone else's release and vanished. */
-      if (r.itunesArtistId && followedIds.has(Number(r.itunesArtistId))) return true;
-      const entry = byKey.get(primaryArtist(r.artistName));
-      if (!entry) return false; // artist no longer followed
-      if (entry.itunesArtistId && r.itunesArtistId) {
-        return Number(entry.itunesArtistId) === Number(r.itunesArtistId);
-      }
-      return true; // followed by name with no pinned ID yet
-    });
-  }, [releases, followedArtists]);
 
   /**
    * Auto-refresh releases once per app session, a few seconds after bootstrap,
@@ -2571,50 +2522,9 @@ export default function App() {
     return () => clearTimeout(t);
   }, [libraryBootstrapped, followedArtists.length]);
 
-  /** Manual refresh, triggered from the New Releases tab's refresh button. */
-  const refreshReleases = useCallback(async () => {
-    const api = window.electronAPI;
-    if (!api?.refreshReleases) return { ok: false, error: 'Not supported' };
-    if (!followedArtists.length) return { ok: true, skipped: true };
-    setReleasesRefreshing(true);
-    try {
-      const names = followedArtists.map((a) => a.displayName);
-      const result = await api.refreshReleases(names, 'manual');
-      const r = await api.loadCachedReleases();
-      if (r?.ok) setReleases(r.releases || []);
-      return result;
-    } catch (e) {
-      return { ok: false, error: String(e?.message || e) };
-    } finally {
-      setReleasesRefreshing(false);
-    }
-  }, [followedArtists]);
 
-  /** Refresh the overrides list from DB after any add/exclude/clear. */
-  const refreshOverrides = async () => {
-    const api = window.electronAPI;
-    if (!api?.loadReleaseOverrides) return;
-    try {
-      const r = await api.loadReleaseOverrides();
-      if (r?.ok) setFollowOverrides(r.overrides || []);
-    } catch (e) { console.error('refreshOverrides', e); }
-  };
 
-  const addFollowedArtist = async (artistName, itunesArtistId = null) => {
-    const api = window.electronAPI;
-    if (!api?.addFollowedArtist) return { ok: false };
-    const r = await api.addFollowedArtist(artistName, itunesArtistId);
-    if (r?.ok) await refreshOverrides();
-    return r;
-  };
 
-  const excludeFollowedArtist = async (artistName) => {
-    const api = window.electronAPI;
-    if (!api?.excludeFollowedArtist) return { ok: false };
-    const r = await api.excludeFollowedArtist(artistName);
-    if (r?.ok) await refreshOverrides();
-    return r;
-  };
 
 
   /* ---------- Playlist CRUD ---------- */
@@ -2831,11 +2741,7 @@ export default function App() {
         analyserRef={analyserRef}
         onNeedAnalyser={needAnalyser}
         ensureAnalyser={ensureAnalyser}
-        nowPlayingSliderStyle={nowPlayingSliderStyle}
-        fullscreenLyricsMode={fullscreenLyricsMode}
-        onSetFullscreenLyricsMode={setFullscreenLyricsMode}
         playEvents={playEvents}
-        releases={visibleReleases}
         onSpotifyImportDone={handleSpotifyImportDone}
         transitionMode={transitionMode}
         onSetTransitionMode={setTransitionMode}
@@ -2861,11 +2767,6 @@ export default function App() {
         onReorderQueue={reorderQueue}
         imgbbApiKey={imgbbApiKey}
         onSetImgbbApiKey={setImgbbApiKey}
-        releasesRefreshing={releasesRefreshing}
-        onRefreshReleases={refreshReleases}
-        followedArtists={followedArtists}
-        onFollowArtist={addFollowedArtist}
-        onUnfollowArtist={excludeFollowedArtist}
       />
 
       {/* Drag strip and window controls both removed from here.

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import VolumeControl from './VolumeControl.jsx';
-import { LyricsEditor, SyncedLyrics, PlainLyrics } from './Lyrics.jsx';
+import { SyncedLyrics, PlainLyrics } from './Lyrics.jsx';
 /* The DOCK's editor. LyricsEditor stays where it is — the fullscreen stage it
    was designed for is unchanged — but a full-height textarea and two
    side-by-side actions don't shrink into a 360px column, so the panel gets its
@@ -12,11 +12,9 @@ import { MetadataEditor, AlbumMetadataEditor } from './MetadataEditor.jsx';
 import { SpotifyCredsPanel, SoulseekCredsPanel, StudioMotionStyles } from './StudioOnboarding.jsx';
 import { useToast, setToastLayout, ToastPositionPicker } from './Toasts.jsx';
 import { useDownloadProgress, VideoPicker, ExplicitBadge, PlayIcon, PauseIcon } from './sharedUI.jsx';
-import CommandCenter from './CommandCenter.jsx';
 import InstantSearch from './InstantSearch.jsx';
 import LyricShare from './LyricShare.jsx';
 import { LyricsPickerButton } from './LyricsPicker.jsx';
-import useCoverFlight from './useCoverFlight.js';
 import { sampleCoverTheme, washSourceFor, recordWashSource, recordDeep, setColourIntensity, pageWash, pageTone, barTone, readableAccent, accentTextColor } from './coverTheme.js';
 import { getFileFormatLabel, formatTime, formatTotalMs, titleCollator, parseGenres } from './mediaUtils.js';
 import { songKey } from './instantSearch.js';
@@ -197,7 +195,6 @@ export default function StudioHome({
   isPlaying = false,
   onPlayTrack,           // (track, sortedList) → engine
   onTrackImported,       // (track) → App merges into library
-  onResumeOverlay,       // reopen the fullscreen overlay
   onSpotifyCredsSaved,
   onUpdateTrackMetadata, // (id, fields) → App: DB write, tag write, reload
   onUpdateAlbumMetadata, // (albumKey, fields, scope) → App: bulk album write
@@ -242,12 +239,6 @@ export default function StudioHome({
   onToggleRepeat,
   // Discover (owned by App.jsx — same plumbing as Immerse's Releases tab)
   playEvents = [],
-  releases = [],
-  releasesRefreshing = false,
-  onRefreshReleases,
-  followedArtists = [],
-  onFollowArtist,        // (artistName, itunesArtistId) → App
-  onUnfollowArtist,      // (artistName) → App
   // Playback (owned by App.jsx)
   transitionMode = 'off',
   onSetTransitionMode,
@@ -546,46 +537,6 @@ export default function StudioHome({
     return plain.slice(lyricSel.start, lyricSel.end + 1);
   }, [lyricSel, lyricsData]);
 
-  /* ---------- Command center (fullscreen Now Playing) --------------------
-   * `open` lives here rather than inside CommandCenter because opening it
-   * re-choreographs the stage around it: the cover flies up into a mini
-   * header and the card takes over the cover's exact square, so the
-   * transport below never moves. Same contract the overlay uses.
-   *
-   * ccExiting keeps the card mounted for its 260ms exit. Without it the
-   * card is yanked from the DOM the instant `open` flips and there's no
-   * out-animation at all — the overlay learned this the hard way and its
-   * CARD_EXIT_MS is the number we match. */
-  const CC_EXIT_MS = 260;
-  const [ccOpen, setCcOpen] = useState(false);
-  const [ccExiting, setCcExiting] = useState(false);
-  const ccExitTimerRef = useRef(null);
-  const npBigCoverRef = useRef(null);
-  const npMiniCoverRef = useRef(null);
-  const npReduceMotion = typeof window !== 'undefined'
-    && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const coverFlight = useCoverFlight({
-    open: ccOpen,
-    bigRef: npBigCoverRef,
-    miniRef: npMiniCoverRef,
-    radiusBig: 16,
-    radiusMini: 12,
-    disabled: npReduceMotion,
-  });
-  useEffect(() => () => { if (ccExitTimerRef.current) clearTimeout(ccExitTimerRef.current); }, []);
-  const toggleCc = useCallback(() => {
-    // capture() must run BEFORE the layout changes — it measures the source
-    // rect that the ghost flies from.
-    coverFlight.capture();
-    setCcOpen((wasOpen) => {
-      if (wasOpen) {
-        setCcExiting(true);
-        if (ccExitTimerRef.current) clearTimeout(ccExitTimerRef.current);
-        ccExitTimerRef.current = setTimeout(() => setCcExiting(false), CC_EXIT_MS);
-      }
-      return !wasOpen;
-    });
-  }, [coverFlight]);
 
   const closeMenu = useCallback(() => { setRowMenu(null); }, []);
 
@@ -940,12 +891,18 @@ export default function StudioHome({
   useEffect(() => { if (!currentTrack) setNpFull(false); }, [currentTrack]);
   const npFullRef = useRef(npFull);
   useEffect(() => { npFullRef.current = npFull; }, [npFull]);
+  const currentTrackRef = useRef(currentTrack);
+  useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
   useEffect(() => {
     const onKey = (e) => {
       const el = e.target;
       const tag = el && el.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable;
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+      // F (or Ctrl/Cmd+Shift+F) toggles the full view while something plays.
+      const plainF = !typing && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+      const comboF = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
+      if ((plainF || comboF) && (e.key === 'f' || e.key === 'F') && !e.defaultPrevented) {
+        if (!currentTrackRef.current) return;
         e.preventDefault();
         setNpFull((v) => !v);
         return;
@@ -1184,82 +1141,13 @@ export default function StudioHome({
   const [npAnimatedBg, setNpAnimatedBg] = useState(() => {
     try { return localStorage.getItem('studio:npAnimatedBg') === '1'; } catch { return false; }
   });
-  const [npShowLyrics, setNpShowLyrics] = useState(() => {
-    try { return localStorage.getItem('studio:npShowLyrics') === '1'; } catch { return false; }
-  });
-  const [npShowCredits, setNpShowCredits] = useState(() => {
-    try { return localStorage.getItem('studio:npShowCredits') === '1'; } catch { return false; }
-  });
   // Expanded library: the fullscreen button on the Now Playing panel no
   // longer opens the stage overlay — it grows the library grid to fill the
   // content area, hiding the page header (title + totals). The nav rail and
   // the Now Playing pane stay.
-  /* Retired: the new fullscreen view (`npFull`) replaces this. Always starts
-     false and nothing sets it, so the old portal and the gates keyed on it
-     are inert. The stale localStorage value is ignored rather than read,
-     since a leftover '1' used to hide the Now Playing bar on every launch. */
-  const [libExpanded, setLibExpanded] = useState(false);
-  const toggleLibExpanded = useCallback(() => {
-    setLibExpanded((v) => { const n = !v; try { localStorage.setItem('studio:libExpanded', n ? '1' : '0'); } catch { /* ignore */ } return n; });
-  }, []);
-
-
-  // Leaving fullscreen with the card up would strand it open on return.
-  // Declared here rather than beside the rest of the command-center state
-  // because libExpanded isn't in scope yet up there (temporal dead zone).
-  useEffect(() => {
-    if (!libExpanded) { setCcOpen(false); setCcExiting(false); }
-  }, [libExpanded]);
-
-  /* Keyboard: Enter OPENS the command center, Esc closes it.
-   *
-   * Enter is open-only and deliberately not a toggle — the card's own search
-   * field is focused the moment it opens, so a toggling Enter would close it
-   * again the first time you pressed Enter while typing. Esc is the single
-   * close gesture.
-   *
-   * Both are captured (third arg true) so they resolve before the overlay's
-   * own Esc-closes-fullscreen handler further down the tree. */
-  useEffect(() => {
-    if (!libExpanded) return undefined;
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        if (!ccOpen) return;              // let Esc fall through to close fullscreen
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        toggleCc();
-        return;
-      }
-      if (e.key !== 'Enter') return;
-      if (ccOpen) return;                  // already open — Enter does nothing
-      // Never hijack Enter out of a field the user is typing in.
-      const el = e.target;
-      const tag = el && el.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-        || (el && el.isContentEditable)) return;
-      // Enter on a focused button/link should activate it, not open the card.
-      if (tag === 'BUTTON' || tag === 'A') return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      toggleCc();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [libExpanded, ccOpen, toggleCc]);
-
-  const collapseToBar = useCallback(() => {
-    setLibExpanded(false);
-    try { localStorage.setItem('studio:libExpanded', '0'); } catch { /* ignore */ }
-  }, []);
 
   const toggleNpAnimatedBg = useCallback(() => {
     setNpAnimatedBg((v) => { const n = !v; try { localStorage.setItem('studio:npAnimatedBg', n ? '1' : '0'); } catch { /* ignore */ } return n; });
-  }, []);
-  const toggleNpShowLyrics = useCallback(() => {
-    setNpShowLyrics((v) => { const n = !v; try { localStorage.setItem('studio:npShowLyrics', n ? '1' : '0'); } catch { /* ignore */ } if (n) setNpShowCredits(false); return n; });
-  }, []);
-  const toggleNpShowCredits = useCallback(() => {
-    setNpShowCredits((v) => { const n = !v; try { localStorage.setItem('studio:npShowCredits', n ? '1' : '0'); } catch { /* ignore */ } if (n) setNpShowLyrics(false); return n; });
   }, []);
 
   /* ---------- Songs list virtualisation -----------------------------------
@@ -2450,7 +2338,7 @@ export default function StudioHome({
     };
   }, [libBySpotifyId, ownedTrackFor, dlState, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection]);
 
-  const barShown = !!currentTrack && !libExpanded;
+  const barShown = !!currentTrack;
   useEffect(() => {
     const gutter = compactMode ? 10 : 16;
     const gap = compactMode ? 10 : 12;
@@ -2509,7 +2397,7 @@ export default function StudioHome({
       '--gap': compactMode ? '10px' : '12px',
       /* + the notification lane, when notifications are set to take one
          (Toasts.jsx sets it on :root and eases it). */
-      '--np-reserve': `calc(${currentTrack && !libExpanded
+      '--np-reserve': `calc(${currentTrack
         ? (compactMode ? `${10 + 86 + 10}px` : `${16 + 86 + 12}px`)
         : (compactMode ? '10px' : '16px')} + var(--st-toast-lane, 0px))`,
       '--row-h': listDensity === 'compact' ? '40px' : listDensity === 'roomy' ? '64px' : '54px',
@@ -2741,7 +2629,6 @@ export default function StudioHome({
         .sth-npbar-seek-knob { position: absolute; right: -6px; top: 50%; margin-top: -6px; width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,0.5); opacity: 0; transform: scale(0.6); transition: opacity 0.12s ease, transform 0.12s ease; }
         .sth-npbar-seek:hover .sth-npbar-seek-knob, .sth-npbar-seek:focus-visible .sth-npbar-seek-knob { opacity: 1; transform: scale(1); }
         /* Each pane is a solid panel matching Stats/Find, not the glassy card. */
-        .sth-libpanel { background: rgba(16,16,18,0.92); border: 1px solid rgba(var(--st-fg-rgb), 0.09); border-radius: 16px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
         /* The scrolling region inside a panel */
         /* ---- Header/body column alignment ---------------------------------
            The header row is a SIBLING of this scroller, not a child. So the
@@ -3061,50 +2948,13 @@ export default function StudioHome({
         /* Large transport buttons that flank the artwork in fullscreen. */
         /* Fullscreen transport — a compact centered dock (matches the overlay),
            with the view toggles and exit tucked in the corners. */
-        .sth-npfull-bar { position: relative; z-index: 7; padding: 0 32px 26px; display: flex; align-items: center; justify-content: center; }
-        .sth-npfull-toggles { position: absolute; bottom: 30px; left: 32px; display: flex; align-items: center; gap: 6px; }
-        .sth-npfull-toggles:last-child { left: auto; right: 32px; }
-        .sth-npfull-dock { display: grid; grid-template-columns: auto minmax(200px, 300px) auto; align-items: center; gap: 16px; padding: 8px 16px; border-radius: 16px; background: rgba(18,18,20,0.62); backdrop-filter: blur(30px) saturate(1.6); -webkit-backdrop-filter: blur(30px) saturate(1.6); border: 1px solid rgba(var(--st-fg-rgb), 0.1); box-shadow: 0 24px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(var(--st-fg-rgb), 0.07); }
-        .sth-npfull-transport { display: flex; align-items: center; gap: 4px; }
-        .sth-npt-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 8px; border: none; background: transparent; color: rgba(var(--st-fg-rgb), 0.6); cursor: pointer; padding: 0; transition: color 0.15s ease, transform 0.15s ease; }
-        .sth-npt-btn:hover { color: #fff; transform: scale(1.08); }
-        .sth-npt-btn:active { transform: scale(0.94); }
-        .sth-npt-play { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; background: transparent; color: rgba(var(--st-fg-rgb), 0.85); cursor: pointer; padding: 0; transition: color 0.15s ease, transform 0.15s ease; }
-        .sth-npt-play:hover { color: #fff; transform: scale(1.08); }
-        .sth-npt-play:active { transform: scale(0.95); }
-        .sth-npfull-seek { display: flex; align-items: center; gap: 8px; min-width: 0; }
-        .sth-npfull-time { font-size: 10px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.55); font-variant-numeric: tabular-nums; flex-shrink: 0; min-width: 28px; }
-        .sth-npfull-time:last-child { text-align: left; }
-        .sth-npfull-track { position: relative; flex: 1; height: 12px; display: flex; align-items: center; cursor: pointer; touch-action: none; min-width: 0; }
-        .sth-npfull-track::before { content: ''; position: absolute; left: 0; right: 0; height: 3px; border-radius: 2px; background: rgba(var(--st-fg-rgb), 0.16); transition: height 0.12s ease; }
-        .sth-npfull-track:hover::before, .sth-npfull-track:focus-visible::before { height: 5px; }
-        .sth-npfull-fill { position: absolute; left: 0; height: 3px; border-radius: 2px; z-index: 1; transition: width 0.25s linear, height 0.12s ease; }
-        .sth-npfull-track:hover .sth-npfull-fill, .sth-npfull-track:focus-visible .sth-npfull-fill { height: 5px; }
-        .sth-npfull-knob { position: absolute; right: -5px; top: 50%; transform: translateY(-50%); width: 11px; height: 11px; border-radius: 50%; box-shadow: 0 1px 5px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.12s ease; }
-        .sth-npfull-track:hover .sth-npfull-knob, .sth-npfull-track:focus-visible .sth-npfull-knob { opacity: 1; }
-        .sth-npfull-vol { display: flex; align-items: center; justify-content: flex-end; }
         /* Credits/Up-next dock cards float just above the transport bar. */
-        .sth-npfull-dockrow { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; pointer-events: none; z-index: 6; }
-        .sth-npfull-dockwrap { width: min(620px, 88vw); position: relative; height: 0; pointer-events: auto; }
         /* Fullscreen credits — accent-bordered cards in a centered grid. */
         @keyframes sthCreditIn { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
         /* Fullscreen library list. */
         @keyframes sthEqBar { 0%, 100% { transform: scaleY(0.5); } 50% { transform: scaleY(1); } }
         /* Add-lyrics UI (shown when a track has no lyrics). */
-        .sth-lyrics-pane { position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column; animation: sthLyricsFadeIn 0.4s ease both; }
         @keyframes sthLyricsFadeIn { from { opacity: 0; } to { opacity: 1; } }
-        .sth-lyrics-pane > * { flex: 1; min-height: 0; }
-        .sth-lyrics-editor { height: 100%; min-height: 0; display: flex; flex-direction: column; animation: sthCreditIn 0.35s cubic-bezier(0.22,1,0.3,1) both; }
-        .sth-lyrtools { position: absolute; top: 6px; right: 6px; z-index: 3; display: flex; gap: 6px; opacity: 0; transform: translateY(-4px); transition: opacity 0.16s ease, transform 0.16s ease; }
-        .sth-lyrics-pane:hover .sth-lyrtools { opacity: 1; transform: translateY(0); }
-        .sth-lyrtool { width: 28px; height: 28px; border-radius: 8px; padding: 0; border: 1px solid rgba(var(--st-fg-rgb), 0.08); cursor: pointer; background: rgba(0,0,0,0.45); color: rgba(var(--st-fg-rgb), 0.75); display: flex; align-items: center; justify-content: center; transition: background 0.15s ease, color 0.15s ease; }
-        .sth-lyrtool:hover { background: rgba(0,0,0,0.7); color: #fff; }
-        .sth-lyrics-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%; padding: 20px; text-align: center; }
-        .sth-lyrics-btn { padding: 9px 18px; border-radius: 10px; border: none; cursor: pointer; font-size: 12.5px; font-weight: 700; transition: filter 0.14s ease, transform 0.1s ease; }
-        .sth-lyrics-btn:hover { filter: brightness(1.08); }
-        .sth-lyrics-btn:active { transform: scale(0.97); }
-        .sth-lyrics-btn.ghost { background: rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.8); }
-        .sth-lyrics-btn.ghost:hover { background: rgba(var(--st-fg-rgb), 0.14); filter: none; }
         .sth-npbtn:hover { color: #fff; background: rgba(var(--st-fg-rgb), 0.08); }
         .sth-npbtn:active { transform: scale(0.92); }
         /* Divider between the song actions and the view toggles. Inset top
@@ -3135,19 +2985,9 @@ export default function StudioHome({
         .sth-plpick.is-on:hover .sth-plpick-box { border-color: rgb(var(--pl-acc, 255, 255, 255)); }
         /* Click-to-play cover: the veil only appears on hover, so at rest the
            artwork is completely unobstructed. */
-        .sth-npcover-veil { opacity: 0; transition: opacity 0.16s ease; }
-        .sth-npcover:hover .sth-npcover-veil { opacity: 1; }
-        .sth-npcover:focus-visible .sth-npcover-veil { opacity: 1; }
-        .sth-npcover:active { transform: scale(0.985); }
-        .sth-npcover { transition: transform 0.12s ease; outline: none; }
-        .sth-npmute { width: 24px; height: 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 7px; border: none; background: transparent; color: rgba(var(--st-fg-rgb), 0.5); cursor: pointer; transition: color 0.14s ease, background 0.14s ease; }
-        .sth-npmute:hover { color: #fff; background: rgba(var(--st-fg-rgb), 0.08); }
-        .sth-npmute.is-on { color: #fff; background: rgba(var(--st-fg-rgb), 0.14); }
         /* Fullscreen Now Playing overlay (portaled to body) — covers the app
            content and nav rail, but sits BELOW the window controls and drag
            strip (z99/z101 in App) so they stay clickable. */
-        .sth-npfull { position: fixed; inset: 0; z-index: 40; display: flex; background: #0a0a0c; animation: sthNpFullIn 0.34s cubic-bezier(0.22, 1, 0.3, 1) both; }
-        .sth-npfull > .sth-libpanel { flex: 1; border-radius: 0; border: none; animation: none; }
         @keyframes sthNpFullIn { from { opacity: 0; } to { opacity: 1; } }
         /* Now Playing stage — artwork column, and a lyrics column that grows in
            beside it (expanded mode). flex-basis + opacity transitions carry the
@@ -3163,25 +3003,15 @@ export default function StudioHome({
            Percentage flex-basis inside a 6vw-padded row gave a different
            cover size at every window width, which is why the two surfaces
            never quite matched. */
-        .sth-np-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 0; padding: 0; max-width: 100vw; }
-        .sth-np-stage.has-lyrics { gap: clamp(20px, 3.5vw, 56px); }
-        .sth-np-artcol { flex: 0 0 auto; min-width: 0; min-height: 0; }
         /* No lyrics: the overlay lets the cover breathe wider. */
         /* ONE cover size, always. The overlay grows its cover when lyrics are
            off (58vh/46vw vs 52vh/42vw) but that means toggling lyrics resizes
            the artwork under you, and the command center — which takes over
            this exact square — would resize with it. Fixed at the with-lyrics
            size so the square is stable no matter what's toggled. */
-        .sth-np-artcol .sth-np-cover { width: min(52vh, 42vw); }
-        .sth-np-lyriccol { flex: 0 0 auto; width: 0; min-width: 0; overflow: hidden; opacity: 0; display: flex; flex-direction: column; align-self: center; height: min(52vh, 42vw); transition: width 0.45s cubic-bezier(0.22, 1, 0.3, 1), opacity 0.4s ease; }
-        .sth-np-stage.has-lyrics .sth-np-lyriccol { width: min(36vw, 460px); opacity: 1; }
         /* Only the lyrics body flexes. This used to be a bare child selector, which also hit
            the mini-header slot and stretched it from 88px to fill the column —
            pushing the lyrics far down the screen. */
-        .sth-np-lyriccol > .sth-np-lyricbody { flex: 1; min-height: 0; }
-        .sth-np-lyriccol > .sth-np-minislot { flex: 0 0 auto; }
-        @media (prefers-reduced-motion: reduce) { .sth-np-artcol, .sth-np-lyriccol { transition-duration: 0.01ms; } }
-        .sth-spinner { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(var(--st-fg-rgb), 0.14); border-top-color: #fff; animation: sthSpin 0.7s linear infinite; }
         @keyframes sthSpin { to { transform: rotate(360deg); } }
         .sth-vol { -webkit-appearance: none; appearance: none; height: 3px; border-radius: 2px; outline: none; cursor: pointer; }
         .sth-vol::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 11px; height: 11px; border-radius: 50%; background: #fff; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.5); transition: transform 0.12s ease; }
@@ -3303,11 +3133,6 @@ export default function StudioHome({
            of the measured height, and clips to nothing when collapsed. */
         /* --- redesign: chart song grid --- */
         /* --- redesign: library collection hero + control bar --- */
-        .sth-vscroll { scrollbar-width: thin; scrollbar-color: rgba(var(--st-fg-rgb), 0.14) transparent; }
-        .sth-vscroll::-webkit-scrollbar { width: 5px; }
-        .sth-vscroll::-webkit-scrollbar-track { background: transparent; }
-        .sth-vscroll::-webkit-scrollbar-thumb { background: rgba(var(--st-fg-rgb), 0.14); border-radius: 999px; }
-        .sth-vscroll::-webkit-scrollbar-thumb:hover { background: rgba(var(--st-fg-rgb), 0.24); }
         /* Album detail panel entrance — slides in from the right, settling at
            transform: none so panel text stays crisp (no lingering GPU layer). */
         @keyframes sthPanelIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
@@ -3331,9 +3156,6 @@ export default function StudioHome({
         @keyframes sthNpArtOut { 0% { opacity: 1; transform: scale3d(1,1,1); } 100% { opacity: 0; transform: scale3d(0.94,0.94,1); } }
         @keyframes sthNpArtIn  { 0% { opacity: 0; transform: scale3d(1.05,1.05,1); } 100% { opacity: 1; transform: scale3d(1,1,1); } }
         @keyframes sthNpMetaIn { 0% { opacity: 0; transform: translate3d(0,7px,0); } 100% { opacity: 1; transform: translate3d(0,0,0); } }
-        @media (prefers-reduced-motion: reduce) {
-          .sth-np-art, .sth-np-ghost, .sth-np-line, .sth-np-meta { animation: none !important; }
-        }
 
         /* ---- Library scroll performance ----
            content-visibility lets Chromium skip layout AND paint for tiles
@@ -3527,7 +3349,7 @@ export default function StudioHome({
         .sth-lrow-play, .sth-lrow-more { border-radius: var(--r-ctl-s) !important; }
         .sth-searchbar, .sth-libtag, .sth-libact, .sth-libact-primary, .sth-set-navi { border-radius: var(--r-ctl-m) !important; }
         .sth-libact, .sth-libact-primary, .sth-libtag { border: none !important; }
-        .sth-libpanel, .sth-npbar, .sth-scroll { border-radius: var(--r-card); }
+        .sth-npbar, .sth-scroll { border-radius: var(--r-card); }
         .sth-albart { border-radius: var(--r-art) !important; }
         /* Scrollbar thumbs and progress bars keep their pill shape — they are
            rails, not controls. */
@@ -3792,11 +3614,7 @@ export default function StudioHome({
         // Full width now — the sidebar is gone. `top` clears the bar rather
         // than padding the content, so the scroller's own top edge is the
         // first pixel below the bar and sticky children align to it.
-        /* Always below the top bar. This used to collapse to top: 0 when
-           `libExpanded` was set — a leftover from the OLD fullscreen library,
-           which no longer exists. The flag is still persisted in localStorage,
-           so anyone who ever opened that view had the content wrapper stripped
-           and slid under the tabs on every launch since. */
+        /* Always below the top bar. */
         position: 'absolute', top: 'var(--shell-top)',
         bottom: 0, left: compactMode ? 'var(--gutter)' : SIDEBAR_W, right: 0, zIndex: 1,
         display: 'flex', flexDirection: 'column',
@@ -3806,7 +3624,7 @@ export default function StudioHome({
         /* The panel's own width plus the gap between it and the card. The
            card's --gutter margin sits outside this, so the card ends exactly
            one gap from the panel's edge. */
-        paddingRight: (npPanelOpen && currentTrack && !libExpanded) ? NP_PANEL_W + 12 : 0,
+        paddingRight: (npPanelOpen && currentTrack) ? NP_PANEL_W + 12 : 0,
         transition: 'padding-right 0.26s cubic-bezier(0.22,1,0.3,1)',
       }}>
         {/* ---- Search bar ----------------------------------------------------
@@ -3819,17 +3637,8 @@ export default function StudioHome({
             Constrained width rather than full-bleed: a search field spanning
             a 1400px window reads as a text area, not a control. */}
 
-        {/* No is-bleed: that variant stripped the wrapper's margin, radius,
-            background and border for the retired fullscreen library. Nothing
-            reaches it any more, and while it did the panel simply vanished. */}
-        {/* NO per-section padding overrides.
-            There were four here — paddingBottom varying between 90 / 10 / 14
-            depending on the tab, plus three keyed on `libExpanded`, the flag
-            from the retired fullscreen library that nothing sets any more.
-            The net effect was the wrapper visibly changing size when moving
-            between Home, Songs and Discover. The panel's geometry is fixed in
-            .sth-scroll; only the `is-page` variant (album / playlist) alters
-            it, and that one is deliberate. */}
+        {/* No per-section padding: the panel's geometry is fixed in
+            .sth-scroll, and only the `is-page` variant alters it. */}
         {/* is-page for the WHOLE library section, not just album/playlist
             pages. The library's table scrolls internally, but the wrapper was
             also scrolling and carrying 90px of bottom padding — so the list
@@ -4375,7 +4184,6 @@ export default function StudioHome({
                       filter={libFilter}
                       onFilter={setLibFilter}
                       searchPlaceholder="Search artists"
-                      acc={acc}
                       onImportFiles={onImportFiles}
                       onImportFolder={onImportFolder}
                       onImportSpotify={onImportSpotify}
@@ -4405,7 +4213,6 @@ export default function StudioHome({
                       filter={libFilter}
                       onFilter={setLibFilter}
                       searchPlaceholder="Search albums"
-                      acc={acc}
                       onImportFiles={onImportFiles}
                       onImportFolder={onImportFolder}
                       onImportSpotify={onImportSpotify}
@@ -4459,7 +4266,6 @@ export default function StudioHome({
                     onPickSort={pickLibRowSort}
                     onPlayAll={rows.length ? () => onPlayTrack?.(rows[0], rows) : null}
                     onShuffle={rows.length ? () => { const sh = [...rows].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); } : null}
-                    acc={acc}
                     onImportFiles={onImportFiles}
                     onImportFolder={onImportFolder}
                     onImportSpotify={onImportSpotify}
@@ -5348,7 +5154,7 @@ export default function StudioHome({
         />
       ) : null}
 
-      {currentTrack && !libExpanded && !npFull ? (
+      {currentTrack && !npFull ? (
         <>
           {/* Colour override for this record.
               The handle is a chevron tucked behind the left edge of the Now
@@ -5420,7 +5226,7 @@ export default function StudioHome({
       ) : null}
 
       <NowPlayingPanelDock
-        open={npPanelOpen && !!currentTrack && !libExpanded && !npFull}
+        open={npPanelOpen && !!currentTrack && !npFull}
         tab={npPanelTab}
         onTab={(t) => setPanel(true, t)}
         onClose={() => setPanel(false)}
@@ -5508,16 +5314,10 @@ export default function StudioHome({
         />
       ) : null}
 
-      {/* ---- Lyric browser + share, for the DOCK ---------------------------
-       * The pair inside the fullscreen portal above is gated on `libExpanded`,
-       * so from the dock the browse button had nothing to open and a selection
-       * had nothing to render. These are the same components driven by the
-       * same state, mounted for the other case.
-       *
-       * Gated on `!libExpanded` precisely so the two never coexist: they share
-       * `lyricsPickReq`, `lyricSel` and `lyricShareOpen`, and two live copies
-       * would each answer the same request — two modals, two cards. */}
-      {!libExpanded && onPickLyrics && currentTrack ? (
+      {/* ---- Lyric browser + share --------------------------------------
+       * Driven by `lyricsPickReq`, `lyricSel` and `lyricShareOpen`; keep a
+       * single copy of each, or one request would open two modals. */}
+      {onPickLyrics && currentTrack ? (
         <LyricsPickerButton
           currentTrack={currentTrack}
           accent={accent}
@@ -5537,7 +5337,7 @@ export default function StudioHome({
       {/* Selection confirm bar. position:fixed and centred at the top, so it
           reads the same whether the lines were picked in the dock or the
           fullscreen stage. */}
-      {!libExpanded && lyricSel && !lyricShareOpen ? (
+      {lyricSel && !lyricShareOpen ? (
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
@@ -5574,7 +5374,7 @@ export default function StudioHome({
         </div>
       ) : null}
 
-      {!libExpanded && lyricShareOpen && selectedLyricLines.length ? (
+      {lyricShareOpen && selectedLyricLines.length ? (
         <LyricShare
           lines={selectedLyricLines}
           track={currentTrack}
@@ -6152,172 +5952,6 @@ export default function StudioHome({
         onClose={() => setPick(null)}
         onImported={(track) => { if (pick?.dlKey) markDl(pick.dlKey, 'done'); onTrackImported?.(track); }}
       />
-      {/* Fullscreen Now Playing — portaled to <body> so it escapes the content
-          column and covers the entire window, nav rail included. */}
-      {libExpanded && section === 'library' && currentTrack ? createPortal(
-        <div className="sth-npfull">
-          <NowPlayingPanel
-            track={currentTrack} isPlaying={isPlaying} art={currentTrack ? coverFor(currentTrack) : null} accent={accent}
-            onOpenFullscreen={toggleLibExpanded} onCollapseToBar={collapseToBar} expanded
-            volume={volume} onSetVolume={onSetVolume} onTogglePlay={onTogglePlay} onPrev={onPrev} onNext={onNext}
-            shuffleOn={shuffleOn} repeat={repeat} onToggleShuffle={onToggleShuffle} onToggleRepeat={onToggleRepeat}
-            animatedBg={npAnimatedBg} onToggleAnimatedBg={toggleNpAnimatedBg}
-            showLyrics={npShowLyrics} onToggleLyrics={toggleNpShowLyrics}
-            showCredits={npShowCredits} onToggleCredits={toggleNpShowCredits}
-            lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} currentTime={currentTime} onSeek={onSeek}
-            library={library} onPlayTrack={onPlayTrack}
-            upNext={queueIndex >= 0 ? queue.slice(queueIndex + 1) : []}
-            onSelectTrack={(tr) => onPlayTrack?.(tr, queue)}
-            lyricSelection={lyricSel} onLyricSelectStart={startLyricSel} onLyricSelectLine={extendLyricSel}
-            onBrowseLyrics={onPickLyrics ? () => setLyricsPickReq((n) => n + 1) : null}
-            ccOpen={ccOpen} ccExiting={ccExiting} onToggleCc={toggleCc}
-            bigCoverRef={npBigCoverRef} miniCoverRef={npMiniCoverRef}
-            coverInFlight={coverFlight.inFlight}
-            commandCenter={(
-              <CommandCenter
-                open={ccOpen}
-                exiting={ccExiting}
-                onRequestClose={toggleCc}
-                variant="rail"
-                library={library}
-                playEvents={playEvents}
-                releases={releases}
-                releasesRefreshing={releasesRefreshing}
-                albumCoverOverrides={albumCoverOverrides}
-                currentTrack={currentTrack}
-                currentTrackId={currentTrack?.id || null}
-                isPlaying={isPlaying}
-                followedArtists={followedArtists}
-                accent={accent}
-                reduceMotion={npReduceMotion}
-                /* `library`, NOT `queue`. playTrack() looks the clicked track
-                   up inside the list it's given; passing the CURRENT queue
-                   meant any track not already queued came back as index -1,
-                   fell through to 0, and played whatever happened to be first.
-                   The overlay passes library here for exactly this reason. */
-                onSelectTrack={(tr) => onPlayTrack?.(tr, library, 'list')}
-                onPlayTrack={onPlayTrack}
-                onTrackImported={onTrackImported}
-                onRefreshReleases={onRefreshReleases}
-                onFollowArtist={onFollowArtist}
-                onUnfollowArtist={onUnfollowArtist}
-                onUpdateTrackMetadata={onUpdateTrackMetadata}
-                onUpdateAlbumMetadata={onUpdateAlbumMetadata}
-                onRemoveFromLibrary={onRemoveFromLibrary}
-                /* The card opens the HOST's dialogs — StudioHome already has
-                   a MetadataEditor, so there's no second copy of that chrome. */
-                onEditTrackMeta={(tr) => setEditingTrack(tr)}
-                onEditAlbumMeta={() => { /* album editor lives in the overlay only for now */ }}
-                onConfirm={(cfg) => { if (cfg?.onConfirm) cfg.onConfirm(); }}
-                onMenu={() => { /* no fullscreen context menu on this surface yet */ }}
-                onReturnFocus={() => { try { document.querySelector('.sth-npfull')?.focus?.(); } catch { /* ignore */ } }}
-                notify={(ok, msg) => pushToast?.({ message: String(msg || ''), kind: ok ? 'success' : 'error', durationMs: ok ? 3200 : 7000 })}
-              />
-            )}
-          />
-          {/* Lyrics browser. Trigger suppressed — it's driven by the toolbar
-              button via openRequest, same as the overlay. Its modal portals to
-              document.body so it lands above the fullscreen layer. */}
-          {onPickLyrics && currentTrack ? (
-            <LyricsPickerButton
-              currentTrack={currentTrack}
-              accent={accent}
-              visible={false}
-              hideTrigger
-              openRequest={lyricsPickReq}
-              onApply={onPickLyrics}
-              appliedText={lyricsData
-                ? (lyricsData.synced?.length
-                  ? lyricsData.synced.map((l) => l.text).join('\n')
-                  : (lyricsData.plain || ''))
-                : ''}
-              appliedId={lyricsData?.lyricId ?? null}
-            />
-          ) : null}
-
-          {/* Selection action bar. Top-centre deliberately: the bottom band is
-              the transport and the dock cards, and a bar that covers those is
-              worse than one you have to look up for. */}
-          {lyricSel && !lyricShareOpen ? (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'fixed', left: '50%', top: 26, transform: 'translateX(-50%)',
-                zIndex: 45, display: 'flex', alignItems: 'center', gap: 12,
-                padding: '9px 11px 9px 15px', borderRadius: 13,
-                background: 'rgba(16,16,20,0.9)',
-                border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
-                boxShadow: '0 12px 44px rgba(0,0,0,0.55)',
-              }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-text-rgb), 0.72)', fontVariantNumeric: 'tabular-nums' }}>
-                {lyricSel.end - lyricSel.start + 1} line{lyricSel.end === lyricSel.start ? '' : 's'} selected
-              </span>
-              <button type="button" onClick={() => setLyricShareOpen(true)}
-                style={{
-                  padding: '7px 16px', borderRadius: 9,
-                  border: `1px solid rgba(${readableAccent(accent)},0.45)`,
-                  background: `rgba(${readableAccent(accent)},0.28)`,
-                  color: 'var(--st-text)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                }}>
-                Make card
-              </button>
-              <button type="button" onClick={clearLyricSel}
-                title="Cancel selection (Esc)"
-                style={{
-                  width: 26, height: 26, borderRadius: 8, border: 'none',
-                  background: 'rgba(var(--st-fg-rgb), 0.06)', color: 'rgba(var(--st-sub-rgb), 0.55)',
-                  fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                ×
-              </button>
-            </div>
-          ) : null}
-
-          {lyricShareOpen && selectedLyricLines.length ? (
-            <LyricShare
-              lines={selectedLyricLines}
-              track={currentTrack}
-              coverUrl={currentTrack ? coverFor(currentTrack) : null}
-              startTime={lyricSel && lyricsData?.synced?.length
-                ? lyricsData.synced[lyricSel.start]?.time ?? null : null}
-              accent={accent}
-              onClose={() => setLyricShareOpen(false)}
-              onNotify={(ok, msg) => {
-                pushToast?.({ message: msg, kind: ok ? 'success' : 'error', durationMs: ok ? 3000 : 6500 });
-                if (ok) clearLyricSel();
-              }}
-            />
-          ) : null}
-
-          {/* Cover ghost — fixed-position, flies between the big cover and the
-              mini header. Rendered at the portal root so it isn't clipped by
-              the stage's overflow. */}
-          {coverFlight.ghost ? (
-            <div
-              aria-hidden
-              onTransitionEnd={coverFlight.handleTransitionEnd}
-              style={{ ...coverFlight.ghostStyle(accent), zIndex: 8, overflow: 'hidden' }}
-            >
-              {/* <img> rather than a background, for the same reason as the
-                  mini header: the ghost SHRINKS from ~400px to 72px over the
-                  flight, so it spends most of the animation heavily
-                  downscaled. A background-image gets one bilinear step and
-                  goes soft on the way down; an <img> is resampled properly at
-                  each size. */}
-              {currentTrack && coverFor(currentTrack) ? (
-                <img
-                  src={coverFor(currentTrack)}
-                  alt=""
-                  draggable={false}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </div>,
-        document.body,
-      ) : null}
 
       {/* ============ Instant search ======================================
           Last child of the root, so it renders above every other surface
@@ -6423,314 +6057,14 @@ function ImportMenuItem({ label, hint, onClick }) {
   );
 }
 
-/** Credits view for the Now Playing panel. Fetches from Genius on demand
- *  (handled by the parent) and renders grouped roles. */
-/* --- Ported from the overlay (Overlays.jsx) so credits/queue behave identically. --- */
-function DockCard({ side, label, open, onToggle, accent, layout = 'lane', meta = null, dockBarH = 48, children }) {
-  const [hov, setHov] = useState(false);
-  const spring = 'cubic-bezier(0.22, 1, 0.36, 1)';
-  const TUCK = 6;          // how much of the chip hides behind the dock
-  const VISIBLE = 27;      // the label band you can actually see
-  const chipH = VISIBLE + TUCK;
-  // 'wrap' sizes itself to its content: a ResizeObserver on an inner,
-  // never-clipped wrapper reports the grid's TRUE height — re-wraps from
-  // window resizes or late data loads re-measure automatically. Numeric
-  // px, so the open/close morph still animates.
-  const measureRef = useRef(null);
-  const [wrapH, setWrapH] = useState(null);
-  useLayoutEffect(() => {
-    if (layout !== 'wrap') return undefined;
-    const el = measureRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(() => {
-      const h = Math.ceil(el.getBoundingClientRect().height);
-      if (h > 0) setWrapH(h);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [layout]);
-  // 34 header + 4/10 body padding + 2 safety.
-  const openH = layout === 'wrap'
-    ? Math.min(Math.max((wrapH || 112) + 50, 96), 260)
-    : 176;
-  return (
-    <div
-      role={open ? 'dialog' : 'button'}
-      aria-label={label}
-      tabIndex={open ? -1 : 0}
-      onClick={open ? undefined : onToggle}
-      onKeyDown={open ? undefined : (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        position: 'absolute', bottom: dockBarH - TUCK, [side]: 14, zIndex: open ? 2 : 1,
-        pointerEvents: 'auto',
-        width: open ? 'calc(100% - 28px)' : 128,
-        height: open ? openH : chipH,
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        borderRadius: open ? 16 : '10px 10px 0 0',
-        border: '1px solid rgba(var(--st-fg-rgb), 0.1)',
-        background: open ? 'rgba(18,18,20,0.78)' : (hov ? 'rgba(26,26,30,0.72)' : 'rgba(18,18,20,0.62)'),
-        backdropFilter: 'blur(30px) saturate(1.6)', WebkitBackdropFilter: 'blur(30px) saturate(1.6)',
-        boxShadow: open
-          ? `0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(${accent},0.22)`
-          : '0 -8px 24px rgba(0,0,0,0.35)',
-        cursor: open ? 'default' : 'pointer',
-        transform: !open && hov ? 'translateY(-4px)' : 'translateY(0)',
-        transition: [
-          `width 360ms ${spring}`,
-          `height 360ms ${spring}`,
-          `border-radius 360ms ${spring}`,
-          `transform 200ms ${spring}`,
-          'background 180ms ease',
-          'box-shadow 360ms ease',
-        ].join(', '),
-      }}
-    >
-      {/* Header — the same text is chip label and strip title. Centered in
-          the chip, slides to the leading edge as the strip stretches. */}
-      <div
-        onClick={(e) => { e.stopPropagation(); onToggle(); }}
-        style={{
-          position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer',
-          height: open ? 34 : VISIBLE, padding: open ? '4px 84px 0 16px' : 0,
-          transition: `padding 360ms ${spring}, height 360ms ${spring}`,
-        }}
-      >
-        {/* Label — the ONLY element in flow, so the closed chip centers it
-            perfectly; open slides it to the leading edge. */}
-        <div style={{
-          flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          textAlign: open ? 'left' : 'center',
-          fontSize: open ? 11 : 9.5, fontWeight: 800, lineHeight: open ? '34px' : `${VISIBLE}px`,
-          letterSpacing: '0.12em', textTransform: 'uppercase',
-          color: open || hov ? '#fff' : 'rgba(var(--st-fg-rgb), 0.55)',
-          transition: `font-size 360ms ${spring}, color 0.15s ease`,
-        }}>
-          {label}
-        </div>
-        {/* Right cluster — meta + × float absolutely so they never shove the
-            label off-center; they only materialize once the strip is open. */}
-        <div style={{
-          position: 'absolute', right: 12, top: 0, bottom: 0,
-          display: 'flex', alignItems: 'center', gap: 10,
-          opacity: open ? 1 : 0, pointerEvents: open ? 'auto' : 'none',
-          transition: open ? 'opacity 180ms ease 180ms' : 'opacity 100ms ease',
-        }}>
-          {meta ? (
-            <span style={{ fontSize: 9, letterSpacing: '0.06em', color: 'rgba(var(--st-sub-rgb), 0.32)', whiteSpace: 'nowrap' }}>{meta}</span>
-          ) : null}
-          <button
-            type="button" title="Close"
-            onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            style={{
-              width: 22, height: 22, borderRadius: 7, border: 'none', cursor: 'pointer',
-              background: 'rgba(var(--st-fg-rgb), 0.08)', color: 'rgba(var(--st-text-rgb), 0.7)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0,
-            }}
-          >
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-          </button>
-        </div>
-      </div>
-      {/* Body — fades/rises in once the strip has mostly stretched; leaves
-          first on close so the box collapses empty. 'wrap' flows groups into
-          rows so everything fits one page; 'lane' is a column-flow grid. */}
-      <div style={{
-        flex: 1, minHeight: 0,
-        padding: '4px 14px 10px',
-        ...(layout === 'wrap' ? {
-          display: 'block', overflow: 'hidden',
-        } : {
-          display: 'grid', gridTemplateRows: 'repeat(3, 1fr)', gridAutoFlow: 'column',
-          gridAutoColumns: 'minmax(210px, 250px)', gap: '1px 20px',
-          overflowX: 'auto', overflowY: 'hidden',
-        }),
-        opacity: open ? 1 : 0,
-        transform: open ? 'translateY(0)' : 'translateY(10px)',
-        pointerEvents: open ? 'auto' : 'none',
-        transition: open
-          ? `opacity 220ms ease 150ms, transform 340ms ${spring} 130ms`
-          : 'opacity 110ms ease, transform 150ms ease',
-        scrollbarWidth: 'thin', scrollbarColor: 'rgba(var(--st-fg-rgb), 0.15) transparent',
-      }}>
-        {layout === 'wrap' ? (
-          <div ref={measureRef} style={{
-            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-            gridAutoRows: 'auto', alignContent: 'start', gap: '10px 16px',
-          }}>
-            {children}
-          </div>
-        ) : children}
-      </div>
-    </div>
-  );
-}
 
-/** One labelled group inside the Credits card. */
-function CreditGroup({ label, names, accent = '160,160,160', style }) {
-  return (
-    <div style={{
-      minWidth: 0, minHeight: 42, overflow: 'hidden', padding: '2px 0 2px 10px',
-      borderLeft: `2px solid rgba(${accent}, 0.4)`,
-      display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
-      ...style,
-    }}>
-      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.4)', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
-      <div style={{
-        fontSize: 11.5, fontWeight: 500, color: 'rgba(var(--st-text-rgb), 0.9)', lineHeight: 1.4,
-        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-      }} title={names.join(', ')}>{names.join(', ')}</div>
-    </div>
-  );
-}
 
 /** Tiny 3-bar equalizer marking the playing row in the library panel.
  *  Animates while playing, freezes as short bars when paused. */
 
 
 
-function NpCreditsView({ credits, state, accent, track }) {
-  const acc = readableAccent(accent);
-  const Group = ({ label, names }) => (
-    names && names.length ? (
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.13em', textTransform: 'uppercase', color: `rgb(${acc})`, marginBottom: 6 }}>{label}</div>
-        {names.map((n, i) => (
-          <div key={`${n}-${i}`} style={{ fontSize: 13, color: 'rgba(var(--st-text-rgb), 0.82)', lineHeight: 1.5 }}>{n}</div>
-        ))}
-      </div>
-    ) : null
-  );
-  return (
-    <div className="sth-libscroll sth-vscroll" style={{ padding: '24px 24px 34px', animation: 'sthNpTxtIn 380ms cubic-bezier(0.22,1,0.36,1) both' }}>
-      {state === 'loading' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, color: 'rgba(var(--st-sub-rgb), 0.4)' }}>
-          <div className="sth-spinner" style={{ borderTopColor: `rgb(${acc})` }} />
-          <div style={{ fontSize: 11.5 }}>Looking up credits…</div>
-        </div>
-      ) : state === 'error' || !credits ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, textAlign: 'center', color: 'rgba(var(--st-sub-rgb), 0.4)' }}>
-          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--st-fg-rgb), 0.28)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
-          <div style={{ fontSize: 12.5, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>No credits found</div>
-          <div style={{ fontSize: 11, color: 'rgba(var(--st-sub-rgb), 0.34)' }}>Genius didn't have a confident match for this track.</div>
-        </div>
-      ) : (
-        <>
-          <Group label="Performed by" names={credits.primary} />
-          <Group label="Written by" names={credits.writers} />
-          <Group label="Produced by" names={credits.producers} />
-          {credits.performances && credits.performances.length ? (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.13em', textTransform: 'uppercase', color: `rgb(${acc})`, marginBottom: 6 }}>Credits</div>
-              {credits.performances.map((perf, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5, color: 'rgba(var(--st-text-rgb), 0.72)', lineHeight: 1.55, padding: '1px 0' }}>
-                  <span style={{ color: 'rgba(var(--st-sub-rgb), 0.48)', flexShrink: 0 }}>{perf.label}</span>
-                  <span style={{ textAlign: 'right' }}>{Array.isArray(perf.names) ? perf.names.join(', ') : perf.names}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {credits.releaseDate ? (
-            <div style={{ fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.4)', marginTop: 4 }}>Released {credits.releaseDate}</div>
-          ) : null}
-          {credits.url ? (
-            <a href={credits.url} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 12, fontSize: 11, color: `rgb(${acc})`, textDecoration: 'none', opacity: 0.85 }}>View on Genius ↗</a>
-          ) : null}
-        </>
-      )}
-    </div>
-  );
-}
 
-/** Lyrics view for the Now Playing panel. Synced lyrics highlight and
- *  auto-scroll to the current line; plain lyrics render as a static block. */
-function NpLyricsView({ lyricsData, currentTime, accent, onSeek, fontSize = 15, track, onLyricsSaved,
-  selection = null, onSelectStart, onSelectLine, onBrowseLyrics }) {
-  const acc = readableAccent(accent);
-  /* This view used to keep an optimistic `local` copy of freshly-saved
-   * lyrics. That shadowed the real owner and lost the save two ways:
-   *
-   *   - This component is mounted TWICE (collapsed panel and expanded
-   *     panel), each with its own `local`. Saving in the expanded one and
-   *     then leaving fullscreen unmounted the instance holding the result;
-   *     the collapsed instance still had `local === null` and fell back to
-   *     the stale `lyricsData` prop.
-   *   - StudioShell caches lyrics per track id and was never told about the
-   *     save, so switching tracks and coming back served the stale entry.
-   *
-   * The lyrics were always safely in the DB — they were just being hidden by
-   * caches that never heard about the write. Now the save reports up to
-   * StudioShell, the single owner, exactly as the overlay's editor does. */
-  const [editing, setEditing] = useState(false);
-  useEffect(() => { setEditing(false); }, [track ? track.id : null]);
-
-  const synced = lyricsData?.synced || null;
-  const plain = lyricsData?.plain || null;
-  const hasLyrics = !!((synced && synced.length) || plain);
-
-  if (editing) {
-    return (
-      <div className="sth-lyrics-editor">
-        <LyricsEditor
-          track={track}
-          currentTime={currentTime}
-          existingSynced={synced}
-          existingPlain={plain}
-          accent={accent}
-          onSeek={onSeek}
-          onSave={(newSynced, newPlain) => { onLyricsSaved?.(newSynced, newPlain, track?.id); setEditing(false); }}
-          onCancel={() => setEditing(false)}
-        />
-      </div>
-    );
-  }
-
-  if (!hasLyrics) {
-    return (
-      <div className="sth-lyrics-empty">
-        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--st-fg-rgb), 0.28)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h11M4 10h9M4 14h11M4 18h7" /></svg>
-        <div style={{ fontSize: 13.5, color: 'rgba(var(--st-sub-rgb), 0.6)', fontWeight: 600 }}>No lyrics for this track</div>
-        {track ? (
-          <button type="button" className="sth-lyrics-btn" onClick={() => setEditing(true)} style={{ background: `rgb(${acc})`, color: accentTextColor(acc) }}>Add lyrics</button>
-        ) : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="sth-lyrics-pane">
-      {synced && synced.length ? (
-        /* lineHeight passed explicitly to match the overlay — SyncedLyrics
-           defaults to 1.55, the overlay's fullscreen stage uses 1.5, and the
-           difference compounds visibly over a screen's worth of lines. */
-        <SyncedLyrics lines={synced} currentTime={currentTime} accent={accent} onSeek={onSeek} fontSize={fontSize} lineHeight={1.5}
-          selection={selection} onSelectStart={onSelectStart} onSelectLine={onSelectLine} />
-      ) : (
-        <div className="sth-libscroll sth-vscroll" style={{ height: '100%', padding: '10px 12px' }}>
-          <PlainLyrics text={plain} accent={accent} fontSize={Math.max(13, fontSize - 1)} lineHeight={1.7} />
-        </div>
-      )}
-      {/* Pencil = edit + tap-to-sync, lines = browse other versions. Same
-          pair, icons and geometry as the overlay's LyricTools so the two
-          surfaces don't disagree about what these buttons look like. */}
-      {track ? (
-        <div className="sth-lyrtools">
-          <button type="button" className="sth-lyrtool" onClick={() => setEditing(true)}
-            title="Edit lyrics · tap-to-sync" aria-label="Edit lyrics">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></svg>
-          </button>
-          {onBrowseLyrics ? (
-            <button type="button" className="sth-lyrtool" onClick={onBrowseLyrics}
-              title="Browse lyrics versions" aria-label="Browse lyrics versions">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 /** Floating Now Playing bar — the collapsed form of the panel, pinned to the
  *  bottom of the library content area (Spotify-mobile style). Keeps the
@@ -7058,7 +6392,7 @@ function NowPlayingFullView({
                 selection={lyricSelection} onSelectStart={onLyricSelectStart} onSelectLine={onLyricSelectLine}
                 currentTime={currentTime} accent={accent} onSeek={onSeek} />
             ) : (
-              <InfoTab track={track} art={art} acc={acc} artistInfo={artistInfo} credits={credits} />
+              <InfoTab track={track} art={art} artistInfo={artistInfo} credits={credits} />
             )}
           </aside>
         ) : null}
@@ -7189,7 +6523,7 @@ function NowPlayingPanelDock({
             selection={lyricSelection} onSelectStart={onLyricSelectStart} onSelectLine={onLyricSelectLine}
             currentTime={currentTime} accent={accent} onSeek={onSeek} />
         ) : (
-          <InfoTab track={track} art={art} acc={acc} artistInfo={artistInfo} credits={credits} />
+          <InfoTab track={track} art={art} artistInfo={artistInfo} credits={credits} />
         )}
       </div>
     </aside>
@@ -7559,7 +6893,7 @@ function LyricsTab({
  * internal service their own clients use — so followers is shown instead, and
  * labelled as followers rather than dressed up as listeners.
  */
-function InfoTab({ track, art, acc, artistInfo, credits }) {
+function InfoTab({ track, art, artistInfo, credits }) {
   const fmtNum = (n) => (Number.isFinite(n) ? n.toLocaleString() : null);
 
   /* Details as compact pairs. Album is omitted deliberately — it's already the
@@ -8885,7 +8219,7 @@ function LibSortMenu({ value, field, onPick }) {
 
 function LibHeader({
   title, meta, filter, onFilter, searchPlaceholder,
-  onPlayAll, onShuffle, sortValue, sortField, onPickSort, acc,
+  onPlayAll, onShuffle, sortValue, sortField, onPickSort, 
   onImportFiles, onImportFolder, onImportSpotify, importing = false,
 }) {
   const [importOpen, setImportOpen] = useState(false);
@@ -9348,7 +8682,7 @@ function NowPlayingBar(props) {
   return props.track ? <NowPlayingBarBody {...props} /> : null;
 }
 
-function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, currentTime = 0, onSeek, onExpand, onToggleImmerse, immerseOn = false, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, currentTime = 0, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
      else touched it. The fullscreen stage keeps the darker pair because it
@@ -9604,717 +8938,14 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
  * two while that happens, and that blank frame is the blink.
  * ------------------------------------------------------------------------- */
 
-/** The stable part of a cover URL: its content hash where one exists. */
-function artIdentity(url) {
-  if (!url) return '';
-  const m = /^studio-cover:\/\/[^/]*\/([a-f0-9]{16,})\./i.exec(url);
-  return m ? `sha:${m[1].toLowerCase()}` : url;
-}
 
-/**
- * Is the incoming artwork the same PICTURE as the outgoing one?
- *
- * Three tests, cheapest first: the same URL, the same content hash inside two
- * different-looking URLs, or — the case bytes can't settle — the same record.
- * Two tracks on one album share its sleeve by definition, so an album match is
- * a sound answer even when the two files carry differently-encoded copies of
- * it. A false positive here costs a swap animation nobody asked for; a false
- * negative costs the blink, which is the thing being fixed.
- */
-function sameArtwork(aUrl, aTrack, bUrl, bTrack) {
-  if (!aUrl || !bUrl) return false;
-  if (artIdentity(aUrl) === artIdentity(bUrl)) return true;
-  if (aTrack && bTrack) {
-    const ak = albumKeyOf(aTrack);
-    if (ak && ak !== '::' && ak === albumKeyOf(bTrack)) return true;
-  }
-  return false;
-}
 
-/* Warm cache of decoded cover bitmaps.
- *
- * The Image objects are RETAINED, deliberately. The old pre-decode dropped its
- * Image on the next line, so the bitmap it had just decoded was collectable
- * immediately and the paint that mattered — a background-image on a custom
- * protocol, which has to round-trip to the main process — was as cold as if
- * nothing had been warmed at all. Holding a couple of dozen references costs a
- * few MB and makes the swap a composite rather than a fetch. */
-const ART_WARM = new Map(); // url → { img, promise }
-const ART_WARM_MAX = 24;
+ // url → { img, promise }
 
-function warmArt(url) {
-  if (!url || typeof Image === 'undefined') return null;
-  const hit = ART_WARM.get(url);
-  if (hit) { // refresh LRU position
-    ART_WARM.delete(url);
-    ART_WARM.set(url, hit);
-    return hit.promise;
-  }
-  const img = new Image();
-  const promise = new Promise((resolve) => {
-    const done = () => resolve(img);
-    img.onload = () => {
-      if (img.decode) img.decode().then(done, done);
-      else done();
-    };
-    img.onerror = done;
-  });
-  try { img.src = url; } catch { /* ignore */ }
-  ART_WARM.set(url, { img, promise });
-  while (ART_WARM.size > ART_WARM_MAX) {
-    ART_WARM.delete(ART_WARM.keys().next().value);
-  }
-  return promise;
-}
 
-const NP_MINI_HEADER_H = 88;  // 72px cover + 16px breathing room — matches
+  // 72px cover + 16px breathing room — matches
                               // the overlay's MINI_HEADER_H exactly.
 
-/** Persistent Now Playing panel — the right column of the library view when
- *  nothing is being browsed. Shows the current track, or an idle prompt.
- *
- *  Track changes are animated as a swap rather than a hard cut: the outgoing
- *  title/artist fly upward (artist first, title trailing) while the outgoing
- *  artwork dissolves up through a blur, then the incoming lines rise in from
- *  below (title first, artist trailing) as the new artwork settles. The two
- *  halves overlap, so the panel never shows an empty frame.
- */
-function NowPlayingPanel({ track, isPlaying, art, accent, onOpenFullscreen, onCollapseToBar, expanded = false, volume = 1, onSetVolume, onTogglePlay, onPrev, onNext, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat, animatedBg = false, onToggleAnimatedBg, showLyrics = false, onToggleLyrics, showCredits = false, onToggleCredits, lyricsData, onLyricsSaved, currentTime = 0, onSeek, library = [], onPlayTrack, upNext = [], onSelectTrack,
-  /* Command center. The NODE is built by StudioHome (where playEvents,
-     releases, followedArtists and the metadata callbacks already live) and
-     handed down, so this component doesn't have to grow twenty pass-through
-     props for a card it only positions. */
-  commandCenter = null, ccOpen = false, ccExiting = false, onToggleCc,
-  bigCoverRef, miniCoverRef, coverInFlight = false,
-  lyricSelection = null, onLyricSelectStart, onLyricSelectLine, onBrowseLyrics }) {
-  const acc = readableAccent(accent);
-  // AnimatedGradientBg wants accent/mid/wash. We only have accent here, so
-  // derive a darker mid and a near-black wash from it — enough variation for
-  // the field to read without needing the full cover-theme palette.
-  const gradMid = accent.split(',').map((n) => Math.round(Number(n) * 0.55)).join(', ');
-  const gradWash = accent.split(',').map((n) => Math.round(Number(n) * 0.22)).join(', ');
-  const lyricsAvailable = !!(lyricsData && (lyricsData.synced?.length || lyricsData.plain));
-
-  const [dockCard, setDockCard] = useState(null); // null | 'credits' | 'queue'
-  useEffect(() => {
-    if (!dockCard) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setDockCard(null); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [dockCard]);
-
-  // Credits are fetched on demand (only when the view is opened) and cached
-  // per track for the session, so flipping the toggle off and on is free.
-  const [credits, setCredits] = useState(null);      // { primary, writers, producers, performances, releaseDate, url } | null
-  const [creditsState, setCreditsState] = useState('idle'); // idle | loading | done | error
-  const creditsCacheRef = useRef(new Map());
-  const creditsReqRef = useRef(0);
-  useEffect(() => {
-    if (!(showCredits || dockCard === 'credits') || !track) return;
-    const key = `${track.artist || ''}|${track.title || ''}`;
-    const cached = creditsCacheRef.current.get(key);
-    if (cached !== undefined) { setCredits(cached); setCreditsState(cached ? 'done' : 'error'); return; }
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.geniusCredits) { setCreditsState('error'); return; }
-    const reqId = ++creditsReqRef.current;
-    setCreditsState('loading'); setCredits(null);
-    api.geniusCredits({ title: track.title || '', artist: track.artist || '' })
-      .then((res) => {
-        if (creditsReqRef.current !== reqId) return;
-        const data = res?.ok ? res.credits : null;
-        creditsCacheRef.current.set(key, data);
-        setCredits(data); setCreditsState(data ? 'done' : 'error');
-      })
-      .catch(() => {
-        if (creditsReqRef.current !== reqId) return;
-        setCredits(null); setCreditsState('error');
-      });
-  }, [showCredits, dockCard, track?.id, track?.title, track?.artist]);
-
-  // Timings. OUT is short and ease-IN; RETURN is longer and ease-OUT — the
-  // exit is deliberately the entrance played backwards.
-  const OUT_MS = 240;
-  const IN_MS = 620;
-  const EASE_OUT = 'cubic-bezier(0.55, 0, 0.55, 0.2)';
-  const EASE_IN = 'cubic-bezier(0.22, 1, 0.36, 1)';
-
-  // `shown` lags the incoming props for OUT_MS so the old content can leave.
-  const [shown, setShown] = useState({ track, art });
-  const [phase, setPhase] = useState('idle'); // 'idle' | 'out' | 'in'
-  const [ghostArt, setGhostArt] = useState(null); // outgoing art, dissolving
-  const [swapKey, setSwapKey] = useState(0); // bumped to restart TEXT animations
-  /* A SECOND key, for the art layer alone. The text swaps on every track
-     change; the artwork only swaps when the picture changes. One key can't
-     express that — bumping it remounts the art div, and a remount is a fresh
-     background-image fetch, which is the blink even when the URL is the same. */
-  const [artKey, setArtKey] = useState(0);
-  const [artHeld, setArtHeld] = useState(false); // picture unchanged this swap
-  const lastKeyRef = useRef(null);
-  const timersRef = useRef([]);
-
-  // Warm (and RETAIN) the incoming bitmap the moment its URL is known, so the
-  // swap composites an already-decoded image instead of starting a fetch.
-  useEffect(() => { warmArt(art); }, [art]);
-
-  useEffect(() => {
-    const key = `${track?.id || ''}::${art || ''}`;
-    if (lastKeyRef.current === key) return; // already showing/animating to this
-    const isFirst = lastKeyRef.current === null;
-    lastKeyRef.current = key;
-
-    // First run (panel just mounted) adopts silently — the panel itself is
-    // already sliding in, so a swap on top would double up.
-    if (isFirst) { setShown({ track, art }); return; }
-
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current = [];
-
-    /* Same picture? Then the square does nothing at all: no ghost, no
-       animation, and — critically — no new URL. Adopting a different string
-       for an identical image is precisely what made a download → local
-       handoff flash while download → download sat still. */
-    const held = sameArtwork(art, track, shown.art, shown.track);
-    setArtHeld(held);
-    setGhostArt(held ? null : (shown.art || null));
-    setPhase('out');
-
-    const swapIn = () => {
-      // `held` keeps the URL already on screen and already decoded.
-      setShown((s) => ({ track, art: held ? (s.art || art) : art }));
-      setSwapKey((k) => k + 1);
-      if (!held) setArtKey((k) => k + 1);
-      setPhase('in');
-      const t2 = setTimeout(() => { setPhase('idle'); setGhostArt(null); }, IN_MS);
-      timersRef.current.push(t2);
-    };
-
-    const t1 = setTimeout(() => {
-      if (held) { swapIn(); return; }
-      /* A genuine change still shouldn't paint an empty square. Wait for the
-         incoming bitmap to decode before handing it to the compositor — the
-         ghost outlives OUT_MS by 280ms, so there's real headroom here — but
-         cap the wait, because a cover that never loads must not freeze the
-         panel on the previous track's artwork. */
-      const warm = warmArt(art);
-      if (!warm) { swapIn(); return; }
-      let done = false;
-      const go = () => { if (!done) { done = true; swapIn(); } };
-      warm.then(go, go);
-      const t3 = setTimeout(go, 220);
-      timersRef.current.push(t3);
-    }, OUT_MS);
-    timersRef.current.push(t1);
-    // `shown` is intentionally omitted — lastKeyRef guards re-entry, and
-    // including it would restart the swap mid-flight.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.id, art]);
-
-  useEffect(() => () => { timersRef.current.forEach(clearTimeout); }, []);
-
-  /** Per-line animation. Lines leave in reverse order (artist first) and
-   *  return in reading order (title first) — the stage view's stagger.
-   *  Exit durations are trimmed per line so the staggered title still lands
-   *  before OUT_MS; otherwise its animation is cut mid-flight and snaps. */
-  const lineAnim = (line) => {
-    if (phase === 'out') {
-      return line === 'title'
-        ? `sthNpTxtOut 190ms ${EASE_OUT} 45ms both`   // 45 + 190 = 235 ≤ 240
-        : `sthNpTxtOut 200ms ${EASE_OUT} 0ms both`;
-    }
-    if (phase === 'in') return `sthNpTxtIn 460ms ${EASE_IN} ${line === 'title' ? '0ms' : '80ms'} both`;
-    return 'none';
-  };
-
-  // Elevation on a near-black surface, cast evenly on all four sides.
-  //
-  // Two constraints, and they pull against each other:
-  //  - BLUR bands. The panel composites to ~rgb(15,15,17), leaving ~15 tonal
-  //    levels; a blur past ~14px spreads them over more than a pixel each and
-  //    you see concentric rings. So blur is capped at 13.
-  //  - With no offset, all the reach has to come from SPREAD. But the shadow
-  //    rect is expanded by `spread` and only THEN blurred, so a solid,
-  //    unblurred ring of width (spread - blur/2) sits hard against the cover
-  //    edge. Push spread too far and you get a dark border, not a shadow.
-  //
-  // spread 7 / blur 13 threads both: 13.5px of reach on every side, a solid
-  // ring of just 0.5px (sub-pixel, invisible), and 0.87px per tonal band.
-  const artBoxShadow = [
-    'inset 0 1px 0 rgba(var(--st-fg-rgb), 0.22)', // lit top edge — reads as raised
-    '0 0 0 1px rgba(var(--st-fg-rgb), 0.10)',     // crisp ring, zero blur = cannot band
-    '0 0 5px 1px rgba(0,0,0,0.8)',          // tight halo (blur 5  → 0.33px/band)
-    '0 0 13px 7px rgba(0,0,0,0.85)',        // main lift  (blur 13 → 0.87px/band)
-  ].join(', ');
-  const t = shown.track;
-  // Seek-bar scrubbing for the fullscreen transport (mirrors the floating bar).
-  const dur = t && Number.isFinite(t.duration) && t.duration > 0 ? t.duration : 0;
-  const [scrub, setScrub] = useState(null);
-  // Mount the synced lyrics only after the side column finishes sliding open,
-  // so SyncedLyrics measures line positions at the final width and centres
-  // immediately (it doesn't re-measure on resize).
-  const [lyricsReady, setLyricsReady] = useState(false);
-  useEffect(() => {
-    if (!expanded || !showLyrics) { setLyricsReady(false); return undefined; }
-    const t = setTimeout(() => setLyricsReady(true), 470);
-    return () => clearTimeout(t);
-  }, [expanded, showLyrics]);
-  const seekTrackRef = useRef(null);
-  const seekPct = scrub != null ? scrub * 100 : (dur ? Math.min(100, Math.max(0, (currentTime / dur) * 100)) : 0);
-  const fmtT = (sec) => {
-    if (!Number.isFinite(sec) || sec < 0) return '0:00';
-    const m = Math.floor(sec / 60); const s = Math.floor(sec % 60);
-    return `${m}:${String(s).padStart(2, '0')}`;
-  };
-  const seekPosFromEvent = (clientX) => {
-    const el = seekTrackRef.current; if (!el) return 0;
-    const r = el.getBoundingClientRect();
-    return Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-  };
-  const beginSeekScrub = (e) => {
-    if (!onSeek || !dur) return;
-    e.stopPropagation(); e.preventDefault();
-    setScrub(seekPosFromEvent(e.clientX));
-    const move = (ev) => setScrub(seekPosFromEvent(ev.clientX));
-    const up = (ev) => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      const f = seekPosFromEvent(ev.clientX);
-      setScrub(null);
-      onSeek(f * dur);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
-  // Control buttons, defined once so they can sit in the narrow header or the
-  // fullscreen bottom bar.
-  const creditsBtn = onToggleCredits && track ? (
-    <button type="button" className={`sth-npmute${showCredits ? ' is-on' : ''}`} onClick={onToggleCredits} title={showCredits ? 'Hide credits' : 'Show credits'} aria-label={showCredits ? 'Hide credits' : 'Show credits'} aria-pressed={showCredits}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="6" /><path d="M15.7 13.4L17 22l-5-3-5 3 1.3-8.6" /></svg>
-    </button>
-  ) : null;
-  const lyricsBtn = onToggleLyrics && (lyricsAvailable || expanded) ? (
-    <button type="button" className={`sth-npmute${showLyrics ? ' is-on' : ''}`} onClick={onToggleLyrics} title={showLyrics ? 'Hide lyrics' : 'Show lyrics'} aria-label={showLyrics ? 'Hide lyrics' : 'Show lyrics'} aria-pressed={showLyrics}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h11M4 10h9M4 14h11M4 18h7" /></svg>
-    </button>
-  ) : null;
-  /* Landing pad for the cover flight — the relocated cover + song info.
-   *
-   * Rendered in ONE of two places depending on whether the lyrics column is
-   * up, mirroring the overlay: with lyrics it sits at the top of the lyrics
-   * column; without, it sits directly above the card in the art column. The
-   * old build only had the lyrics-column version, so with lyrics hidden the
-   * column was 0px wide and the cover appeared to vanish on open.
-   *
-   * ALWAYS mounted; only the height animates, on the flight's own curve.
-   * Mounting it on open would pop the layout and move the ghost's measured
-   * destination mid-flight. The content is absolutely anchored to the slot's
-   * TOP so its final position is identical at any slot height — that's what
-   * keeps the flight's destination measurement exact while the height is
-   * still animating. */
-  /* True whenever the command center owns the cover square — while it's open,
-     while it's animating out, and for the whole cover flight in either
-     direction. EVERY layer inside the square checks this one flag.
-     It has to be one flag: the track-change crossfade ghost was checking
-     nothing at all, so skipping a track while the card was open painted the
-     outgoing artwork behind it for the length of the crossfade. */
-  const squareTakenByCard = !!(expanded && (ccOpen || ccExiting || coverInFlight));
-
-  const miniHeaderSlot = (
-    <div className="sth-np-minislot" style={{
-      height: ccOpen ? NP_MINI_HEADER_H : 0,
-      transition: 'height 420ms cubic-bezier(0.3, 0.7, 0.25, 1)',
-      overflow: 'hidden', flexShrink: 0, position: 'relative', width: '100%',
-    }}>
-      <div style={{
-        position: 'absolute', top: 0, left: 0, right: 0,
-        display: 'flex', alignItems: 'center', gap: 14, minWidth: 0,
-        visibility: (ccOpen || ccExiting || coverInFlight) ? 'visible' : 'hidden',
-      }}>
-        {/* A real <img>, not a CSS background-image.
-            This is a big reduction — a ~600px cover into 72px — and Chromium
-            downsamples background-image with a single bilinear step, which
-            drops most of the source detail and reads as a blurry thumbnail.
-            An <img> with intrinsic sizing gets the browser's proper
-            multi-step (mipmapped) downscale path instead, so it stays sharp.
-            width/height are set as ATTRIBUTES as well as styles so the
-            decode happens at the display size rather than full resolution. */}
-        <div
-          ref={miniCoverRef}
-          style={{
-            width: 72, height: 72, borderRadius: 12, flexShrink: 0,
-            overflow: 'hidden', position: 'relative',
-            background: 'rgba(var(--st-fg-rgb), 0.06)',
-            boxShadow: `0 0 0 1px rgba(${accent},0.4), inset 0 0 0 1px rgba(var(--st-fg-rgb), 0.22)`,
-            visibility: coverInFlight ? 'hidden' : 'visible',
-          }}
-        >
-          {art ? (
-            <img
-              src={art}
-              alt=""
-              width={72}
-              height={72}
-              draggable={false}
-              decoding="async"
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            />
-          ) : null}
-        </div>
-        <div style={{ minWidth: 0, textAlign: 'left' }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {t?.title || ''}
-          </div>
-          <div style={{ fontSize: 12, color: 'rgba(var(--st-sub-rgb), 0.55)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>
-            {t?.artist || ''}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  // Command center trigger — fullscreen only; the collapsed panel has no
-  // room for the card and no cover square to hand over.
-  const ccBtn = expanded && onToggleCc ? (
-    <button type="button" className={`sth-npmute${ccOpen ? ' is-on' : ''}`} onClick={onToggleCc}
-      title={ccOpen ? 'Close command center' : 'Command center'}
-      aria-label={ccOpen ? 'Close command center' : 'Command center'} aria-pressed={ccOpen}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.35-4.35" />
-      </svg>
-    </button>
-  ) : null;
-  const bgBtn = onToggleAnimatedBg ? (
-    <button type="button" className={`sth-npmute${animatedBg ? ' is-on' : ''}`} onClick={onToggleAnimatedBg} title={animatedBg ? 'Turn off animated background' : 'Turn on animated background'} aria-label="Toggle animated background" aria-pressed={animatedBg}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18 4.5 4.5 0 0 1 0-9 4.5 4.5 0 0 0 0-9z" /></svg>
-    </button>
-  ) : null;
-  const volumeCtl = onSetVolume ? (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-      <button type="button" className="sth-npmute" onClick={() => onSetVolume(volume > 0 ? 0 : 1)} title={volume > 0 ? 'Mute' : 'Unmute'} aria-label={volume > 0 ? 'Mute' : 'Unmute'}>
-        {volume > 0 ? (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" />{volume > 0.5 ? <path d="M19.1 4.9a10 10 0 0 1 0 14.2" /> : null}<path d="M15.5 8.5a5 5 0 0 1 0 7" /></svg>
-        ) : (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z" /><path d="M22 9l-6 6M16 9l6 6" /></svg>
-        )}
-      </button>
-      <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => onSetVolume(Number(e.target.value))} className="sth-vol" aria-label="Volume" style={{ width: 62, flexShrink: 0, background: `linear-gradient(to right, rgb(${acc}) 0%, rgb(${acc}) ${volume * 100}%, rgba(var(--st-fg-rgb), 0.14) ${volume * 100}%, rgba(var(--st-fg-rgb), 0.14) 100%)` }} />
-    </div>
-  ) : null;
-  const collapseBtn = onCollapseToBar ? (
-    <button type="button" className="sth-npmute" onClick={onCollapseToBar} title="Collapse to a bar" aria-label="Collapse to a floating bar">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="15" width="18" height="5" rx="2" /><path d="M6 9l6-4 6 4" /></svg>
-    </button>
-  ) : null;
-  const fullscreenBtn = onOpenFullscreen ? (
-    <button type="button" className={`sth-npmute${expanded ? ' is-on' : ''}`} onClick={onOpenFullscreen} title={expanded ? 'Exit fullscreen' : 'Expand the library'} aria-label={expanded ? 'Exit fullscreen' : 'Expand the library'} aria-pressed={expanded}>
-      {expanded ? (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8h3a2 2 0 0 0 2-2V3M16 3v3a2 2 0 0 0 2 2h3M21 16h-3a2 2 0 0 0-2 2v3M8 21v-3a2 2 0 0 0-2-2H3" /></svg>
-      ) : (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" /></svg>
-      )}
-    </button>
-  ) : null;
-
-  return (
-    <div className="sth-libpanel" style={{ animation: `sthPanelIn 0.32s ${EASE_IN} both`, position: 'relative', overflow: 'hidden' }}>
-      {/* Optional animated colour field behind the panel content. Sits at the
-          back; a scrim over it keeps text and controls legible. */}
-      {animatedBg && track ? (
-        <>
-          <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
-            <AnimatedGradientBg accent={accent} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={0.7} />
-          </div>
-          <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(10,10,12,0.55) 0%, rgba(10,10,12,0.4) 45%, rgba(10,10,12,0.72) 100%)' }} />
-        </>
-      ) : null}
-      <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      {!expanded ? (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 12px 10px 14px', flexShrink: 0, borderBottom: '1px solid rgba(var(--st-fg-rgb), 0.06)' }}>
-        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: `rgb(${acc})`, whiteSpace: 'nowrap' }}>Now playing</div>
-        <div style={{ flex: 1 }} />
-        {creditsBtn}{lyricsBtn}{bgBtn}{volumeCtl}{collapseBtn}{fullscreenBtn}
-      </div>
-      ) : null}
-      {/* Fullscreen bottom transport bar: seek + prev/play/next, with the view
-          toggles on the left and volume / exit on the right. */}
-      {expanded ? (
-      <div className="sth-npfull-bar" style={{ order: 2, flexShrink: 0 }}>
-        <div className="sth-npfull-toggles">{ccBtn}{lyricsBtn}{bgBtn}</div>
-        <div className="sth-npfull-dock">
-          {/* Transport — dock-scale, bare icons (matches the overlay). */}
-          <div className="sth-npfull-transport">
-            {onToggleShuffle ? (
-              <button type="button" className="sth-npt-btn" onClick={onToggleShuffle} title="Shuffle" aria-label="Shuffle" aria-pressed={shuffleOn} style={shuffleOn ? { color: `rgb(${acc})` } : undefined}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
-              </button>
-            ) : null}
-            {onPrev ? (
-              <button type="button" className="sth-npt-btn" onClick={onPrev} title="Previous" aria-label="Previous track"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 4L7 12l10 8" /></svg></button>
-            ) : null}
-            {onTogglePlay ? (
-              <button type="button" className="sth-npt-play" onClick={onTogglePlay} title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause' : 'Play'}>
-                {isPlaying
-                  ? <svg width="21" height="21" viewBox="0 0 32 32" fill="currentColor"><rect x="10.5" y="7" width="4" height="18" rx="2" /><rect x="17.5" y="7" width="4" height="18" rx="2" /></svg>
-                  : <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 1 }}><path d="M8 5.6c-1.4-1-3.5 0-3.5 1.7v9.4c0 1.75 2.1 2.75 3.5 1.7l8-5c1.4-.85 1.4-2.65 0-3.5l-8-4.3z" /></svg>}
-              </button>
-            ) : null}
-            {onNext ? (
-              <button type="button" className="sth-npt-btn" onClick={onNext} title="Next" aria-label="Next track"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 4l10 8-10 8" /></svg></button>
-            ) : null}
-            {onToggleRepeat ? (
-              <button type="button" className="sth-npt-btn" onClick={onToggleRepeat} title={`Repeat: ${repeat}`} aria-label={`Repeat: ${repeat}`} style={repeat !== 'off' ? { color: `rgb(${acc})` } : undefined}>
-                {repeat === 'one' ? (
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3" /><text x="12" y="15" fontSize="8" fill="currentColor" stroke="none" textAnchor="middle" fontWeight="700">1</text></svg>
-                ) : (
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3" /></svg>
-                )}
-              </button>
-            ) : null}
-          </div>
-          {/* Seek — dead-center, narrow. */}
-          {onSeek && dur ? (
-            <div className="sth-npfull-seek">
-              <span className="sth-npfull-time">{fmtT((seekPct / 100) * dur)}</span>
-              <div
-                className="sth-npfull-track" ref={seekTrackRef} onPointerDown={beginSeekScrub}
-                role="slider" aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(dur)} aria-valuenow={Math.round((seekPct / 100) * dur)} tabIndex={0}
-                onKeyDown={(e) => { if (e.key === 'ArrowRight') { onSeek(Math.min(dur, currentTime + 5)); } else if (e.key === 'ArrowLeft') { onSeek(Math.max(0, currentTime - 5)); } }}
-              >
-                <div className="sth-npfull-fill" style={{ width: `${seekPct}%`, background: `rgb(${acc})`, transition: scrub != null ? 'none' : 'width 0.25s linear' }}>
-                  <span className="sth-npfull-knob" style={{ background: `rgb(${acc})` }} />
-                </div>
-              </div>
-              <span className="sth-npfull-time">{fmtT(dur)}</span>
-            </div>
-          ) : <div />}
-          {/* Volume — right. */}
-          <div className="sth-npfull-vol">{volumeCtl}</div>
-        </div>
-        <div className="sth-npfull-toggles" style={{ justifyContent: 'flex-end' }}>{collapseBtn}{fullscreenBtn}</div>
-      </div>
-      ) : null}
-      {/* Credits + Up Next dock cards — ported from the overlay. */}
-      {expanded ? (
-        <div className="sth-npfull-dockrow">
-          <div className="sth-npfull-dockwrap">
-            <DockCard side="left" label="Credits" open={dockCard === 'credits'} accent={accent} layout="wrap" dockBarH={78}
-              meta={creditsState === 'done' && credits?.releaseDate ? `via Genius · ${credits.releaseDate}` : (creditsState === 'done' ? 'via Genius' : null)}
-              onToggle={() => setDockCard((c) => (c === 'credits' ? null : 'credits'))}>
-              {(creditsState === 'loading' || creditsState === 'idle') ? (
-                <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>Looking up credits…</div>
-              ) : (creditsState === 'error' || !credits) ? (
-                <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>No credits found for this track.</div>
-              ) : (
-                <>
-                  {credits.primary?.length ? <CreditGroup label="Performed by" names={credits.primary} accent={accent} /> : null}
-                  {credits.writers?.length ? <CreditGroup label="Written by" names={credits.writers} accent={accent} /> : null}
-                  {credits.producers?.length ? <CreditGroup label="Produced by" names={credits.producers} accent={accent} /> : null}
-                  {(credits.performances || []).slice(0, 6).map((p, i) => (
-                    <CreditGroup key={`${p.label}-${i}`} label={p.label} names={Array.isArray(p.names) ? p.names : [p.names]} accent={accent} />
-                  ))}
-                </>
-              )}
-            </DockCard>
-            <DockCard side="right" label={upNext.length ? `Up next · ${upNext.length}` : 'Up next'} open={dockCard === 'queue'} accent={accent} dockBarH={78}
-              onToggle={() => setDockCard((c) => (c === 'queue' ? null : 'queue'))}>
-              {upNext.length ? upNext.slice(0, 30).map((tk, i) => (
-                <div key={`${tk.id}-${i}`} role="button" tabIndex={-1} title={`${tk.title || 'Unknown'} — ${tk.artist || ''}`}
-                  onClick={() => onSelectTrack?.(tk)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '3px 8px 3px 4px', borderRadius: 9, cursor: 'pointer', minWidth: 0, transition: 'background 0.13s ease' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(var(--st-fg-rgb), 0.06)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
-                  <span style={{ width: 16, textAlign: 'right', flexShrink: 0, fontSize: 9.5, color: 'rgba(var(--st-sub-rgb), 0.32)', fontVariantNumeric: 'tabular-nums' }}>{i + 1}</span>
-                  <div style={{ width: 32, height: 32, borderRadius: 7, flexShrink: 0, backgroundColor: 'rgba(var(--st-fg-rgb), 0.06)', backgroundImage: tk.coverArt ? `url("${String(tk.coverArt).replace(/"/g, '%22')}")` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', boxShadow: '0 0 0 1px rgba(var(--st-fg-rgb), 0.08)' }} />
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tk.title || 'Unknown track'}</div>
-                    <div style={{ fontSize: 10, color: 'rgba(var(--st-sub-rgb), 0.45)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tk.artist || ''}</div>
-                  </div>
-                </div>
-              )) : (
-                <div style={{ gridRow: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.5)', minWidth: 220 }}>Nothing queued after this track.</div>
-              )}
-              {upNext.length > 30 ? (
-                <div style={{ display: 'flex', alignItems: 'center', padding: '3px 8px', fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.4)', whiteSpace: 'nowrap' }}>+{upNext.length - 30} more in queue</div>
-              ) : null}
-            </DockCard>
-          </div>
-        </div>
-      ) : null}
-      {t ? (
-        (showCredits && !expanded) ? (
-          <NpCreditsView credits={credits} state={creditsState} accent={accent} track={t} />
-        ) : (showLyrics && lyricsAvailable && !expanded) ? (
-          <NpLyricsView lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} currentTime={currentTime} accent={accent} onSeek={onSeek} track={t} />
-        ) : (
-        <div className={`sth-np-stage${expanded && showLyrics ? ' has-lyrics' : ''}`} /* `none`, NOT translateY(0). Any non-none transform promotes this subtree
-             to its own composited layer, and Chromium rasterises that layer at CSS
-             resolution rather than device resolution — on a HiDPI or fractionally
-             scaled display every image inside it (cover art, list thumbnails, the
-             mini header) comes out visibly soft. Only pay that cost while the
-             docked-card shift is actually applied. */
-          style={expanded ? { transform: dockCard ? 'translateY(-72px)' : 'none', transition: 'transform 360ms cubic-bezier(0.22, 1, 0.36, 1)' } : undefined}>
-        <div className="sth-np-artcol" style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: expanded ? '0' : '26px 22px 22px', justifyContent: 'center' }}>
-          {/* The card lives in the cover's footprint, centered on the same
-              square, so opening it never shifts the transport below. Flex
-              centering rather than translate(-50%): transforms aren't snapped
-              to the device-pixel grid and a half-pixel blurs every glyph in
-              the card. Only the integer drag offset rides on a transform. */}
-          {expanded && (ccOpen || ccExiting) ? (
-            <div style={{
-              position: 'absolute', inset: 0, zIndex: 6,
-              display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              pointerEvents: 'none',
-            }}>
-              {/* With lyrics hidden there's no lyrics column to host the
-                  relocated cover, so it stacks directly above the card —
-                  the overlay's !sideLyrics branch. */}
-              {!showLyrics ? (
-                <div style={{ width: 'min(52vh, 42vw)', pointerEvents: 'auto' }}>
-                  {miniHeaderSlot}
-                </div>
-              ) : null}
-              {commandCenter}
-            </div>
-          ) : null}
-          {/* Artwork — incoming and outgoing layers stacked so they overlap. */}
-          <div
-            role={onTogglePlay && !squareTakenByCard ? 'button' : undefined}
-            tabIndex={onTogglePlay && !squareTakenByCard ? 0 : undefined}
-            onClick={onTogglePlay && !squareTakenByCard ? onTogglePlay : undefined}
-            onKeyDown={onTogglePlay && !squareTakenByCard ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTogglePlay(); } } : undefined}
-            title={onTogglePlay ? (isPlaying ? 'Pause' : 'Play') : undefined}
-            aria-label={onTogglePlay ? (isPlaying ? 'Pause' : 'Play') : undefined}
-            ref={expanded ? bigCoverRef : undefined}
-            className={[onTogglePlay ? 'sth-npcover' : '', expanded ? 'sth-np-cover' : ''].filter(Boolean).join(' ') || undefined}
-            style={{ position: 'relative', width: expanded ? undefined : '100%', maxWidth: expanded ? undefined : 236, aspectRatio: '1', marginBottom: 22, flexShrink: 0, cursor: onTogglePlay ? 'pointer' : 'default',
-              /* Element stays mounted and visible throughout — only the
-                 artwork inside it hides (see .sth-np-art below). Unmounting
-                 or hiding this would collapse the column and jump the
-                 transport beneath it.
-                 Deliberately NO background or shadow of its own: an earlier
-                 attempt painted a fake "socket" here to stand in for the
-                 lifted cover, which just drew a grey rectangle that matched
-                 nothing else on the stage. The empty square now shows the
-                 real background through it, and the card's own drop shadow
-                 does the work of implying depth. */ }}
-          >
-            {ghostArt && !squareTakenByCard ? (
-              <div
-                key={`ghost-${swapKey}`}
-                aria-hidden
-                className="sth-np-ghost"
-                style={{
-                  position: 'absolute', inset: 0, borderRadius: 16,
-                  background: `url("${ghostArt}") center/cover`,
-                  boxShadow: artBoxShadow,
-                  animation: `sthNpArtOut ${OUT_MS + 280}ms ${EASE_OUT} both`,
-                }}
-              />
-            ) : null}
-            <div
-              /* artKey, NOT swapKey — see the two-key note above. This element
-                 must survive a track change that keeps the same picture, or
-                 React tears it down and rebuilds it, and the rebuilt one has
-                 to fetch its background-image all over again. */
-              key={`art-${artKey}`}
-              className="sth-np-art"
-              style={{
-                position: 'absolute', inset: 0, borderRadius: 16,
-                /* INSTANT, and it has to be instant. This is a FLIP handoff:
-                   the ghost is a copy of this element that starts exactly on
-                   top of it, so the original must vanish in the very frame the
-                   ghost appears. Fading it instead leaves both on screen
-                   cross-dissolving, which reads as the artwork reloading.
-                   No transition here for the same reason — any easing on the
-                   way out is a second copy of the image visibly dying. */
-                visibility: squareTakenByCard ? 'hidden' : 'visible',
-                background: shown.art ? `url("${shown.art}") center/cover` : `rgba(${acc},0.14)`,
-                boxShadow: artBoxShadow,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                /* No entrance when the picture is held: there is nothing to
-                   introduce, and the scale-from-1.05 would read as the cover
-                   twitching between two tracks off the same record. */
-                animation: (phase === 'in' && !artHeld) ? `sthNpArtIn 560ms ${EASE_IN} both` : 'none',
-              }}
-            >
-              {!shown.art ? <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--st-fg-rgb), 0.3)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="18" r="3" /><circle cx="18" cy="16" r="3" /><path d="M11 18V5l10-2v13" /></svg> : null}
-            </div>
-            {/* Hover affordance for the click-to-play target. Sits above both
-                art layers so it survives the cross-dissolve. */}
-            {/* Hover play/pause veil — also suppressed while the card owns the
-                square, or hovering the card would darken it and float a play
-                icon over the list. */}
-            {onTogglePlay && !squareTakenByCard ? (
-              <div className="sth-npcover-veil" aria-hidden style={{ position: 'absolute', inset: 0, borderRadius: 16, zIndex: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.42)' }}>
-                {isPlaying
-                  ? <svg width="30" height="30" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="4" width="4" height="16" rx="1.2" /><rect x="14" y="4" width="4" height="16" rx="1.2" /></svg>
-                  : <svg width="30" height="30" viewBox="0 0 24 24" fill="#fff" style={{ marginLeft: 3 }}><polygon points="5 3 19 12 5 21" /></svg>}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="sth-np-line" style={{ fontSize: expanded ? 22 : 18, fontWeight: 650, color: 'var(--st-text)', letterSpacing: '-0.01em', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', animation: lineAnim('title'), willChange: 'transform, opacity', marginTop: expanded ? 24 : 0 }}>
-            {t.title}
-          </div>
-          <div className="sth-np-line" style={{ fontSize: 12.5, color: 'rgba(var(--st-sub-rgb), 0.55)', marginTop: 5, maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', animation: lineAnim('artist'), willChange: 'transform, opacity' }}>
-            {t.artist}{t.album ? ` · ${t.album}` : ''}
-          </div>
-
-          {/* Badge + prev/next below the cover — only in the narrow panel.
-              In fullscreen the transport flanks the artwork and the badge is
-              dropped for a cleaner, stage-like view. */}
-          {!expanded ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 14, minHeight: 26 }}>
-            {onPrev ? (
-              <button type="button" className="sth-npbtn" onClick={onPrev} title="Previous" aria-label="Previous track">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6v12l-9-6z" /></svg>
-              </button>
-            ) : null}
-            {isPlaying ? (
-              <div key={`eq-${swapKey}`} className="sth-np-meta" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 600, color: `rgb(${acc})`, animation: phase === 'in' ? `sthNpMetaIn 420ms ${EASE_IN} 160ms both` : 'none' }}>
-                <InlineEq />
-                Playing
-              </div>
-            ) : (
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.32)' }}>Paused</div>
-            )}
-            {onNext ? (
-              <button type="button" className="sth-npbtn" onClick={onNext} title="Next" aria-label="Next track">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6v12l9-6z" /></svg>
-              </button>
-            ) : null}
-          </div>
-          ) : null}
-        </div>
-        {/* Lyrics column — rendered in expanded mode whenever lyrics exist, so
-            the width/opacity can animate; the .has-lyrics class on the stage
-            slides the artwork over and reveals this beside it. */}
-        {expanded ? (
-          <div className="sth-np-lyriccol">
-            {showLyrics ? miniHeaderSlot : null}
-            {showLyrics && lyricsReady ? (
-              <div className="sth-np-lyricbody" style={{ minHeight: 0, display: 'flex' }}>
-                <NpLyricsView lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} currentTime={currentTime} accent={accent} onSeek={onSeek} fontSize={20} track={t}
-                  selection={lyricSelection} onSelectStart={onLyricSelectStart} onSelectLine={onLyricSelectLine}
-                  onBrowseLyrics={onBrowseLyrics} />
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        </div>
-        )
-      ) : (
-        <div className="sth-libscroll" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 30, color: 'rgba(var(--st-sub-rgb), 0.4)', animation: `sthNpTxtIn 420ms ${EASE_IN} both` }}>
-          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--st-fg-rgb), 0.28)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12 }}><circle cx="8" cy="18" r="3" /><circle cx="18" cy="16" r="3" /><path d="M11 18V5l10-2v13" /></svg>
-          <div style={{ fontSize: 12.5, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>Nothing playing</div>
-          <div style={{ fontSize: 11, color: 'rgba(var(--st-sub-rgb), 0.35)', marginTop: 4 }}>Pick a track to start listening.</div>
-        </div>
-      )}
-      </div>
-    </div>
-  );
-}
 
 
 
@@ -10344,19 +8975,6 @@ function NowPlayingPanel({ track, isPlaying, art, accent, onOpenFullscreen, onCo
 
 
 
-/**
- * Tiny inline 3-bar equalizer for the playing row.
- *
- * Now a thin wrapper over PlayingBars. It used to declare its own
- * `@keyframes sthEq` animating HEIGHT, while the app's stylesheet declares one
- * of the same name animating TRANSFORM. Keyframes are global and last-mounted
- * wins, so rendering this anywhere silently changed how every other equaliser
- * in the app moved — bars jumping instead of scaling, or freezing at the wrong
- * size. Three definitions of one name, one of them a different property.
- */
-function InlineEq() {
-  return <PlayingBars acc="255, 255, 255" playing />;
-}
 
 /** Rounded glass card that wraps a group of result rows. */
 /* =========================================================================

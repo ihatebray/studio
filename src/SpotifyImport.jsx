@@ -45,7 +45,6 @@ export default function SpotifyImport({
   onImported,          // (tracks) => void — library reload
   onCreatePlaylist,    // ({ name, coverArt }) => { ok, id }
   onAddTracksToPlaylist, // (playlistId, trackIds) => void
-  pushToast,
 }) {
   const api = typeof window !== 'undefined' ? window.electronAPI : null;
 

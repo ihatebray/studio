@@ -57,7 +57,7 @@ const mono = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
 
 export default function PanelLyricsEditor({
   track, currentTime = 0, existingSynced, existingPlain, accent = '255,255,255',
-  onSeek, onSave, onCancel, api = (typeof window !== 'undefined' ? window.electronAPI : null),
+  onSave, onCancel, api = (typeof window !== 'undefined' ? window.electronAPI : null),
 }) {
   const seeded = useMemo(
     () => linesFromExisting(existingSynced, existingPlain),

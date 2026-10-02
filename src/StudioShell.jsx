@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { CoverFullscreenOverlay } from './Overlays.jsx';
 import { sampleCoverTheme, accentTextColor } from './coverTheme.js';
 import SpotifyImport from './SpotifyImport.jsx';
 import { parseLRC } from './mediaUtils.js';
@@ -9,21 +8,11 @@ import StudioHome from './StudioHome.jsx';
 /* =========================================================================
  *  StudioShell — the entire view layer of studio.
  *
- *  Replaces Immerse's ImmersiveLibraryPage. Three states, nothing else:
- *
- *    1. Onboarding  — first run only. Animated Spotify/Soulseek setup.
- *    2. Home        — no track playing (or overlay stepped out of). A
- *                     search-first launcher + library tiles.
- *    3. Overlay     — CoverFullscreenOverlay, unchanged from Immerse. It's
- *                     the whole point of the app: full transport, lyrics,
- *                     and the command center (library / find / stats /
- *                     releases) all live inside it already.
- *
- *  The playback engine, library state, queue, analyser, play-event and
- *  release plumbing all stay in App.jsx — this component only decides what's
- *  on screen and feeds the overlay the derived state it needs (cover theme,
- *  lyrics), logic ported verbatim from the old page so behaviour is
- *  identical.
+ *  Onboarding on first run, StudioHome after that. The playback engine,
+ *  library state, queue, analyser, play-event and release plumbing all stay
+ *  in App.jsx; this component decides which of the two is on screen and
+ *  derives what StudioHome needs from the playing track (cover theme,
+ *  lyrics).
  * ========================================================================= */
 
 const ONBOARDED_KEY = 'studio:onboarded';
@@ -79,9 +68,6 @@ export default function StudioShell({
   onNeedAnalyser,
   ensureAnalyser,
   // Overlay display settings (owned by App.jsx, persisted there)
-  nowPlayingSliderStyle = 'circle',
-  fullscreenLyricsMode = 'side',
-  onSetFullscreenLyricsMode,
   // Track transitions (owned by App.jsx — same engine as Immerse). The
   // overlay's Settings tab exposes a gapless toggle when these are wired.
   transitionMode = 'off',
@@ -116,14 +102,8 @@ export default function StudioShell({
   // Command-center data
   playEvents = [],
   onResetStats,
-  releases = [],
   // Discover plumbing (owned by App.jsx — same system as Immerse's
   // Releases tab): refresh state + follow-artist management.
-  releasesRefreshing = false,
-  onRefreshReleases,
-  followedArtists = [],
-  onFollowArtist,
-  onUnfollowArtist,
   // Import + credentials
   onSpotifyImportDone,
   onSpotifyCredsSaved,
@@ -163,22 +143,6 @@ export default function StudioShell({
     return { ok: true, ...(res || {}) };
   }, [onClearLibrary, onResetStats]);
 
-  /* ---------- Overlay visibility ---------------------------------------- */
-  // The stage view is OPT-IN. It opens only when the user asks for it — the
-  // "return to the stage" pill, the Now Playing panel's fullscreen button, or
-  // the F key — and closing it sticks.
-  //
-  // This used to start open and re-open itself on every track change ("in a
-  // one-view app, playing something means wanting to see it"). That premise
-  // stopped holding once the library became a real browsing surface: starting
-  // a song from the library yanked you out of it, and every track change
-  // dragged you back even after you'd closed the stage. Both behaviours are
-  // gone — `dismissed` starts true and nothing but an explicit user action
-  // clears it, so the stage stays open across track changes once opened, and
-  // stays closed otherwise.
-  const [dismissed, setDismissed] = useState(true);
-
-  const overlayVisible = !!currentTrack && !dismissed && onboarded;
 
   /* ---------- Gapless by default ----------------------------------------- */
   // The transition engine lives in App.jsx (same engine as Immerse) and
@@ -196,21 +160,6 @@ export default function StudioShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 'f' toggles the overlay from Home while something is playing (parity
-  // with Immerse's shortcut). Esc inside the overlay is handled by the
-  // overlay itself via onClose.
-  useEffect(() => {
-    const handler = (e) => {
-      const tag = (e.target?.tagName || '').toUpperCase();
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
-      if ((e.key === 'f' || e.key === 'F') && currentTrack) {
-        e.preventDefault();
-        setDismissed((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [currentTrack]);
 
   /* ---------- Cover theme (ported from ImmersiveLibraryPage) ------------- */
   const [themeRgb, setThemeRgb] = useState({
@@ -228,8 +177,7 @@ export default function StudioShell({
     });
     return () => { cancelled = true; };
   }, [currentTrack?.coverArt, currentTrack?.id]);
-  const { accent, wash, mid } = themeRgb;
-  const coverUrl = currentTrack?.coverArt || null;
+  const { accent } = themeRgb;
 
   /* ---------- Lyrics (ported verbatim from ImmersiveLibraryPage) --------- */
   const [lyricsData, setLyricsData] = useState(null); // { synced, plain, instrumental }
@@ -290,9 +238,6 @@ export default function StudioShell({
     });
     return () => { cancelled = true; };
   }, [currentTrack?.id, currentTrack?.title, currentTrack?.artist]);
-
-  const hasSyncedLyrics = lyricsData?.synced?.length > 0;
-  const hasPlainLyrics = !!lyricsData?.plain;
 
   /* ---------- Lyric editing / picking (ported from Immerse) -------------- */
   // The editor (Overlays) saved to the DB itself; this just installs the
@@ -396,7 +341,6 @@ export default function StudioShell({
         isPlaying={isPlaying}
         onPlayTrack={onPlayTrack}
         onTrackImported={onSpotifyImportDone}
-        onResumeOverlay={() => setDismissed(false)}
         onSpotifyCredsSaved={onSpotifyCredsSaved}
         onUpdateTrackMetadata={onUpdateTrackMetadata}
         onRemoveFromLibrary={onRemoveFromLibrary}
@@ -419,12 +363,6 @@ export default function StudioShell({
         onToggleShuffle={onToggleShuffle}
         onToggleRepeat={onToggleRepeat}
         playEvents={playEvents}
-        releases={releases}
-        releasesRefreshing={releasesRefreshing}
-        onRefreshReleases={onRefreshReleases}
-        followedArtists={followedArtists}
-        onFollowArtist={onFollowArtist}
-        onUnfollowArtist={onUnfollowArtist}
         transitionMode={transitionMode}
         onSetTransitionMode={onSetTransitionMode}
         discordPresenceEnabled={discordPresenceEnabled}
@@ -440,56 +378,6 @@ export default function StudioShell({
         themeRgb={themeRgb}
       />
 
-      {overlayVisible ? (
-        <CoverFullscreenOverlay
-          coverUrl={coverUrl}
-          title={currentTrack?.title}
-          artist={currentTrack?.artist}
-          album={currentTrack?.album}
-          accent={accent}
-          mid={mid}
-          wash={wash}
-          isPlaying={isPlaying}
-          currentTime={currentTime}
-          duration={duration}
-          shuffleOn={shuffleOn}
-          repeat={repeat}
-          volume={volume}
-          onSetVolume={onSetVolume}
-          nowPlayingSliderStyle={nowPlayingSliderStyle}
-          onTogglePlay={onTogglePlay}
-          onPrev={onPrev}
-          onNext={onNext}
-          onSeek={onSeek}
-          onToggleShuffle={onToggleShuffle}
-          onToggleRepeat={onToggleRepeat}
-          lyricsData={lyricsData}
-          hasSyncedLyrics={hasSyncedLyrics}
-          hasPlainLyrics={hasPlainLyrics}
-          analyserRef={analyserRef}
-          beatReactive={beatReactive}
-          fullscreenLyricsMode={fullscreenLyricsMode}
-          onSetFullscreenLyricsMode={onSetFullscreenLyricsMode}
-          library={library}
-          currentTrackId={currentTrack?.id}
-          onSelectTrack={(tr) => onPlayTrack?.(tr, library, 'list')}
-          albumCoverOverrides={albumCoverOverrides}
-          playEvents={playEvents}
-         onResetStats={onResetStats}
-         releases={releases}
-          onTrackImported={onSpotifyImportDone}
-          transitionMode={transitionMode}
-          onSetTransitionMode={onSetTransitionMode}
-          onUpdateTrackMetadata={onUpdateTrackMetadata}
-          onRemoveFromLibrary={onRemoveFromLibrary}
-          onUpdateAlbumMetadata={onUpdateAlbumMetadata}
-          onSetAlbumCover={onSetAlbumCover}
-          onSaveLyricsEdited={handleLyricsSaved}
-          onPickLyrics={handlePickLyrics}
-          upNext={queueIndex >= 0 ? queue.slice(queueIndex + 1) : []}
-          onClose={() => setDismissed(true)}
-        />
-      ) : null}
 
       <SpotifyImport
         open={spotifyImportOpen}

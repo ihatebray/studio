@@ -1,28 +1,5 @@
 import React, { useEffect, useRef } from 'react';
 
-function EdgeBleedBand({ accent }) {
-  return (
-    <div
-      aria-hidden
-      style={{
-        position: 'absolute',
-        left: 0, right: 0, bottom: 0,
-        height: 60,
-        zIndex: 2,
-        pointerEvents: 'none',
-        // Tall ellipse anchored to the bottom centre. The radial gradient
-        // gives a soft light-leak feel — strongest in the lower middle,
-        // fading out at the top edge and to either side.
-        background: `radial-gradient(ellipse 80% 100% at 50% 100%, rgba(${accent}, 0.32) 0%, rgba(${accent}, 0.10) 40%, rgba(${accent}, 0) 80%)`,
-        // Multiply blend lets the underlying gradient field's colour
-        // peek through, so the bleed reads as additive light rather
-        // than an opaque overlay.
-        mixBlendMode: 'screen',
-        transition: 'background 600ms ease',
-      }}
-    />
-  );
-}
 
 /**
  * Film-grain tile — tiny SVG turbulence texture, tiled + blended over the
@@ -345,4 +322,4 @@ function AnimatedGradientBg({
 }
 
 
-export { EdgeBleedBand, AnimatedGradientBg };
+export { AnimatedGradientBg };
