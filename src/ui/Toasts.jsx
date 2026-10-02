@@ -256,7 +256,7 @@ const DEPTH = 3;         // cards visible behind the front one
 const EXIT_MS = 240;
 const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
-const KIND_RGB = {
+export const KIND_RGB = {
   success: '123, 225, 145',
   error: '243, 114, 114',
   warning: '245, 190, 80',
@@ -463,7 +463,7 @@ export function ToastPositionPicker() {
 
 /* ── Individual toast ─────────────────────────────────────────── */
 
-function KindIcon({ kind }) {
+export function KindIcon({ kind }) {
   const common = { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
   if (kind === 'success') return <svg {...common}><polyline points="5 12.5 10 17.5 19 7" /></svg>;
   if (kind === 'error') return <svg {...common}><line x1="7" y1="7" x2="17" y2="17" /><line x1="17" y1="7" x2="7" y2="17" /></svg>;

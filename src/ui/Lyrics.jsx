@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { formatTime, parseLRC, activeLyricIndex, sortStampedLines } from './mediaUtils.js';
+import { formatTime, parseLRC, activeLyricIndex, sortStampedLines } from '../lib/mediaUtils.js';
 
 /**
  * LyricsEditor — paste/type lyrics, then tap-to-sync timestamps onto them.

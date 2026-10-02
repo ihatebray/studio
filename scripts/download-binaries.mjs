@@ -1,7 +1,7 @@
 /**
  * Downloads the yt-dlp and ffmpeg binaries studio needs into ./bin/<platform>/.
  *
- * src/binPaths.js resolves binaries from:
+ * src/main/binPaths.js resolves binaries from:
  *   dev:      ./bin/win-x64 | ./bin/darwin-arm64 | ./bin/darwin-x64 | ./bin/linux-x64
  *   packaged: resources/<same leaf> (forge.config.cjs extraResource)
  *

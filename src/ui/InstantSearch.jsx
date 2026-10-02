@@ -6,8 +6,9 @@ import {
   describeCoverage, groupReleases, rankSources, leadCredit, releaseKey, normStrict,
   creditMatchesArtist, creditIncludesArtist,
   isSongSizedRelease, sameSongFamily, classifyRelease,
-  fmtMs, fmtSec, fmtSize, fmtSpeed, normLoose, normTitle,
-} from './instantSearch.js';
+  fmtSize, fmtSpeed, normLoose, normTitle,
+} from '../lib/instantSearch.js';
+import { api, fmtMs, fmtSec } from '../lib/format.js';
 
 /* =========================================================================
  *  studio — instant search
@@ -33,7 +34,6 @@ import {
  *  hands the verbs back to StudioHome, which already has them.
  * ========================================================================= */
 
-const api = () => (typeof window !== 'undefined' ? window.electronAPI : null);
 
 /* 320, not 190. Each search costs a handful of iTunes requests against a
    ~20/min ceiling, so the debounce is a rate-limit control as much as a

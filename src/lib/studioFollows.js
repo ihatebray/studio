@@ -6,8 +6,8 @@
  * ========================================================================= */
 
 import { useSyncExternalStore } from 'react';
+import { api } from './format.js';
 
-const api = () => (typeof window !== 'undefined' ? window.electronAPI : null);
 
 let list = [];
 let hidden = [];

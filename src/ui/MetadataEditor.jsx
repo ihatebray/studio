@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Icons from './Icons.jsx';
-import { formatTime, getFileFormatLabel, parseGenres, formatGenres, hasGenre } from './mediaUtils.js';
+import { formatTime, getFileFormatLabel, parseGenres, formatGenres, hasGenre } from '../lib/mediaUtils.js';
 
 /**
  * Genre chips.

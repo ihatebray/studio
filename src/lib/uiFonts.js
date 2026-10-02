@@ -2,14 +2,14 @@
 
 // Bundled Modulus Pro — Vite processes these imports into hashed asset URLs
 // that work correctly in both dev mode and packaged Electron builds.
-import modulusProExtraLight from './assets/fonts/ModulusPro-ExtraLight.woff2';
-import modulusProLight from './assets/fonts/ModulusPro-Light.woff2';
-import modulusProRegular from './assets/fonts/ModulusPro-Regular.woff2';
-import modulusProMedium from './assets/fonts/ModulusPro-Medium.woff2';
-import modulusProSemiBold from './assets/fonts/ModulusPro-SemiBold.woff2';
-import modulusProBold from './assets/fonts/ModulusPro-Bold.woff2';
-import modulusProExtraBold from './assets/fonts/ModulusPro-ExtraBold.woff2';
-import modulusProBlack from './assets/fonts/ModulusPro-Black.woff2';
+import modulusProExtraLight from '../assets/fonts/ModulusPro-ExtraLight.woff2';
+import modulusProLight from '../assets/fonts/ModulusPro-Light.woff2';
+import modulusProRegular from '../assets/fonts/ModulusPro-Regular.woff2';
+import modulusProMedium from '../assets/fonts/ModulusPro-Medium.woff2';
+import modulusProSemiBold from '../assets/fonts/ModulusPro-SemiBold.woff2';
+import modulusProBold from '../assets/fonts/ModulusPro-Bold.woff2';
+import modulusProExtraBold from '../assets/fonts/ModulusPro-ExtraBold.woff2';
+import modulusProBlack from '../assets/fonts/ModulusPro-Black.woff2';
 
 const UI_FONT_PRESETS = [
   // ── Rounded (clean & versatile) ────────────────────────────────────────

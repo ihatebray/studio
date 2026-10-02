@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { PreviewButton, stop as stopPreview } from './previewPlayer.jsx';
-import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent, accentTextColor } from './coverTheme.js';
+import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent, accentTextColor } from '../lib/coverTheme.js';
 import { PlayIcon } from './sharedUI.jsx';
-import { formatTotalMs } from './mediaUtils.js';
+import { formatTotalMs } from '../lib/mediaUtils.js';
+import { api, fmtMs } from '../lib/format.js';
 
 /* =========================================================================
  *  studio — artist page
@@ -19,7 +20,6 @@ import { formatTotalMs } from './mediaUtils.js';
  *  page and should read that way.
  * ========================================================================= */
 
-const api = () => (typeof window !== 'undefined' ? window.electronAPI : null);
 
 /* Artist profiles are stable and the lookup costs a network round trip, so
    they're cached for a week in localStorage and for the session in memory.
@@ -71,13 +71,6 @@ const HERO_H = 260;
 /* Discography cards shown before "Show all". Two rows at typical widths. */
 const DISC_PAGE = 12;
 const HERO_FOCUS = '40%';
-
-function fmtDur(s) {
-  if (!s || !Number.isFinite(s)) return '';
-  const m = Math.floor(s / 60);
-  const ss = Math.floor(s % 60);
-  return `${m}:${String(ss).padStart(2, '0')}`;
-}
 
 /** Normalise a release title for "do I already own this?" comparison. */
 function normRelease(name) {
@@ -244,7 +237,6 @@ function CardGrid({ children }) {
    sections read as more of the same page, not a panel bolted onto it. */
 
 const fmtCount = (n) => (Number.isFinite(n) && n > 0 ? Math.round(n).toLocaleString() : '');
-const fmtMs = (ms) => (ms ? fmtDur(ms / 1000) : '');
 
 /* Column layout shared by the header and every row, so the labels sit
    exactly over the values they name. */
@@ -712,7 +704,7 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
                   <span className="t">{t.explicit ? <span className="e">E</span> : null}{t.title}</span>
                   {feat ? <span className="a">{feat}</span> : null}
                 </span>
-                <span className="d">{fmtDur((t.durationMs || 0) / 1000)}</span>
+                <span className="d">{fmtMs(t.durationMs)}</span>
                 {st === 'saved' ? (
                   <span className="sv is-saved" title="In your library">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>

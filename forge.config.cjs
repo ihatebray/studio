@@ -25,7 +25,7 @@ function argValue(flag) {
 const targetPlatform = argValue('--platform') || process.platform;
 const targetArch = argValue('--arch') || process.arch;
 
-/** Must stay identical to binSubdir() in src/binPaths.js. */
+/** Must stay identical to binSubdir() in src/main/binPaths.js. */
 function binSubdir(platform, arch) {
   if (platform === 'win32') return 'win-x64';
   if (platform === 'darwin') return arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
@@ -155,8 +155,8 @@ module.exports = {
       name: '@electron-forge/plugin-vite',
       config: {
         build: [
-          { entry: 'src/main.js', config: 'vite.main.config.mjs' },
-          { entry: 'src/preload.js', config: 'vite.preload.config.mjs' },
+          { entry: 'src/main/main.js', config: 'vite.main.config.mjs' },
+          { entry: 'src/main/preload.js', config: 'vite.preload.config.mjs' },
         ],
         renderer: [
           { name: 'main_window', config: 'vite.renderer.config.mjs' },

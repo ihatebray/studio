@@ -838,18 +838,6 @@ export function groupReleases(albums = []) {
  *  Formatting
  * ------------------------------------------------------------------------- */
 
-export function fmtMs(ms) {
-  const s = Math.round((Number(ms) || 0) / 1000);
-  if (!s) return '';
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-export function fmtSec(sec) {
-  const s = Math.round(Number(sec) || 0);
-  if (!s) return '';
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
 export function fmtSize(bytes) {
   const n = Number(bytes) || 0;
   if (n <= 0) return '';

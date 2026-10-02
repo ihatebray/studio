@@ -17,9 +17,9 @@
  * ========================================================================= */
 
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { LevelSource, shapeFor, SHAPE_SLOTS } from './vizLevels.js';
-import { VIZ_STYLES, SOFT_EDGE, drawViz, stillMoving, demoSource } from './compactVizStyles.js';
-import { spotifyIdOf } from './spotifyMediaElement.js';
+import { LevelSource, shapeFor, SHAPE_SLOTS } from '../lib/vizLevels.js';
+import { VIZ_STYLES, SOFT_EDGE, drawViz, stillMoving, demoSource } from '../lib/compactVizStyles.js';
+import { spotifyIdOf } from '../lib/spotifyMediaElement.js';
 
 export const CompactVizContext = createContext(null);
 export const COMPACT_VIZ_KEY = 'studio:compactViz';

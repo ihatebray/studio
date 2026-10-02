@@ -28,7 +28,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useStudioFollows, useHiddenArtists, isStudioFollowed, followArtist, unfollowArtist, setArtistHidden,
-} from './studioFollows.js';
+} from '../lib/studioFollows.js';
+import { ago, cx, fmtMs } from '../lib/format.js';
 
 /* ------------------------------------------------------------------ data */
 
@@ -129,22 +130,6 @@ async function loadCollection(item) {
 
 /* --------------------------------------------------------------- helpers */
 
-const cx = (...c) => c.filter(Boolean).join(' ');
-
-function ago(iso) {
-  const t = typeof iso === 'number' ? iso : Date.parse(iso || '');
-  if (!Number.isFinite(t)) return '';
-  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} hr ago`;
-  const d = Math.round(h / 24);
-  if (d === 1) return 'yesterday';
-  if (d < 7) return `${d} days ago`;
-  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
 function daysSince(dateStr) {
   const t = Date.parse(`${dateStr}T00:00:00`);
   if (!Number.isFinite(t)) return 999;
@@ -158,11 +143,6 @@ function releaseDay(dateStr) {
   if (d < 7) return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long' });
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
-
-const fmtDur = (ms) => {
-  const s = Math.round((ms || 0) / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-};
 
 const typeLabel = (r) => (r.type === 'single' ? (r.totalTracks > 3 ? 'EP' : 'Single') : r.type === 'compilation' ? 'Compilation' : 'Album');
 
@@ -617,7 +597,7 @@ function CollectionPanel({ item, bridge, onClose }) {
           {!rows && !err ? Array.from({ length: 8 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 40, margin: '8px 6px' }} />) : null}
           {(rows || []).map((r, i) => (
             <TrackRow key={`${r.spotifyId}:${i}`} row={r} n={i + 1} list={rows} index={i} bridge={bridge}
-              showArt={item.kind !== 'album'} meta={fmtDur(r.durationMs)} context={item} />
+              showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item} />
           ))}
           {rows && !rows.length ? <div className="st-meta" style={{ padding: 20, textAlign: 'center' }}>Nothing to play here.</div> : null}
         </div>
@@ -1003,7 +983,7 @@ export function SpotifyHome({ bridge }) {
                       <div key={c} className="msp-list">
                         {col.map((t, i) => (
                           <TrackRow key={t.spotifyId} row={t} n={c * 5 + i + 1} list={data.onRepeat} index={c * 5 + i} bridge={bridge}
-                            meta={t.plays ? `${t.plays} plays` : fmtDur(t.durationMs)} />
+                            meta={t.plays ? `${t.plays} plays` : fmtMs(t.durationMs)} />
                         ))}
                       </div>
                     ))}
@@ -1198,7 +1178,7 @@ function ReleaseTracks({ release, bridge, context }) {
               <span className="t">{r.explicit ? <span className="e">E</span> : null}{r.title}</span>
               {r.artists && r.artists !== release.artists ? <span className="a">{r.artists}</span> : null}
             </span>
-            <span className="d">{fmtDur(r.durationMs)}</span>
+            <span className="d">{fmtMs(r.durationMs)}</span>
             <SaveButton state={bridge.saveState(r)} onSave={() => bridge.saveRow(r)} />
           </div>
         );

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatTime, parseLRC } from './mediaUtils.js';
+import { formatTime, parseLRC } from '../lib/mediaUtils.js';
 
 /* =========================================================================
  *  PanelLyricsEditor — add and time lyrics inside the docked panel.

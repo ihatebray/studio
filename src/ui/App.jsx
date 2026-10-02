@@ -6,10 +6,11 @@ import {
   presetById,
   ensureControlFontInheritance,
   loadGoogleFontForPreset,
-} from './uiFonts.js';
+} from '../lib/uiFonts.js';
 import { useToastBus, ToastStack, ToastContext, recordNotice } from './Toasts.jsx';
-import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from './spotifyMediaElement.js';
-import { playContextFor } from './playContext.js';
+import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from '../lib/spotifyMediaElement.js';
+import { playContextFor } from '../lib/playContext.js';
+import { titleCollator } from '../lib/mediaUtils.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
 import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
 
@@ -41,7 +42,6 @@ function shuffleArray(arr) {
   return a;
 }
 
-const titleCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 
 function sortByTitle(arr) {
   return [...arr].sort((a, b) =>

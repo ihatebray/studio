@@ -36,8 +36,8 @@ if (require('electron-squirrel-startup')) {
 import path from 'path';
 import fs from 'fs';
 import { ensureLibraryOpen, loadAllTracks, loadAlbumCovers, setAlbumCover, loadArtistHeaders, setArtistHeader, clearArtistHeader, loadArtistImageCache, setArtistImageCache, loadCoverColours, setCoverColour, setAlbumCoversBulk, upsertTracks, removeTracksByIds, clearAllLibraryData, updateTrackMetadata, updateAlbumMetadata, loadAllPlaylists, loadPlaylistTrackIds, createPlaylist, updatePlaylist, deletePlaylist, renamePlaylist, removeTrackFromPlaylist, addTracksToPlaylist, removeTracksFromPlaylist, closeLibraryDb, isPlaybackPathAllowed, loadCachedLyrics, saveCachedLyrics, deleteCachedLyrics, setTrackFavorite, recordTrackPlay, loadPlayEvents, getStatsHealth, getLibraryOverview, clearAllStats, loadFollowedArtistOverrides, addFollowedArtist, excludeFollowedArtist, clearFollowedArtistOverride, setItunesArtistIdForArtist, loadCachedReleases, upsertArtistReleases } from './libraryDb.js';
-import { analyzeSamples, themeFromAnalysis } from './coverTheme.js';
-import { analyseCover } from './coverColour.js';
+import { analyzeSamples, themeFromAnalysis } from '../lib/coverTheme.js';
+import { analyseCover } from '../lib/coverColour.js';
 import { spotifyCredentialsConfigured, saveSpotifyCredentials, spotifySearchTracks, spotifySearchAlbums, spotifyGetAlbumTracks, spotifyGetTrack, spotifyGetArtist, getSpotifyAccessToken, buildAuthorizeUrl, generatePkcePair, generateOAuthState, exchangeAuthCode, loadUserToken, clearUserToken, hasUserToken, getValidUserToken, SPOTIFY_OAUTH_PORT, spotifyArtistByName, spotifySearchArtists, spotifyArtistTopTracks, spotifyArtistAlbums } from './spotifyClient.js';
 import {
   itunesSearchTracks,

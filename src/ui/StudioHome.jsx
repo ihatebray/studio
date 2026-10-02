@@ -15,20 +15,21 @@ import { useDownloadProgress, VideoPicker, ExplicitBadge, PlayIcon, PauseIcon } 
 import InstantSearch from './InstantSearch.jsx';
 import LyricShare from './LyricShare.jsx';
 import { LyricsPickerButton } from './LyricsPicker.jsx';
-import { sampleCoverTheme, washSourceFor, recordWashSource, recordDeep, setColourIntensity, pageWash, pageTone, barTone, readableAccent, accentTextColor } from './coverTheme.js';
-import { getFileFormatLabel, formatTime, formatTotalMs, titleCollator, parseGenres } from './mediaUtils.js';
-import { songKey } from './instantSearch.js';
+import { sampleCoverTheme, washSourceFor, recordWashSource, recordDeep, setColourIntensity, pageWash, pageTone, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
+import { getFileFormatLabel, formatTime, formatTotalMs, titleCollator, parseGenres } from '../lib/mediaUtils.js';
+import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
 import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPlayer.jsx';
 import ArtistGrid from './ArtistGrid.jsx';
-import { hoverPreload, spotifyIdOf } from './spotifyMediaElement.js';
+import { hoverPreload, spotifyIdOf } from '../lib/spotifyMediaElement.js';
 import { CompactVizContext, CompactVizSlot, CompactVizPicker, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
-import { VIZ_IDS } from './compactVizStyles.js';
+import { VIZ_IDS } from '../lib/compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases } from './MySpotify.jsx';
 import NotificationsButton from './Notifications.jsx';
-import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from './studioFollows.js';
-import { notePlayContext } from './playContext.js';
-import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT } from './accentTokens.js';
+import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from '../lib/studioFollows.js';
+import { notePlayContext } from '../lib/playContext.js';
+import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT } from '../lib/accentTokens.js';
+import { api } from '../lib/format.js';
 
 /* =========================================================================
  *  studio — home  (redesign #3: the side menu)
@@ -52,7 +53,6 @@ import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rem
  *  removal, the resume pill) is carried over unchanged.
  * ========================================================================= */
 
-const api = () => (typeof window !== 'undefined' ? window.electronAPI : null);
 
 
 

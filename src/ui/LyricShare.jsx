@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   sampleCoverTheme, washSourceFor, barTone, pageWash, isFallbackTheme,
-} from './coverTheme.js';
+} from '../lib/coverTheme.js';
 
 /* =========================================================================
  *  LyricShare — pick lines, get an image.

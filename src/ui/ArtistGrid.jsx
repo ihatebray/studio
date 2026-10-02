@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { sampleImageTheme, isFallbackTheme, recordWashSource } from './coverTheme.js';
+import { sampleImageTheme, isFallbackTheme, recordWashSource } from '../lib/coverTheme.js';
 import { PlayIcon } from './sharedUI.jsx';
+import { api } from '../lib/format.js';
 
 /* =========================================================================
  *  studio — Artists, the browse view
@@ -20,7 +21,6 @@ import { PlayIcon } from './sharedUI.jsx';
  *  their own colour.
  * ========================================================================= */
 
-const api = () => (typeof window !== 'undefined' ? window.electronAPI : null);
 
 /* One in-flight request per set of names. The grid mounts, remounts on filter
    changes, and re-renders on hover — without this, each of those would fire a

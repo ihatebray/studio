@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { sampleCoverTheme, accentTextColor } from './coverTheme.js';
+import { sampleCoverTheme, accentTextColor } from '../lib/coverTheme.js';
 import SpotifyImport from './SpotifyImport.jsx';
-import { parseLRC } from './mediaUtils.js';
+import { parseLRC } from '../lib/mediaUtils.js';
 import StudioOnboarding from './StudioOnboarding.jsx';
 import StudioHome from './StudioHome.jsx';
 

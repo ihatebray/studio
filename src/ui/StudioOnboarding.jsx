@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { presetById, getStoredFontId, loadGoogleFontForPreset } from './uiFonts.js';
-import { TOKENS_CSS } from './accentTokens.js';
+import { presetById, getStoredFontId, loadGoogleFontForPreset } from '../lib/uiFonts.js';
+import { TOKENS_CSS } from '../lib/accentTokens.js';
+import { api } from '../lib/format.js';
 
 /* =========================================================================
  *  studio — onboarding
@@ -17,7 +18,6 @@ import { TOKENS_CSS } from './accentTokens.js';
  *  to fix bugs, and the settings sheet always matches what onboarding taught.
  * ========================================================================= */
 
-const api = () => (typeof window !== 'undefined' ? window.electronAPI : null);
 
 /** Shared keyframes + utility classes for the whole studio chrome. */
 export function StudioMotionStyles() {

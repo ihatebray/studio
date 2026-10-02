@@ -11,24 +11,8 @@
  * ========================================================================= */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useNotices, markNoticesSeen, clearNotices, removeNotice, OPEN_NOTICES_EVENT } from './Toasts.jsx';
-
-const KIND_RGB = {
-  success: '123, 225, 145',
-  error: '243, 114, 114',
-  warning: '245, 190, 80',
-};
-
-function ago(at, now) {
-  const s = Math.max(0, Math.round((now - at) / 1000));
-  if (s < 45) return 'just now';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h} hr ago`;
-  const d = Math.round(h / 24);
-  return d === 1 ? 'yesterday' : `${d} days ago`;
-}
+import { useNotices, markNoticesSeen, clearNotices, removeNotice, OPEN_NOTICES_EVENT, KindIcon, KIND_RGB } from './Toasts.jsx';
+import { ago } from '../lib/format.js';
 
 const stamp = (at) => new Date(at).toLocaleString(undefined, {
   month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
@@ -76,14 +60,6 @@ const CSS = `
 .stn-empty b { display: block; color: rgba(255,255,255,0.85); font-size: 14px; margin-bottom: 4px; }
 @media (prefers-reduced-motion: reduce) { .stn-panel { animation: none; } }
 `;
-
-function KindIcon({ kind }) {
-  const p = { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
-  if (kind === 'success') return <svg {...p}><polyline points="5 12.5 10 17.5 19 7" /></svg>;
-  if (kind === 'error') return <svg {...p}><line x1="7" y1="7" x2="17" y2="17" /><line x1="17" y1="7" x2="7" y2="17" /></svg>;
-  if (kind === 'warning') return <svg {...p}><line x1="12" y1="6" x2="12" y2="13" /><line x1="12" y1="18" x2="12" y2="18.01" /></svg>;
-  return <svg {...p}><line x1="12" y1="11" x2="12" y2="18" /><line x1="12" y1="6.5" x2="12" y2="6.51" /></svg>;
-}
 
 export default function NotificationsButton() {
   const { items, seenAt, unread } = useNotices();
