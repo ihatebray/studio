@@ -1,4 +1,4 @@
-import { analyseCover, toBarColour, whiteTextLc, rgbToOklab, oklabToLch, oklchToRgb } from './coverColour.js';
+import { analyseCover, toBarColour, rgbToOklab, oklabToLch, oklchToRgb } from './coverColour.js';
 
 /**
  * Build a theme from an average artwork colour.
@@ -587,7 +587,7 @@ function bestSwatch(samples) {
 /* Artwork with no colour in it at all gets a cool slate, not black. It's still
    neutral and still honest about the record being monochrome, but it reads as
    a surface rather than as a hole in the page. */
-export const MONO_WASH = [38, 40, 48];
+const MONO_WASH = [38, 40, 48];
 
 /** Full theme from an analysis: the mean reading, plus the palette alongside. */
 export function themeFromAnalysis({
@@ -894,7 +894,7 @@ function relLuminance([r, g, b]) {
 }
 
 /** Contrast ratio between two rgb triples, 1 (identical) to 21 (black/white). */
-export function contrastRatio(a, b) {
+function contrastRatio(a, b) {
   const [hi, lo] = [relLuminance(a), relLuminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 }
@@ -1066,13 +1066,6 @@ export function pageTone(rgbStr) {
   return oklchToRgb(Math.min(PAGE_LIGHTNESS_MAX, L + PAGE_LIFT), C, h).join(', ');
 }
 
-/** Readability of white text on a colour, as an APCA Lc magnitude.
- *  75 is the published minimum for body text, 90 the preferred value. */
-export function barReadability(rgbStr) {
-  const p = String(rgbStr || '').split(',').map((n) => parseInt(n.trim(), 10));
-  if (p.length < 3 || p.some((n) => !Number.isFinite(n))) return 0;
-  return whiteTextLc(p);
-}
 
 /**
  * Did a sample actually read an image, or is this the give-up value?

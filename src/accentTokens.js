@@ -250,10 +250,8 @@ export const TOKENS_CSS = `
   outline-offset: 2px;
 }
 /* Tinted pages can't guarantee the accent reads against them. */
-.st-tinted { --focus-ring: #ffffff; }
 
 /* Rows never select text — double-click to play used to highlight the word. */
-.st-row, .st-row * { -webkit-user-select: none; user-select: none; }
 .st-num { font-variant-numeric: tabular-nums; }
 
 /* ---- Buttons ------------------------------------------------------------- */
@@ -262,7 +260,6 @@ export const TOKENS_CSS = `
   cursor: pointer; white-space: nowrap; border: 1px solid transparent; transition: background 140ms ease, border-color 140ms ease, color 140ms ease, filter 140ms ease; }
 .st-btn svg { flex-shrink: 0; }
 .st-btn-sm { height: 30px; padding: 0 12px; border-radius: var(--r-ctl-s); font-size: 12.5px; }
-.st-btn-lg { height: 44px; padding: 0 20px; border-radius: var(--r-ctl-l); font-size: 14px; }
 .st-btn-primary { background: var(--accent); color: var(--accent-ink); }
 .st-btn-primary:hover { filter: brightness(1.08); }
 .st-btn-primary:disabled { background: rgba(255,255,255,0.08); color: var(--text-faint); cursor: default; filter: none; }
@@ -270,8 +267,6 @@ export const TOKENS_CSS = `
 .st-btn-outline:hover { background: rgba(255,255,255,0.05); border-color: #2c2c33; }
 .st-btn-ghost { background: transparent; color: var(--text-dim); }
 .st-btn-ghost:hover { background: rgba(255,255,255,0.06); color: var(--text); }
-.st-btn-success { background: transparent; color: var(--success); border-color: rgba(123,224,176,0.45); }
-.st-btn-success:hover { background: rgba(123,224,176,0.08); }
 .st-btn-danger { background: rgba(255,139,139,0.08); color: var(--danger); border-color: rgba(255,139,139,0.3); }
 .st-btn-danger:hover { background: rgba(255,139,139,0.14); }
 .st-icon-btn { width: 34px; height: 34px; padding: 0; border-radius: var(--r-ctl-m); display: inline-flex; align-items: center; justify-content: center;
@@ -313,8 +308,6 @@ export const TOKENS_CSS = `
 .st-segs button.on { background: rgba(255,255,255,0.12); color: var(--text); font-weight: 700; }
 
 /* ---- Progress ------------------------------------------------------------- */
-.st-progress { position: relative; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; }
-.st-progress > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--accent-line); transition: width 240ms ease; }
 
 /* ---- Inputs --------------------------------------------------------------- */
 .st-input { box-sizing: border-box; width: 100%; height: 40px; padding: 0 14px; border-radius: var(--r-ctl-m); background: rgba(255,255,255,0.02);

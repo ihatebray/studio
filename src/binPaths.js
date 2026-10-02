@@ -34,10 +34,6 @@ export function getToolPaths() {
   };
 }
 
-export function toolsInstalled() {
-  const { ytDlp, ffmpeg } = getToolPaths();
-  return fs.existsSync(ytDlp) && fs.existsSync(ffmpeg);
-}
 
 /**
  * The Spotify playback helper (studio-spotify/, built with

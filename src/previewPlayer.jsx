@@ -119,7 +119,7 @@ export function setPreviewHooks(next) { hooks = { ...hooks, ...next }; }
 
 export function isPreviewing() { return state.status === 'loading' || state.status === 'playing'; }
 
-export function usePreview() {
+function usePreview() {
   const [snap, setSnap] = useState({ ...state });
   useEffect(() => {
     listeners.add(setSnap);

@@ -227,10 +227,6 @@ function waitForSlot(reserve = 0) {
   return Math.max(50, (oldest + ITUNES_WINDOW_MS) - Date.now());
 }
 
-/** True while we're in a cooldown after Apple actually throttled us. */
-export function itunesIsThrottled() {
-  return Date.now() < itunesPausedUntil;
-}
 
 /** Thrown when a discretionary request is skipped to protect the budget. */
 class ItunesSkipped extends Error {

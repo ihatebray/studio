@@ -1543,21 +1543,6 @@ export async function setTrackFavorite(id, isFavorite) {
   }
 }
 
-/** Set per-track notes (free-form text, max 4000 chars). */
-export async function setTrackNotes(id, notes) {
-  await ensureLibraryOpen();
-  if (!db) return { ok: false, error: 'DB not open' };
-  if (typeof id !== 'string' || !id.trim()) return { ok: false, error: 'Invalid id' };
-  const trimmed = typeof notes === 'string' ? notes.slice(0, 4000) : '';
-  try {
-    db.run('UPDATE tracks SET notes = ? WHERE id = ?;', [trimmed || null, id]);
-    persistAtomic();
-    return { ok: true };
-  } catch (e) {
-    console.error('setTrackNotes', e);
-    return { ok: false, error: String(e?.message || e) };
-  }
-}
 
 /**
  * Increment play_count + update last_played for a track AND append a
@@ -1812,105 +1797,9 @@ export async function clearAllStats() {
   }
 }
 
-/** Load all album notes as Map<"album__artist", { notes, updatedAt }>. */
-export async function loadAllAlbumNotes() {
-  await ensureLibraryOpen();
-  if (!db) return new Map();
-  const out = new Map();
-  try {
-    const res = db.exec('SELECT album, artist, notes, updated_at FROM album_notes;');
-    if (!res?.[0]) return out;
-    for (const row of res[0].values) {
-      const album = row[0]; const artist = row[1]; const notes = row[2]; const updatedAt = row[3];
-      if (!notes) continue;
-      out.set(`${album}__${artist}`, { notes: String(notes), updatedAt: Number(updatedAt) });
-    }
-  } catch (e) { console.error('loadAllAlbumNotes', e); }
-  return out;
-}
 
-/** Set notes for an album, identified by its (album, artist) pair. */
-export async function setAlbumNotes(album, artist, notes) {
-  await ensureLibraryOpen();
-  if (!db) return { ok: false, error: 'DB not open' };
-  const a = String(album || '').trim();
-  const ar = String(artist || '').trim();
-  if (!a) return { ok: false, error: 'Album required' };
-  const trimmed = typeof notes === 'string' ? notes.slice(0, 4000) : '';
-  try {
-    if (trimmed) {
-      db.run(
-        `INSERT INTO album_notes (album, artist, notes, updated_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(album, artist) DO UPDATE SET notes = excluded.notes, updated_at = excluded.updated_at;`,
-        [a, ar, trimmed, Date.now()],
-      );
-    } else {
-      db.run('DELETE FROM album_notes WHERE album = ? AND artist = ?;', [a, ar]);
-    }
-    persistAtomic();
-    return { ok: true };
-  } catch (e) {
-    console.error('setAlbumNotes', e);
-    return { ok: false, error: String(e?.message || e) };
-  }
-}
 
-/**
- * Get the stored Spotify album link for a library album, or null if none.
- * Returns { spotifyAlbumId, confirmed, updatedAt }.
- */
-export async function getAlbumLink(album, artist) {
-  await ensureLibraryOpen();
-  if (!db) return null;
-  const a = String(album || '').trim();
-  const ar = String(artist || '').trim();
-  if (!a) return null;
-  try {
-    const res = db.exec(
-      'SELECT spotify_album_id, confirmed, updated_at FROM album_links WHERE album = ? AND artist = ? LIMIT 1;',
-      [a, ar],
-    );
-    const row = res?.[0]?.values?.[0];
-    if (!row) return null;
-    return { spotifyAlbumId: String(row[0]), confirmed: !!row[1], updatedAt: Number(row[2]) };
-  } catch (e) {
-    console.error('getAlbumLink', e);
-    return null;
-  }
-}
 
-/**
- * Store (or update) the Spotify album link for a library album. `confirmed`
- * is true when the user explicitly picked the edition, false for an automatic
- * resolution. Passing an empty spotifyAlbumId clears the link.
- */
-export async function setAlbumLink(album, artist, spotifyAlbumId, confirmed = false) {
-  await ensureLibraryOpen();
-  if (!db) return { ok: false, error: 'DB not open' };
-  const a = String(album || '').trim();
-  const ar = String(artist || '').trim();
-  const sid = String(spotifyAlbumId || '').trim();
-  if (!a) return { ok: false, error: 'Album required' };
-  try {
-    if (sid) {
-      db.run(
-        `INSERT INTO album_links (album, artist, spotify_album_id, confirmed, updated_at) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(album, artist) DO UPDATE SET
-           spotify_album_id = excluded.spotify_album_id,
-           confirmed = excluded.confirmed,
-           updated_at = excluded.updated_at;`,
-        [a, ar, sid, confirmed ? 1 : 0, Date.now()],
-      );
-    } else {
-      db.run('DELETE FROM album_links WHERE album = ? AND artist = ?;', [a, ar]);
-    }
-    persistAtomic();
-    return { ok: true };
-  } catch (e) {
-    console.error('setAlbumLink', e);
-    return { ok: false, error: String(e?.message || e) };
-  }
-}
 
 
 /* =========================================================================

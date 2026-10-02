@@ -88,7 +88,7 @@ export function rgbToOklab(r, g, b) {
   ];
 }
 
-export function oklabToRgb(L, a, bb) {
+function oklabToRgb(L, a, bb) {
   const l = (L + 0.3963377774 * a + 0.2158037573 * bb) ** 3;
   const m = (L - 0.1055613458 * a - 0.0638541728 * bb) ** 3;
   const s = (L - 0.0894841775 * a - 1.2914855480 * bb) ** 3;
@@ -171,13 +171,13 @@ const APCA = {
   deltaYmin: 0.0005,
 };
 
-export function sRGBtoY([r, g, b]) {
+function sRGBtoY([r, g, b]) {
   return APCA.Rco * ((r / 255) ** APCA.TRC)
     + APCA.Gco * ((g / 255) ** APCA.TRC)
     + APCA.Bco * ((b / 255) ** APCA.TRC);
 }
 
-export function apcaContrast(txtRgb, bgRgb) {
+function apcaContrast(txtRgb, bgRgb) {
   let txtY = sRGBtoY(txtRgb);
   let bgY = sRGBtoY(bgRgb);
   txtY = txtY > APCA.blkThrs ? txtY : txtY + ((APCA.blkThrs - txtY) ** APCA.blkClmp);
@@ -197,7 +197,7 @@ export function apcaContrast(txtRgb, bgRgb) {
 
 const WHITE = [255, 255, 255];
 /** Readability of white text on this background, as a positive magnitude. */
-export function whiteTextLc(rgb) {
+function whiteTextLc(rgb) {
   return Math.abs(apcaContrast(WHITE, rgb));
 }
 
@@ -338,7 +338,7 @@ const WEIGHT_CHROMA_BELOW = 0.1;
  * weighting of the two, with the hue-neighbourhood excitation, is the best
  * published resolution of that tension and is what this follows.
  */
-export function scoreClusters(clusters) {
+function scoreClusters(clusters) {
   const total = clusters.reduce((n, c) => n + c.w, 0) || 1;
 
   const huePop = new Float64Array(360);

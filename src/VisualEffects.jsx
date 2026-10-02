@@ -34,15 +34,6 @@ function EdgeBleedBand({ accent }) {
  */
 const GRAIN_TILE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`;
 
-/** Opaque grayscale dither noise.
- *  Distinct from GRAIN_TILE: feTurbulence's raw output has a RANDOM ALPHA
- *  channel, so most of its pixels are partly transparent and its effective
- *  amplitude is a fraction of what it looks like. That's fine for decorative
- *  grain, useless for dithering — a dither has to reliably swing at least one
- *  8-bit level or it does nothing at all. feFuncA pins alpha to 1 and
- *  feColorMatrix drops it to grayscale, giving noise that actually bites.
- */
-const DITHER_TILE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='d' x='0' y='0'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='discrete' tableValues='1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23d)'/%3E%3C/svg%3E")`;
 
 function AnimatedGradientBg({
   accent, mid, wash, coverUrl, analyserRef, beatReactive, isPlaying,
@@ -354,4 +345,4 @@ function AnimatedGradientBg({
 }
 
 
-export { EdgeBleedBand, AnimatedGradientBg, GRAIN_TILE, DITHER_TILE };
+export { EdgeBleedBand, AnimatedGradientBg };

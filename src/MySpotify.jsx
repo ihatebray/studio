@@ -242,7 +242,6 @@ const CSS = `
 
 /* two-up lists */
 .msp-duo { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; }
-.msp-duo.is-one { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 1100px) { .msp-duo { grid-template-columns: minmax(0, 1fr); } }
 .msp-list { display: flex; flex-direction: column; }
 .msp-row { display: grid; grid-template-columns: 28px 40px minmax(0, 1fr) auto auto; align-items: center; gap: 12px;

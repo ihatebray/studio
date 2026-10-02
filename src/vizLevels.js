@@ -33,7 +33,7 @@
 export const BANDS = 24;
 const LOW_HZ = 40;
 const HIGH_HZ = 16000;
-export const bandHz = (k) => LOW_HZ * (HIGH_HZ / LOW_HZ) ** (k / BANDS);
+const bandHz = (k) => LOW_HZ * (HIGH_HZ / LOW_HZ) ** (k / BANDS);
 
 /* The vocal range, as band indices (inclusive): the stand-in song sings here. */
 const VOCAL_LO = (() => { let b = 0; while (b < BANDS && bandHz(b) < 250) b++; return b; })();
@@ -361,8 +361,8 @@ export class LevelSource {
  *   bars 12–13 breakdown: drums and bass drop out, the voice carries on
  *   bars 14–15 everything back in
  */
-export const DEMO_BPM = 100;
-export function synthSong(t, out = new Float32Array(BANDS)) {
+const DEMO_BPM = 100;
+function synthSong(t, out = new Float32Array(BANDS)) {
   const spb = 60 / DEMO_BPM;
   const beatF = t / spb;
   const beat = Math.floor(beatF);

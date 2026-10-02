@@ -18,7 +18,7 @@
  *  advances between its own timeupdate events.
  * ========================================================================= */
 
-export const SPOTIFY_PREFIX = 'spotify:track:';
+const SPOTIFY_PREFIX = 'spotify:track:';
 
 /** The Spotify track id of a Saved (streamed) library row, else null. */
 export function spotifyIdOf(track) {
@@ -68,7 +68,7 @@ export function preloadStreamed(track) {
   api.spotifyPlayerPreload(id)?.catch?.(() => { if (preloaded === id) preloaded = null; });
 }
 
-export const HOVER_PRELOAD_MS = 200;
+const HOVER_PRELOAD_MS = 200;
 
 /** onMouseEnter / onMouseLeave for a row's play button / number cell (not
  *  the whole row, as in Sonora): preload after a short rest there, so moving

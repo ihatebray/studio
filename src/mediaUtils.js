@@ -145,7 +145,7 @@ export function sortStampedLines(lines) {
  *  null byte ID3v2.4 uses for genuine multi-value frames.
  * ------------------------------------------------------------------------- */
 
-export const GENRE_SEPARATOR = '; ';
+const GENRE_SEPARATOR = '; ';
 
 /** "Emo Rap; Hyperpop" → ["Emo Rap", "Hyperpop"]. Always an array. */
 export function parseGenres(value) {

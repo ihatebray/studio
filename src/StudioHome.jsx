@@ -295,12 +295,7 @@ export default function StudioHome({
       return next;
     });
   }, []);
-  const resetTheme = useCallback(() => {
-    setTheme({ ...THEME_DEFAULTS });
-    try { localStorage.removeItem('studio:theme'); } catch { /* ignore */ }
-  }, []);
 
-  const themeCustomAccent = theme.accent;
 
   /* Theme variables go on <html>, NOT on this component's root div.
      Modals portal to document.body, which is OUTSIDE that div — so every
@@ -446,7 +441,6 @@ export default function StudioHome({
 
   /* ---------- Row menu + metadata editor (shared by library views) --------- */
   const [rowMenu, setRowMenu] = useState(null); // { x, y, track }
-  const [confirmKey, setConfirmKey] = useState(null);
   const [editingTrack, setEditingTrack] = useState(null);
   /* Clearing is irreversible, so it's gated behind a typed confirmation rather
      than a single click — this is the one action in Settings that can't be
@@ -593,7 +587,7 @@ export default function StudioHome({
     });
   }, [coverFlight]);
 
-  const closeMenu = useCallback(() => { setRowMenu(null); setConfirmKey(null); }, []);
+  const closeMenu = useCallback(() => { setRowMenu(null); }, []);
 
   /* The click-away listener must IGNORE presses inside the menu.
      `mousedown` on window fires BEFORE a button's `onClick`, so an unguarded
@@ -676,7 +670,6 @@ export default function StudioHome({
   const openRowMenu = useCallback((e, track) => {
     e.preventDefault();
     e.stopPropagation();
-    setConfirmKey(null);
     setRowMenu({ x: e.clientX, y: e.clientY, track });
   }, []);
 
@@ -1095,47 +1088,7 @@ export default function StudioHome({
      own tracklist, so there is no second copy left to keep in step. */
 
   /* ---------- Discover: charts + release expansion + follow manager -------- */
-  const [charts, setCharts] = useState(null);      // { songs, albums } | null
-  const [chartsError, setChartsError] = useState('');
-  const chartsRequestedRef = useRef(false);
-  useEffect(() => {
-    if (section !== 'discover' || chartsRequestedRef.current) return;
-    chartsRequestedRef.current = true;
-    const a = api();
-    if (!a?.fetchCharts) { setChartsError('Charts unavailable in this build.'); return; }
-    a.fetchCharts().then((res) => {
-      if (res?.ok) setCharts({ songs: res.songs || [], albums: res.albums || [] });
-      else setChartsError(res?.error || 'Could not load charts.');
-    }).catch((e) => setChartsError(String(e?.message || e)));
-  }, [section]);
 
-  /** Chart song → iTunes lookup for full meta → yt-dlp import. */
-  const downloadChartSong = useCallback(async (song) => {
-    const a = api();
-    if (!a?.lookupChartSong || !a?.importFromYoutubeSearch) return;
-    const key = `c:${song.id}`;
-    if (dlState[key] === 'busy' || dlState[key] === 'done') return;
-    markDl(key, 'busy');
-    try {
-      const lk = await a.lookupChartSong(song.id);
-      const tk = lk?.ok ? lk.track : null;
-      const meta = {
-        title: tk?.trackName || song.name,
-        artists: tk?.artistName || song.artistName,
-        album: tk?.collectionName || '',
-        albumArtUrl: tk?.artworkUrl || song.artworkUrl || '',
-        durationMs: tk?.trackTimeMillis || 0,
-        spotifyId: `itunes:${tk?.trackId || song.id}`,
-        trackNumber: tk?.trackNumber || null,
-        discNumber: null,
-        explicit: !!tk?.explicit,
-      };
-      const res = await a.importFromYoutubeSearch({ ...meta, progressId: key });
-      if (res?.ok && res.track) { onTrackImported?.(res.track); markDl(key, 'done'); return; }
-      markDl(key, 'failed');
-      openPicker(meta, res, key);
-    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn't download "${song.name}".`); }
-  }, [dlState, markDl, onTrackImported, toastError, openPicker]);
 
   /* ---------- Library views ------------------------------------------------ */
   const [libView, setLibView] = useState(() => {
@@ -1165,7 +1118,7 @@ export default function StudioHome({
     setLibView(v);
     try { localStorage.setItem('studio:libView', v); } catch { /* ignore */ }
   }, []);
-  const [libSort, setLibSort] = useState(() => {
+  const [libSort] = useState(() => {
     try { const v = localStorage.getItem('studio:libSort'); return ['recent', 'title', 'artist'].includes(v) ? v : 'recent'; } catch { return 'recent'; }
   });
   const [libFilter, setLibFilter] = useState('');
@@ -1178,10 +1131,6 @@ export default function StudioHome({
    * views clears it, the same way changing views already resets scroll. */
   useEffect(() => { setLibFilter(''); }, [libView]);
 
-  const pickLibSort = useCallback((v) => {
-    setLibSort(v);
-    try { localStorage.setItem('studio:libSort', v); } catch { /* ignore */ }
-  }, []);
 
   /* Sort order for the songs table.
    *
@@ -1230,8 +1179,6 @@ export default function StudioHome({
   // selected album (Albums), track's album context (Songs), or artist (Artists).
   const [openLibAlbumKey, setOpenLibAlbumKey] = useState(null);
   const [openLibArtistKey, setOpenLibArtistKey] = useState(null);
-  const [albumRemoveArmed, setAlbumRemoveArmed] = useState(false);
-  useEffect(() => { setAlbumRemoveArmed(false); }, [openLibAlbumKey]);
 
   // Now Playing panel options, persisted so they survive restarts.
   const [npAnimatedBg, setNpAnimatedBg] = useState(() => {
@@ -1252,13 +1199,8 @@ export default function StudioHome({
      are inert. The stale localStorage value is ignored rather than read,
      since a leftover '1' used to hide the Now Playing bar on every launch. */
   const [libExpanded, setLibExpanded] = useState(false);
-  // Floating Now Playing bar: collapses the panel to a slim bar pinned at the
-  // bottom (Spotify-mobile style), giving the library list the full width.
-  const [npBar, setNpBar] = useState(() => {
-    try { return localStorage.getItem('studio:npBar') === '1'; } catch { return false; }
-  });
   const toggleLibExpanded = useCallback(() => {
-    setLibExpanded((v) => { const n = !v; try { localStorage.setItem('studio:libExpanded', n ? '1' : '0'); } catch { /* ignore */ } if (n) { setNpBar(false); try { localStorage.setItem('studio:npBar', '0'); } catch { /* ignore */ } } return n; });
+    setLibExpanded((v) => { const n = !v; try { localStorage.setItem('studio:libExpanded', n ? '1' : '0'); } catch { /* ignore */ } return n; });
   }, []);
 
 
@@ -1305,8 +1247,9 @@ export default function StudioHome({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [libExpanded, ccOpen, toggleCc]);
 
-  const toggleNpBar = useCallback(() => {
-    setNpBar((v) => { const n = !v; try { localStorage.setItem('studio:npBar', n ? '1' : '0'); } catch { /* ignore */ } if (n) { setLibExpanded(false); try { localStorage.setItem('studio:libExpanded', '0'); } catch { /* ignore */ } } return n; });
+  const collapseToBar = useCallback(() => {
+    setLibExpanded(false);
+    try { localStorage.setItem('studio:libExpanded', '0'); } catch { /* ignore */ }
   }, []);
 
   const toggleNpAnimatedBg = useCallback(() => {
@@ -1332,29 +1275,13 @@ export default function StudioHome({
    * mounted node always starts at scrollTop 0.
    */
   const SONG_ROW_H = 56;
-  const [songScrollTop, setSongScrollTop] = useState(0);
-  const [songViewH, setSongViewH] = useState(420);
   const songRoRef = useRef(null);
   const songListRef = useRef(null);
-  const attachSongList = useCallback((el) => {
-    songListRef.current = el;
-    if (songRoRef.current) { songRoRef.current.disconnect(); songRoRef.current = null; }
-    if (!el) return;
-    const measure = () => { const h = el.clientHeight; if (h > 0) setSongViewH(h); };
-    measure();
-    setSongScrollTop(0);
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(measure);
-      ro.observe(el);
-      songRoRef.current = ro;
-    }
-  }, []);
   useEffect(() => () => { if (songRoRef.current) songRoRef.current.disconnect(); }, []);
 
   // A narrowed filter can leave the viewport scrolled past the end of the new
   // result set, which would render an empty slice. Jump back to the top.
   useEffect(() => {
-    setSongScrollTop(0);
     if (songListRef.current) songListRef.current.scrollTop = 0;
   }, [libFilter, libSort, libView, libRowSort]);
 
@@ -1400,7 +1327,6 @@ export default function StudioHome({
     return [...map.values()].sort((a, b) => b.newest - a.newest);
   }, [library, albumCoverOverrides]);
 
-  const openLibAlbum = openLibAlbumKey ? albums.find((g) => g.key === openLibAlbumKey) || null : null;
 
   /** Group the library into artists, keyed by primary artist name. Each entry
    * carries the artist's albums (reusing the album grouping) and a flat track
@@ -1446,7 +1372,6 @@ export default function StudioHome({
     return [...map.values()].sort((x, y) => (x.name || '').localeCompare(y.name || '', undefined, { sensitivity: 'base' }));
   }, [albums]);
 
-  const openLibArtist = openLibArtistKey ? artists.find((a) => a.key === openLibArtistKey) || null : null;
 
   // Local quick-filter over the library — matches title, artist, or album.
   const filteredSongs = useMemo(() => {
@@ -1525,58 +1450,6 @@ export default function StudioHome({
 
   /* ---------- Home dashboard data ------------------------------------------ */
 
-  /* ---------- Draggable resume pill ---------------------------------------- */
-  const [pillPos, setPillPos] = useState(() => {
-    try { const v = JSON.parse(localStorage.getItem('studio:pillPos') || 'null'); return v && Number.isFinite(v.x) && Number.isFinite(v.y) ? v : null; } catch { return null; }
-  });
-  const pillRef = useRef(null);
-
-  // The saved position is only valid for the window size it was dragged in.
-  // Re-clamp on mount and every resize so the pill can never sit off-screen
-  // (drag at maximized → relaunch at 1400×776 previously lost it).
-  useEffect(() => {
-    const clampPill = () => setPillPos((p) => {
-      if (!p) return p;
-      const el = pillRef.current;
-      const w = el?.offsetWidth || 280;
-      const h = el?.offsetHeight || 48;
-      const x = Math.min(Math.max(6, p.x), Math.max(6, window.innerWidth - w - 6));
-      const y = Math.min(Math.max(6, p.y), Math.max(6, window.innerHeight - h - 6));
-      if (x === p.x && y === p.y) return p;
-      const next = { x, y };
-      try { localStorage.setItem('studio:pillPos', JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
-    clampPill();
-    window.addEventListener('resize', clampPill);
-    return () => window.removeEventListener('resize', clampPill);
-  }, []);
-  const pillDragRef = useRef({ moved: false });
-  const onPillPointerDown = useCallback((e) => {
-    const el = pillRef.current;
-    if (!el || e.button !== 0) return;
-    const rect = el.getBoundingClientRect();
-    const start = { px: e.clientX, py: e.clientY, x: rect.left, y: rect.top, w: rect.width, h: rect.height };
-    pillDragRef.current = { moved: false };
-    const onMove = (ev) => {
-      const dx = ev.clientX - start.px;
-      const dy = ev.clientY - start.py;
-      if (!pillDragRef.current.moved && Math.hypot(dx, dy) < 5) return; // click, not drag
-      pillDragRef.current.moved = true;
-      const x = Math.min(Math.max(6, start.x + dx), window.innerWidth - start.w - 6);
-      const y = Math.min(Math.max(6, start.y + dy), window.innerHeight - start.h - 6);
-      setPillPos({ x, y });
-    };
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      if (pillDragRef.current.moved) {
-        setPillPos((p) => { try { localStorage.setItem('studio:pillPos', JSON.stringify(p)); } catch { /* ignore */ } return p; });
-      }
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  }, []);
   // window.prompt is a no-op in Electron, so rename is an inline edit instead.
 
   /* ---- Now Playing panel data ------------------------------------------
@@ -1664,11 +1537,7 @@ export default function StudioHome({
   /* ---- Profile & library artwork ----------------------------------------
    * Both are purely local presentation, so localStorage is the right home —
    * no schema change, and clearing the library shouldn't wipe your name. */
-  const [profile, setProfile] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('studio:profile') || '{}') || {}; } catch { return {}; }
-  });
   const saveProfile = useCallback((next) => {
-    setProfile(next);
     try { localStorage.setItem('studio:profile', JSON.stringify(next)); } catch { /* ignore */ }
   }, []);
   const [editProfile, setEditProfile] = useState(null);   // { name, avatar } | null
@@ -1834,10 +1703,8 @@ export default function StudioHome({
     rememberAccentSource(src);
   }, [currentTrack, npWashTheme, coverOverride, accentMode, accentFixed]);
 
-  const [playlistsOpen, setPlaylistsOpen] = useState(true);
   const [libDetail, setLibDetail] = useState(null);   // { kind:'album'|'playlist', key } | null
   const [detailFilter, setDetailFilter] = useState('');
-  const [detailSearchOpen, setDetailSearchOpen] = useState(false);
   const [detailMore, setDetailMore] = useState(false);
   /* Play counts per track, for the optional PLAYS column on detail pages. */
   const playCountByTrack = useMemo(() => {
@@ -1879,7 +1746,7 @@ export default function StudioHome({
   const [plPickerBusy, setPlPickerBusy] = useState(false);
   // Clear the filter when you open a different record — carrying it over makes
   // a full album look half-empty.
-  useEffect(() => { setDetailFilter(''); setDetailSearchOpen(false); }, [libDetail?.key]);
+  useEffect(() => { setDetailFilter(''); }, [libDetail?.key]);
   /**
    * Primary artist — the credit before any feature.
    *
@@ -2390,7 +2257,6 @@ export default function StudioHome({
   const openBarMenu = useCallback((e, track) => {
     if (!track) return;
     const r = e.currentTarget.getBoundingClientRect();
-    setConfirmKey(null);
     // Right-aligned to the button: the cluster is hard against the right edge
     // of the bar, so a left-aligned menu would immediately hit the clamp and
     // stop tracking the button it came from.
@@ -2518,62 +2384,12 @@ export default function StudioHome({
     if (r?.ok && r.id) pickLibView(`pl:${r.id}`);
   }, [newPlaylist, onCreatePlaylist, pickLibView]);
 
-  /* ---- Home rows -------------------------------------------------------
-   * Both derive from the play log rather than being stored: the log is the
-   * single source of truth for listening, and anything cached alongside it
-   * would need invalidating on every play, import and library clear.
-   *
-   * Events are matched by id, so a track whose history hasn't reattached yet
-   * (deleted, not re-imported) simply doesn't appear — better than showing a
-   * row of blanks.
-   */
-  const recentlyPlayed = useMemo(() => {
-    const byId = new Map(library.map((t) => [t.id, t]));
-    const seen = new Set();
-    const out = [];
-    const evs = [...(playEvents || [])]
-      .filter((e) => e && Number.isFinite(e.at))
-      .sort((a, b) => b.at - a.at);
-    for (const e of evs) {
-      if (seen.has(e.id)) continue;
-      const t = byId.get(e.id);
-      if (!t) continue;
-      seen.add(e.id);
-      out.push(t);
-      if (out.length >= 20) break;
-    }
-    return out;
-  }, [library, playEvents]);
 
-  /* Most-played artists, with a representative cover for each. Counts come
-     from the log rather than tracks.play_count so the row reflects the same
-     window as everything else on this page. */
-  const favoriteArtists = useMemo(() => {
-    const byId = new Map(library.map((t) => [t.id, t]));
-    const tally = new Map();
-    for (const e of (playEvents || [])) {
-      const t = byId.get(e?.id);
-      if (!t) continue;
-      const name = (t.artist || '').trim();
-      if (!name || name.toLowerCase() === 'unknown artist') continue;
-      const k = name.toLowerCase();
-      const cur = tally.get(k) || { artist: name, plays: 0, art: null };
-      cur.plays += 1;
-      if (!cur.art) cur.art = coverFor(t);
-      tally.set(k, cur);
-    }
-    return [...tally.values()].sort((a, b) => b.plays - a.plays).slice(0, 20);
-  }, [library, playEvents, coverFor]);
 
 
   // Recently played — most-recent-first, de-duplicated by track, resolved
   // from the play-event log against the current library.
 
-  /* ========================================================================
-   *  Render
-   * ======================================================================== */
-  const NAV_BTN = 40;
-  const NAV_GAP = 4;
   // Anything that owns Esc (or the letter keys) while fullscreen is up.
   npFullBlockers.current = !!(rowMenu || plPicker || coverZoom || editingTrack || lyricSel || lyricShareOpen);
 
@@ -2735,37 +2551,13 @@ export default function StudioHome({
            black showed underneath. Absolute inset removes the flex chain from
            the equation entirely — the page is pinned to all four edges. */
         .sth-scroll.is-page { padding: 0; overflow: hidden; position: relative; }
-        .sth-scroll.is-page > .sth-libpage, .sth-scroll.is-page > .sth-find, .sth-scroll.is-page > .sth-setpage, .sth-scroll.is-page > .sth-statspage { position: absolute; inset: 0; }
+        .sth-scroll.is-page > .sth-libpage { position: absolute; inset: 0; }
         /* Scrollbar hidden — the panel has rounded corners and a visible
            gutter running down the inside of them looked like a defect. */
         .sth-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
         .sth-scroll::-webkit-scrollbar { width: 6px; }
         .sth-scroll::-webkit-scrollbar-thumb { background: rgba(var(--st-fg-rgb), 0.14); border-radius: 999px; }
-        .sth-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 7px 10px; border-radius: 12px; border: none; background: transparent; cursor: pointer; text-align: left; color: inherit; transition: background 0.14s ease; }
-        .sth-row:hover { background: rgba(var(--st-fg-rgb), 0.055); }
-        .sth-row.is-active { background: rgba(var(--st-fg-rgb), 0.08); }
-        .sth-seg { cursor: pointer; padding: 6px 13px; border-radius: 8px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; border: none; background: transparent; color: rgba(var(--st-fg-rgb), 0.42); transition: background 0.18s ease, color 0.18s ease; }
-        .sth-seg:hover { color: rgba(var(--st-fg-rgb), 0.72); }
-        .sth-seg.on { background: rgba(var(--st-fg-rgb), 0.14); color: #fff; }
-        .sth-card { border-radius: 16px; overflow: hidden; background: rgba(var(--st-fg-rgb), 0.045); border: 1px solid rgba(var(--st-fg-rgb), 0.07); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
         /* --- library song table --- */
-        .sth-thead, .sth-trow { display: grid; grid-template-columns: 30px 44px minmax(0,1fr) minmax(0,0.6fr) 132px; gap: 12px; align-items: center; padding: 6px 14px; }
-        .sth-thead { padding: 10px 14px 8px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: rgba(var(--st-fg-rgb), 0.32); border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.06); }
-        .sth-trow { border-top: 1px solid rgba(var(--st-fg-rgb), 0.04); cursor: pointer; transition: background 0.13s ease; color: inherit; width: 100%; text-align: left; background: transparent; border-left: none; border-right: none; border-bottom: none; }
-        .sth-trow:hover { background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-trow.is-active { background: rgba(var(--st-fg-rgb), 0.08); }
-        .sth-num { display: block; font-variant-numeric: tabular-nums; }
-        .sth-playg { display: none; }
-        .sth-trow:hover .sth-num { display: none; }
-        .sth-trow:hover .sth-playg { display: block; }
-        .sth-hact { display: flex; gap: 5px; opacity: 0; pointer-events: none; transition: opacity 0.14s ease; }
-        .sth-trow:hover .sth-hact, .sth-arow:hover .sth-hact { opacity: 1; pointer-events: auto; }
-        .sth-iconbtn { width: 25px; height: 25px; border-radius: 7px; border: none; cursor: pointer; background: rgba(var(--st-fg-rgb), 0.09); color: rgba(var(--st-fg-rgb), 0.78); display: flex; align-items: center; justify-content: center; padding: 0; transition: background 0.13s ease, color 0.13s ease; }
-        .sth-iconbtn:hover { background: rgba(var(--st-fg-rgb), 0.18); color: #fff; }
-        @media (max-width: 980px) {
-          .sth-thead, .sth-trow { grid-template-columns: 30px 44px minmax(0,1fr) 132px; }
-          .sth-albcell { display: none; }
-        }
         /* =================== Find: results split view ====================
            One surface, not two. An earlier pass gave each column the
            .sth-libpanel treatment (fill + border + radius) and the result was
@@ -2777,129 +2569,41 @@ export default function StudioHome({
              gap   — nothing but space
            The page header spans both columns. Giving each column its own
            header is the other half of what made them read as two widgets. */
-        .sth-find { position: absolute; inset: 0; display: flex; flex-direction: column; }
-        .sth-find-head { flex-shrink: 0; padding: 18px 26px 13px; }
-        .sth-find-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); }
-        .sth-find-col { min-width: 0; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(var(--st-fg-rgb), 0.13) transparent; }
-        .sth-find-col::-webkit-scrollbar { width: 6px; }
-        .sth-find-col::-webkit-scrollbar-thumb { background: rgba(var(--st-fg-rgb), 0.13); border-radius: 999px; }
-        .sth-find-list { padding: 0 14px 26px 20px; }
-        .sth-find-det { padding: 0 22px 26px 22px; position: relative; }
-        .sth-find.v-rule .sth-find-head { border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.07); }
-        .sth-find.v-rule .sth-find-det { border-left: 1px solid rgba(var(--st-fg-rgb), 0.07); }
-        .sth-find.v-wash .sth-find-head { border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.05); }
-        .sth-find.v-wash .sth-find-det { padding-left: 26px; }
         /* Falls off over 280px so it reads as light on the surface rather than
            a panel with a coloured top. Behind everything (z-index on content). */
-        .sth-find.v-wash .sth-find-det::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 280px; pointer-events: none;
-          background: linear-gradient(180deg, rgba(var(--st-acc-rgb), 0.13), rgba(var(--st-acc-rgb), 0) 78%); }
-        .sth-find.v-gap .sth-find-split { grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1.06fr); }
-        .sth-find.v-gap .sth-find-det { padding-left: 0; padding-right: 26px; }
 
         /* Section labels stick to the top of their own column. Solid bg, not
            translucent: rows scrolling under a blurred label is the one place
            backdrop-filter reliably looks like a smear. */
-        .sth-fsec { position: sticky; top: 0; z-index: 2; background: rgb(var(--st-bg-rgb)); padding: 14px 6px 8px; margin-bottom: 2px;
-          font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(var(--st-fg-rgb), 0.32);
-          display: flex; align-items: center; gap: 8px; }
-        .sth-fsec::after { content: ''; position: absolute; left: 6px; right: 6px; bottom: 0; height: 1px; background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-fsec .ct { color: rgba(var(--st-fg-rgb), 0.22); letter-spacing: 0; font-weight: 700; }
 
-        .sth-frow { position: relative; display: flex; align-items: center; gap: 11px; width: 100%; padding: 8px 10px; border-radius: 10px;
-          border: none; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background 0.13s ease; }
-        .sth-frow:hover { background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-frow.on { background: rgba(var(--st-acc-rgb), 0.10); }
         /* The selected row points AT the detail column instead of being
            outlined — an outline on a row sitting on a flat page just draws a
            small card again, which is the thing this layout removed. */
-        .sth-frow.on::before { content: ''; position: absolute; left: -14px; top: 6px; bottom: 6px; width: 2.5px; border-radius: 999px; background: rgb(var(--st-acc-rgb)); }
-        .sth-fart { width: 42px; height: 42px; border-radius: 9px; flex-shrink: 0; background-size: cover; background-position: center;
-          background-color: rgba(var(--st-fg-rgb), 0.06); box-shadow: 0 0 0 1px rgba(var(--st-fg-rgb), 0.08); }
-        .sth-fglyph { width: 42px; height: 42px; border-radius: 9px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-          background: rgba(var(--st-fg-rgb), 0.05); border: 1px solid rgba(var(--st-fg-rgb), 0.09); color: rgba(var(--st-fg-rgb), 0.45); }
-        .sth-fnm { font-size: 13px; font-weight: 650; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sth-fmeta { display: flex; align-items: center; gap: 7px; margin-top: 3px; min-width: 0; font-size: 10.5px; color: rgba(var(--st-sub-rgb), 0.45); }
-        .sth-fmeta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         /* Plain facts get dot separators; badges and the slot tag don't, since
            they're already visually bounded and a dot in front of a pill reads
            as a bullet list. Only .sth-fmi carries the dot, and only when it
            follows another .sth-fmi — so "keshi · 2025 · 3 tracks" gets them
            while "[FLAC] keshi · 3 sources ●Free slot" doesn't get a stray one
            after the badge. */
-        .sth-fmi + .sth-fmi::before { content: '·'; margin-right: 7px; color: rgba(var(--st-sub-rgb), 0.3); font-weight: 700; }
 
-        .sth-fbadge { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; font-size: 9.5px; font-weight: 800; letter-spacing: 0.05em;
-          padding: 3px 7px; border-radius: 6px; text-transform: uppercase; white-space: nowrap; }
-        .sth-favail { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 10.5px; font-weight: 650; white-space: nowrap; }
-        .sth-fdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
-        .sth-ftab { border: none; background: transparent; cursor: pointer; color: rgba(var(--st-fg-rgb), 0.42); font-size: 12.5px; font-weight: 700;
-          padding: 6px 11px; border-radius: 9px; font-family: inherit; transition: background 0.14s ease, color 0.14s ease; }
-        .sth-ftab:hover { color: rgba(var(--st-fg-rgb), 0.78); background: rgba(var(--st-fg-rgb), 0.04); }
-        .sth-ftab.on { color: #fff; background: rgba(var(--st-fg-rgb), 0.09); }
         /* Filter chips. The old ones were flat dark pills with a label and no
            other signal — you couldn't tell a toggle from a button, or on from
            off at a glance. Now: a state box on the left that fills and checks
            when active, and a count of what the filter is actually doing, so
            the chip reports as well as controls. */
-        .sth-fchip { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 650;
-          padding: 6px 12px 6px 8px; border-radius: 999px; border: 1px solid rgba(var(--st-fg-rgb), 0.1); background: rgba(var(--st-fg-rgb), 0.04);
-          color: rgba(var(--st-fg-rgb), 0.62); transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease; }
-        .sth-fchip:hover { border-color: rgba(var(--st-fg-rgb), 0.22); color: rgba(var(--st-fg-rgb), 0.92); background: rgba(var(--st-fg-rgb), 0.07); }
-        .sth-fchip.on { background: rgba(var(--st-acc-rgb), 0.14); border-color: rgba(var(--st-acc-rgb), 0.42); color: rgb(var(--st-acc-rgb)); }
-        .sth-fchip.on:hover { background: rgba(var(--st-acc-rgb), 0.2); color: rgb(var(--st-acc-rgb)); }
-        .sth-fchip-box { position: relative; width: 15px; height: 15px; flex-shrink: 0; border-radius: 5px;
-          border: 1.5px solid rgba(var(--st-fg-rgb), 0.22); transition: background 0.15s ease, border-color 0.15s ease; }
-        .sth-fchip:hover .sth-fchip-box { border-color: rgba(var(--st-fg-rgb), 0.34); }
-        .sth-fchip.on .sth-fchip-box { background: rgb(var(--st-acc-rgb)); border-color: rgb(var(--st-acc-rgb)); }
         /* Drawn rather than a glyph so it scales with the box and inherits the
            accent's contrast colour. */
-        .sth-fchip.on .sth-fchip-box::after { content: ''; position: absolute; left: 4.5px; top: 1px; width: 3.5px; height: 8px;
-          border: solid var(--st-acc-ink, #14100a); border-width: 0 2px 2px 0; transform: rotate(45deg); }
-        .sth-fchip-ct { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; font-variant-numeric: tabular-nums;
-          background: rgba(var(--st-fg-rgb), 0.09); color: rgba(var(--st-fg-rgb), 0.45); }
-        .sth-fchip.on .sth-fchip-ct { background: rgba(var(--st-acc-rgb), 0.22); color: rgb(var(--st-acc-rgb)); }
-        .sth-fsort { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 700;
-          padding: 6px 11px; border-radius: 9px; border: 1px solid rgba(var(--st-fg-rgb), 0.1); background: rgba(var(--st-fg-rgb), 0.04); color: rgba(var(--st-sub-rgb), 0.7); }
-        .sth-fsort:hover { color: #fff; }
-        .sth-fsort b { color: #fff; font-weight: 700; }
 
         /* Detail column */
-        .sth-fdet-hero { display: flex; gap: 18px; align-items: flex-end; padding: 22px 0 16px; position: relative; z-index: 1; }
-        .sth-fdet-art { width: 120px; height: 120px; border-radius: 12px; flex-shrink: 0; background-size: cover; background-position: center;
-          background-color: rgba(var(--st-fg-rgb), 0.06); box-shadow: 0 14px 40px rgba(0,0,0,0.55); }
-        .sth-fdet-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; color: var(--st-text); margin-top: 7px; line-height: 1.1;
-          overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-        .sth-fdet-sub { font-size: 12.5px; color: rgba(var(--st-sub-rgb), 0.5); margin-top: 7px; }
-        .sth-fdet-acts { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding-bottom: 16px; position: relative; z-index: 1; }
-        .sth-fdetrow { display: grid; grid-template-columns: 28px minmax(0, 1fr) 54px 86px; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; }
-        .sth-fdetrow:hover { background: rgba(var(--st-fg-rgb), 0.05); }
         /* One peer offering one song. Stretched rather than tabular: the path
            needs a full line of its own and the numbers are all short. */
-        .sth-fsrc { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 11px 10px; border-radius: 11px; border: none;
-          background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background 0.13s ease; }
-        .sth-fsrc:hover { background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-fsrc.on { background: rgba(var(--st-acc-rgb), 0.09); }
-        .sth-fpick { width: 15px; height: 15px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; border: 1.5px solid rgba(var(--st-fg-rgb), 0.22); }
-        .sth-fsrc.on .sth-fpick { border-color: rgb(var(--st-acc-rgb)); box-shadow: inset 0 0 0 3.5px rgb(var(--st-acc-rgb)); }
         /* rtl keeps the END of a long path visible — the filename matters, the
            first 40 characters of someone's directory tree do not. */
-        .sth-fpath { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: rgba(var(--st-sub-rgb), 0.32);
-          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
-        .sth-fhint { font-size: 11px; color: rgba(var(--st-sub-rgb), 0.3); line-height: 1.6; padding: 14px 10px 0; }
-        .sth-fempty { padding: 54px 20px; text-align: center; }
 
         /* Below 1120 there isn't room for two columns — the list becomes the
            page and picking something swaps to the detail, with a back button
            that only exists at this width. Matches .sth-lib2's behaviour. */
-        .sth-fback { display: none; }
-        @media (max-width: 1120px) {
-          .sth-find-split { grid-template-columns: 1fr !important; }
-          .sth-find-det { display: none; border-left: none !important; }
-          .sth-find.is-detail .sth-find-list { display: none; }
-          .sth-find.is-detail .sth-find-det { display: block; }
-          .sth-fback { display: inline-flex; }
-        }
 
         /* ===================== Top bar search =========================
            A real field at rest, not an invisible one that appears on focus.
@@ -2915,14 +2619,12 @@ export default function StudioHome({
           transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease; }
         .sth-searchbar:hover { background: rgba(var(--st-fg-rgb), 0.08); border-color: rgba(var(--st-fg-rgb), 0.12); }
         .sth-searchbar:focus-within { background: rgba(var(--st-fg-rgb), 0.08); border-color: rgba(var(--st-acc-rgb), 0.45); box-shadow: 0 0 0 3px rgba(var(--st-acc-rgb), 0.1); }
-        .sth-searchbar.is-dirty { border-color: rgba(var(--st-acc-rgb), 0.32); }
         .sth-searchbar-icon { flex-shrink: 0; color: rgba(var(--st-fg-rgb), 0.4); transition: color 0.18s ease; }
         .sth-searchbar:focus-within .sth-searchbar-icon { color: rgb(var(--st-acc-rgb)); }
         .sth-searchbar-input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; font-family: inherit;
           color: var(--st-text); font-size: 13.5px; font-weight: 500; padding: 0; cursor: text; }
         .sth-searchbar-input::placeholder { color: rgba(var(--st-sub-rgb), 0.38); font-weight: 500; }
         .sth-searchbar-end { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-        .sth-searchbar-hint { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 10.5px; font-weight: 650; color: rgba(var(--st-sub-rgb), 0.42); }
         .sth-kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 5px;
           background: rgba(var(--st-fg-rgb), 0.09); border: 1px solid rgba(var(--st-fg-rgb), 0.1); font-size: 10px; font-weight: 700;
           color: rgba(var(--st-fg-rgb), 0.5); font-family: inherit; line-height: 1; }
@@ -2932,17 +2634,9 @@ export default function StudioHome({
         /* Bare glyph, no filled square. The old X sat in its own grey tile at
            the field's edge and read as a separate widget parked next to the
            search rather than part of it. */
-        .sth-searchbar-x { width: 26px; height: 26px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; padding: 0;
-          border: none; border-radius: 50%; cursor: pointer; background: transparent; color: rgba(var(--st-fg-rgb), 0.42);
-          transition: background 0.14s ease, color 0.14s ease; }
-        .sth-searchbar-x:hover { background: rgba(var(--st-fg-rgb), 0.12); color: #fff; }
 
         /* Listening calendar. 13px cells + 3px gutters = 16px per week column,
            which the month labels index against. */
-        .sth-hm { display: flex; gap: 3px; }
-        .sth-hm-col { display: flex; flex-direction: column; gap: 3px; }
-        .sth-hm-cell { width: 13px; height: 13px; border-radius: 3.5px; flex-shrink: 0; transition: outline-color 0.12s ease; outline: 1.5px solid transparent; }
-        .sth-hm-cell:hover { outline-color: rgba(var(--st-fg-rgb), 0.45); }
 
         /* --- library album cards --- */
         .sth-alb { border: none; background: transparent; padding: 0; cursor: pointer; text-align: left; color: inherit; min-width: 0; }
@@ -2958,20 +2652,14 @@ export default function StudioHome({
         /* Both columns are fixed to the viewport height and scroll INTERNALLY,
            so the page itself never scrolls — you scroll within whichever panel
            has more content. Sized for the 1400px default window. */
-        .sth-lib2 { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: stretch; height: calc(100vh - 148px); min-height: 360px; }
         /* Expanded: the fullscreen button on the Now Playing panel hides the
            library list entirely and lets the detail/Now Playing pane span the
            whole grid. The page header above is hidden too, so the panel claims
            that height as well. */
-        .sth-lib2.is-max { grid-template-columns: 1fr; height: 100vh; }
-        .sth-lib2.is-max .sth-lib2-list { display: none; }
         /* Edge to edge: no rounding or border when it fills the whole area. */
-        .sth-lib2.is-max > .sth-lib2-detail > .sth-libpanel { border-radius: 0; border: none; }
         /* Bar mode: the opposite of expanded — the Now Playing pane collapses
            into a floating bar (rendered separately), so the list takes the
            whole grid. Extra bottom room is left for the bar to float over. */
-        .sth-lib2.is-bar { grid-template-columns: 1fr; height: calc(100vh - 148px - 80px); }
-        .sth-lib2.is-bar .sth-lib2-detail { display: none; }
 
         /* Now Playing bar.
            Left edge is SIDEBAR_W + 12 so the bar starts where the content
@@ -3052,15 +2740,8 @@ export default function StudioHome({
         .sth-npbar-seek:hover .sth-npbar-seek-fill, .sth-npbar-seek:focus-visible .sth-npbar-seek-fill { height: 6px; }
         .sth-npbar-seek-knob { position: absolute; right: -6px; top: 50%; margin-top: -6px; width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,0.5); opacity: 0; transform: scale(0.6); transition: opacity 0.12s ease, transform 0.12s ease; }
         .sth-npbar-seek:hover .sth-npbar-seek-knob, .sth-npbar-seek:focus-visible .sth-npbar-seek-knob { opacity: 1; transform: scale(1); }
-        .sth-npbar-time { position: absolute; bottom: 7px; font-size: 9px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.7); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity 0.12s ease; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
-        .sth-npbar-seek:hover .sth-npbar-time, .sth-npbar-seek:focus-visible .sth-npbar-time { opacity: 1; }
-        .sth-npbar-time-l { left: 10px; }
-        .sth-npbar-time-r { right: 10px; }
-        @media (max-width: 1120px) { .sth-lib2 { grid-template-columns: 1fr; } .sth-lib2 .sth-lib2-detail { display: none; } .sth-lib2.is-detail .sth-lib2-list { display: none; } .sth-lib2.is-detail .sth-lib2-detail { display: flex; } .sth-lib2.is-max .sth-lib2-list { display: none; } .sth-lib2.is-max .sth-lib2-detail { display: flex; } .sth-lib2.is-bar .sth-lib2-detail { display: none; } .sth-lib2.is-bar .sth-lib2-list { display: flex; } }
         /* Each pane is a solid panel matching Stats/Find, not the glassy card. */
         .sth-libpanel { background: rgba(16,16,18,0.92); border: 1px solid rgba(var(--st-fg-rgb), 0.09); border-radius: 16px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-        .sth-lib2-list, .sth-lib2-detail { min-width: 0; min-height: 0; display: flex; }
-        .sth-lib2-list > .sth-libpanel, .sth-lib2-detail > .sth-libpanel { flex: 1; }
         /* The scrolling region inside a panel */
         /* ---- Header/body column alignment ---------------------------------
            The header row is a SIBLING of this scroller, not a child. So the
@@ -3106,7 +2787,6 @@ export default function StudioHome({
            small: a big move here reads as the page reloading rather than the
            header updating. */
         @keyframes sthHeroIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-        .sth-heroin { animation: sthHeroIn 0.42s cubic-bezier(0.22,1,0.3,1) both; }
         /* ---- Compact library header (52px, one row) ---- */
         /* The now-playing wash is absolutely positioned with z-index 0, and the
            header and lists are static. CSS paints in-flow non-positioned boxes
@@ -3122,7 +2802,6 @@ export default function StudioHome({
            picker, so nothing was ranked. Rows put every control on the same
            left edge with its label, and weight follows what a setting needs
            rather than how it's marked up. */
-        .sth-set { max-width: 720px; margin: 0 auto; padding-bottom: 40px; }
         /* ---- Settings shell: category rail + body + optional preview -------
            Replaces one 760px scroll containing every group. Six groups is
            already past the point where a single column is browsable, and the
@@ -3149,19 +2828,14 @@ export default function StudioHome({
           scrollbar-color: rgba(var(--st-fg-rgb), 0.14) transparent; }
         .sth-set-body::-webkit-scrollbar { width: 10px; }
         .sth-set-body::-webkit-scrollbar-thumb { background: rgba(var(--st-fg-rgb), 0.14); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
-        .sth-set-prev { width: 288px; flex: 0 0 288px; padding: 22px 22px 22px 0; overflow-y: auto; scrollbar-width: none; }
-        .sth-set-prev::-webkit-scrollbar { width: 0; display: none; }
         /* Below this the three columns can't all hold their minimums, so the
            preview is the one that goes — it's the optional part. */
-        @media (max-width: 1180px) { .sth-set-prev { display: none; } }
 
-        .sth-set-sec { margin-top: 34px; }
         /* The first group in a category shouldn't be pushed down by a margin
            that exists to separate it from the group ABOVE it — and there
            isn't one. :first-child stopped matching once the category
            heading became the body's first element, so this targets the
            first section wherever it lands instead. */
-        .sth-set-body .sth-set-sec:first-of-type { margin-top: 0; }
         /* A section heading was 10.5px uppercase at 34% — quieter than the row
            labels underneath it, so the thing meant to introduce a group was the
            least visible text in it. Full-size and full-strength now, with the
@@ -3197,13 +2871,6 @@ export default function StudioHome({
           .sth-set-r { flex-direction: column; align-items: stretch; gap: 10px; }
           .sth-set-r > .ctl { justify-content: flex-start; }
         }
-        .sth-seg { display: inline-flex; gap: 3px; background: rgba(var(--st-fg-rgb), 0.06); padding: 3px;
-          border-radius: 9px; }
-        .sth-seg button { border: none; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 700;
-          padding: 5px 11px; border-radius: 7px; background: transparent; color: rgba(var(--st-sub-rgb), 0.5);
-          white-space: nowrap; transition: background 0.15s ease, color 0.15s ease; }
-        .sth-seg button:hover { color: var(--st-text); }
-        .sth-seg button.on { background: rgba(var(--st-fg-rgb), 0.14); color: var(--st-text); }
         .sth-set-link { border: none; background: transparent; cursor: pointer; font: inherit; font-size: 11.5px;
           font-weight: 700; color: rgba(var(--st-sub-rgb), 0.45); padding: 4px 2px; white-space: nowrap; }
         .sth-set-link:hover { color: var(--st-text); }
@@ -3367,32 +3034,13 @@ export default function StudioHome({
 
 
         /* Selectable rows in the left list pane */
-        .sth-selrow { display: flex; align-items: center; gap: 8px; padding: 7px 8px; cursor: pointer; border-radius: 10px; transition: background 0.14s ease; text-align: left; border: none; background: transparent; width: 100%; color: inherit; }
-        .sth-selrow:hover { background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-selrow.on { background: rgba(var(--st-fg-rgb), 0.09); }
-        .sth-selrow .sth-selart { width: 42px; height: 42px; border-radius: 9px; flex-shrink: 0; background-size: cover; background-position: center; box-shadow: 0 0 0 1px rgba(var(--st-fg-rgb), 0.08); position: relative; overflow: hidden; }
-        .sth-selrow.round .sth-selart { border-radius: 50%; }
         /* Play button removed from rows — actions live on the right instead.
            The heart persists once set; the others reveal on hover. */
-        .sth-rowact { flex-shrink: 0; width: 26px; height: 26px; padding: 0; display: flex; align-items: center; justify-content: center; color: rgba(var(--st-fg-rgb), 0.45); }
-        .sth-rowact:hover { color: #fff; }
-        .sth-rowact.is-fav { color: rgb(240,90,120); opacity: 1; }
-        .sth-hoveract { opacity: 0; pointer-events: none; transition: opacity 0.13s ease; }
-        .sth-selrow:hover .sth-hoveract { opacity: 1; pointer-events: auto; }
-        .sth-selrow:hover .sth-seltime { display: none; }
 
 
         /* Panel actions: icon-only shuffle, filled Play */
-        .sth-actbtn { width: 30px; height: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 9px; border: 1px solid rgba(var(--st-fg-rgb), 0.12); background: rgba(var(--st-fg-rgb), 0.05); color: rgba(var(--st-fg-rgb), 0.72); cursor: pointer; transition: background 0.14s ease, color 0.14s ease, transform 0.1s ease; }
-        .sth-actbtn:hover { background: rgba(var(--st-fg-rgb), 0.1); color: #fff; }
-        .sth-actbtn:active { transform: scale(0.94); }
-        .sth-playbtn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px; flex-shrink: 0; border-radius: 9px; border: none; cursor: pointer; font-size: 11.5px; font-weight: 700; transition: filter 0.14s ease, transform 0.1s ease; }
-        .sth-playbtn:hover { filter: brightness(1.1); }
-        .sth-playbtn:active { transform: scale(0.96); }
 
         /* A–Z jump rail */
-        .sth-azkey { flex: 1; min-height: 0; padding: 0; border: none; background: transparent; font-size: 8px; font-weight: 700; line-height: 1; transition: color 0.12s ease; }
-        .sth-azkey:not(:disabled):hover { color: #fff !important; }
 
         /* Now Playing transport + volume */
                 /* 32, not 26: the bar is 84px tall now and the icons went to 16–17px,
@@ -3400,18 +3048,6 @@ export default function StudioHome({
         /* Now-playing title as a copy control. Inherits the bar's text colour
            and carries no button chrome at rest, so it reads as the title it
            replaced until you point at it. */
-        .sth-nplink { display: flex; align-items: center; gap: 6px; max-width: 100%; padding: 0; border: none;
-          background: none; font: inherit; font-size: 13px; font-weight: 650; color: var(--st-text);
-          cursor: pointer; text-align: left; border-radius: 4px; }
-        .sth-nplink > span { white-space: nowrap; }
-        .sth-nplink:disabled { cursor: default; }
-        .sth-nplink:not(:disabled):hover > span { text-decoration: underline; text-underline-offset: 2px; }
-        .sth-nplink-ic { flex-shrink: 0; opacity: 0; transition: opacity 0.14s ease; }
-        .sth-nplink:hover .sth-nplink-ic, .sth-nplink:focus-visible .sth-nplink-ic { opacity: 0.6; }
-        .sth-nplink:focus-visible { outline: 2px solid rgba(var(--st-fg-rgb), 0.5); outline-offset: 3px; }
-        .sth-npspin { flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%;
-          border: 1.6px solid rgba(var(--st-fg-rgb), 0.25); border-top-color: rgba(var(--st-fg-rgb), 0.8);
-          animation: sthSpin 0.7s linear infinite; }
         /* flex-shrink: 0 is load-bearing, not tidiness. These sit in the
            now-playing bar's flex row, and without it a crowded bar squeezes
            them horizontally: the height stays 32px, the width drops, and a
@@ -3423,9 +3059,6 @@ export default function StudioHome({
         /* :hover / :active for .sth-npbtn are defined further down the sheet
            and would win on cascade order regardless — not duplicated here. */
         /* Large transport buttons that flank the artwork in fullscreen. */
-        .sth-npside { width: 52px; height: 52px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; background: rgba(var(--st-fg-rgb), 0.05); color: rgba(var(--st-fg-rgb), 0.7); cursor: pointer; transition: color 0.14s ease, background 0.14s ease, transform 0.1s ease; }
-        .sth-npside:hover { background: rgba(var(--st-fg-rgb), 0.12); color: #fff; }
-        .sth-npside:active { transform: scale(0.92); }
         /* Fullscreen transport — a compact centered dock (matches the overlay),
            with the view toggles and exit tucked in the corners. */
         .sth-npfull-bar { position: relative; z-index: 7; padding: 0 32px 26px; display: flex; align-items: center; justify-content: center; }
@@ -3454,28 +3087,8 @@ export default function StudioHome({
         .sth-npfull-dockrow { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; pointer-events: none; z-index: 6; }
         .sth-npfull-dockwrap { width: min(620px, 88vw); position: relative; height: 0; pointer-events: auto; }
         /* Fullscreen credits — accent-bordered cards in a centered grid. */
-        .sth-fscredit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; align-content: center; height: 100%; overflow-y: auto; padding: 10px 14px; }
-        .sth-fscredit { min-width: 0; padding: 3px 0 3px 13px; opacity: 0; animation: sthCreditIn 0.4s cubic-bezier(0.22, 1, 0.3, 1) both; }
         @keyframes sthCreditIn { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
-        @media (prefers-reduced-motion: reduce) { .sth-fscredit { animation-duration: 0.01ms; } }
-        .sth-fscredit-label { font-size: 9.5px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(var(--st-fg-rgb), 0.42); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sth-fscredit-names { font-size: 15px; font-weight: 500; color: rgba(var(--st-fg-rgb), 0.9); line-height: 1.45; }
-        .sth-fscredit-state { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; height: 100%; color: rgba(var(--st-fg-rgb), 0.4); }
         /* Fullscreen library list. */
-        .sth-fslib { display: flex; flex-direction: column; height: 100%; min-height: 0; padding: 0 6px; }
-        .sth-fslib-head { flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(var(--st-fg-rgb), 0.5); padding: 2px 10px 12px; display: flex; align-items: baseline; gap: 8px; }
-        .sth-fslib-head span { font-size: 11px; font-weight: 600; letter-spacing: 0; color: rgba(var(--st-fg-rgb), 0.32); }
-        .sth-fslib-list { flex: 1; min-height: 0; overflow-y: auto; }
-        .sth-fslib-row { display: flex; align-items: center; gap: 11px; width: 100%; padding: 7px 10px; border: none; background: transparent; border-radius: 10px; cursor: pointer; transition: background 0.13s ease; }
-        .sth-fslib-row:hover { background: rgba(var(--st-fg-rgb), 0.06); }
-        .sth-fslib-row.is-active { background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-fslib-art { width: 38px; height: 38px; border-radius: 7px; flex-shrink: 0; position: relative; box-shadow: 0 0 0 1px rgba(var(--st-fg-rgb), 0.08); display: flex; align-items: center; justify-content: center; }
-        .sth-fslib-title { display: block; font-size: 13.5px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.92); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sth-fslib-sub { display: block; font-size: 11px; color: rgba(var(--st-fg-rgb), 0.44); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
-        .sth-fslib-eq { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2px; background: rgba(0,0,0,0.42); border-radius: 7px; }
-        .sth-fslib-eq i { width: 2.5px; height: 8px; background: currentColor; border-radius: 1px; animation: sthEqBar 0.9s ease-in-out infinite; }
-        .sth-fslib-eq i:nth-child(2) { animation-delay: 0.3s; height: 12px; }
-        .sth-fslib-eq i:nth-child(3) { animation-delay: 0.15s; }
         @keyframes sthEqBar { 0%, 100% { transform: scaleY(0.5); } 50% { transform: scaleY(1); } }
         /* Add-lyrics UI (shown when a track has no lyrics). */
         .sth-lyrics-pane { position: relative; height: 100%; min-height: 0; display: flex; flex-direction: column; animation: sthLyricsFadeIn 0.4s ease both; }
@@ -3492,9 +3105,6 @@ export default function StudioHome({
         .sth-lyrics-btn:active { transform: scale(0.97); }
         .sth-lyrics-btn.ghost { background: rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.8); }
         .sth-lyrics-btn.ghost:hover { background: rgba(var(--st-fg-rgb), 0.14); filter: none; }
-        .sth-lyrics-add { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 460px; }
-        .sth-lyrics-ta { width: 100%; box-sizing: border-box; height: 44vh; max-height: 360px; resize: none; border-radius: 12px; background: rgba(var(--st-fg-rgb), 0.05); border: 1px solid rgba(var(--st-fg-rgb), 0.12); color: #fff; font-size: 13.5px; line-height: 1.6; padding: 14px 16px; outline: none; font-family: inherit; transition: border-color 0.15s ease; }
-        .sth-lyrics-ta:focus { border-color: rgba(var(--st-fg-rgb), 0.24); background: rgba(var(--st-fg-rgb), 0.07); }
         .sth-npbtn:hover { color: #fff; background: rgba(var(--st-fg-rgb), 0.08); }
         .sth-npbtn:active { transform: scale(0.92); }
         /* Divider between the song actions and the view toggles. Inset top
@@ -3578,20 +3188,7 @@ export default function StudioHome({
         .sth-vol:hover::-webkit-slider-thumb { transform: scale(1.15); }
 
         /* Detail-pane track rows (compact, numbered) */
-        .sth-drow { display: grid; grid-template-columns: 26px minmax(0,1fr) 46px 30px; gap: 12px; align-items: center; padding: 8px 14px; cursor: pointer; border-radius: 8px; transition: background 0.14s ease; }
-        .sth-drow:hover { background: rgba(var(--st-fg-rgb), 0.045); }
-        .sth-drow.is-active { background: rgba(var(--st-fg-rgb), 0.06); }
-        .sth-drow:hover .sth-drow-more { opacity: 1; }
-        .sth-drow-more { opacity: 0; transition: opacity 0.14s ease; display: flex; justify-content: flex-end; }
-        .sth-drow .sth-dnum { display: inline; }
-        .sth-drow .sth-dplay { display: none; }
-        .sth-drow:hover .sth-dnum { display: none; }
-        .sth-drow:hover .sth-dplay { display: inline; }
-        .sth-explicit { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 3px; background: rgba(var(--st-fg-rgb), 0.28); color: #000; font-size: 8.5px; font-weight: 800; flex-shrink: 0; }
         .sth-alb:hover .sth-albimg { filter: saturate(1.04); }
-        .sth-albplay { position: absolute; bottom: 9px; right: 9px; width: 34px; height: 34px; border-radius: 10px; border: 1px solid rgba(var(--st-fg-rgb), 0.25); cursor: pointer; background: rgba(0,0,0,0.78); color: #fff; display: flex; align-items: center; justify-content: center; opacity: 0; transform: translateY(5px); transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s ease; }
-        .sth-alb:hover .sth-albplay { opacity: 1; transform: translateY(0); }
-        .sth-albplay:hover { background: rgba(0,0,0,0.85); }
         /* --- redesign: hero band (discover feature + library collection) --- */
         /* --- redesign: discover release cards --- */
         /* ---- Library table ----
@@ -3699,58 +3296,13 @@ export default function StudioHome({
         .sth-lrow-more { width: 28px; height: 28px; border-radius: 7px; border: none; background: transparent; color: rgba(var(--st-fg-rgb), 0.4); cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.14s ease, color 0.14s ease; }
         .sth-lrow:hover .sth-lrow-more { opacity: 1; }
         .sth-lrow-more:hover { color: #fff; background: rgba(var(--st-fg-rgb), 0.08); }
-        .sth-homerow::-webkit-scrollbar { display: none; }
         /* Discover section headers — accent rule + source eyebrow + title. */
-        .sth-dsc-head { position: relative; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 26px 0 16px; padding-left: 15px; }
-        .sth-dsc-head::before { content: ''; position: absolute; left: 0; top: 3px; bottom: 3px; width: 3px; border-radius: 2px; background: linear-gradient(rgba(var(--st-fg-rgb), 0.34), rgba(var(--st-fg-rgb), 0.05)); }
-        .sth-dsc-eyebrow { font-size: 9.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; }
-        .sth-dsc-title { font-size: 20px; font-weight: 600; letter-spacing: -0.012em; color: #fff; margin-top: 4px; }
-        .sth-dsc-meta { font-size: 11px; color: rgba(var(--st-fg-rgb), 0.4); flex-shrink: 0; padding-bottom: 3px; white-space: nowrap; }
-        .sth-relbadge { position: absolute; top: 9px; left: 9px; padding: 3px 9px; border-radius: 999px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.03em; color: #fff; background: rgba(0,0,0,0.52); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(var(--st-fg-rgb), 0.16); }
         /* --- redesign: detail drawer (release tracklist) --- */
         /* Inline release expansion — height animated in JS (ReleaseExpansion).
            The bottom breathing space lives in the padding wrapper so it's part
            of the measured height, and clips to nothing when collapsed. */
-        .sth-relexp { grid-column: 1 / -1; }
-        .sth-relexp-pad { padding-bottom: 26px; }
-        .sth-relexp-inner { border-radius: 16px; background: rgba(var(--st-fg-rgb), 0.028); border: 1px solid rgba(var(--st-fg-rgb), 0.08); }
-        .sth-relexp-head { display: flex; align-items: center; gap: 15px; padding: 15px 16px; }
-        .sth-relexp-art { width: 62px; height: 62px; border-radius: 11px; flex-shrink: 0; box-shadow: inset 0 1px 0 rgba(var(--st-fg-rgb), 0.16), 0 0 0 1px rgba(var(--st-fg-rgb), 0.08); }
-        .sth-relexp-eyebrow { font-size: 9px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; }
-        .sth-relexp-title { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; color: #fff; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sth-relexp-sub { font-size: 11.5px; color: rgba(var(--st-fg-rgb), 0.5); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sth-relexp-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-        .sth-relexp-getall { display: inline-flex; align-items: center; gap: 7px; padding: 8px 15px; border-radius: 10px; border: none; cursor: pointer; font-size: 12px; font-weight: 700; white-space: nowrap; transition: filter 0.14s ease, transform 0.1s ease; }
-        .sth-relexp-getall:hover { filter: brightness(1.08); }
-        .sth-relexp-getall:active { transform: scale(0.97); }
-        .sth-relexp-have { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: rgb(140,255,185); white-space: nowrap; }
-        .sth-relexp-close { width: 30px; height: 30px; flex-shrink: 0; border-radius: 9px; border: 1px solid rgba(var(--st-fg-rgb), 0.12); cursor: pointer; background: rgba(var(--st-fg-rgb), 0.05); color: rgba(var(--st-fg-rgb), 0.65); display: flex; align-items: center; justify-content: center; padding: 0; transition: background 0.14s ease, color 0.14s ease; }
-        .sth-relexp-close:hover { background: rgba(var(--st-fg-rgb), 0.1); color: #fff; }
-        .sth-relexp-tracks { border-top: 1px solid rgba(var(--st-fg-rgb), 0.06); padding: 8px 10px 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px 24px; }
-        @media (max-width: 1040px) { .sth-relexp-tracks { grid-template-columns: 1fr; } }
-        .sth-relexp-state { grid-column: 1 / -1; padding: 18px 12px; font-size: 12.5px; color: rgba(var(--st-fg-rgb), 0.45); }
         /* --- redesign: chart song grid --- */
-        .sth-songgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 28px; margin-bottom: 26px; }
-        .sth-chartrow { display: flex; align-items: center; gap: 14px; padding: 8px 12px 8px 6px; border-radius: 12px; transition: background 0.14s ease; }
-        .sth-chartrow:hover { background: rgba(var(--st-fg-rgb), 0.055); }
-        .sth-chartrank { width: 30px; flex-shrink: 0; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; color: rgba(var(--st-fg-rgb), 0.28); }
-        .sth-chartrank.top { font-size: 20px; font-weight: 700; }
-        @media (max-width: 1040px) { .sth-songgrid { grid-template-columns: 1fr; } }
         /* --- redesign: library collection hero + control bar --- */
-        .sth-libhero { position: relative; display: flex; align-items: center; gap: 24px; padding: 28px 30px; border-radius: 24px; margin-bottom: 24px; overflow: hidden; border: 1px solid rgba(var(--st-fg-rgb), 0.09); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background: rgba(var(--st-fg-rgb), 0.04); animation: stFadeUp 0.5s cubic-bezier(0.2,0.9,0.3,1) both; }
-        .sth-libbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
-        .sth-pill { display: inline-flex; align-items: center; gap: 8px; padding: 9px 18px; border-radius: 11px; border: none; cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: 0.01em; transition: transform 0.12s ease, filter 0.16s ease, background 0.16s ease; }
-        .sth-pill:hover { filter: brightness(1.08); }
-        .sth-pill:active { transform: scale(0.97); }
-        .sth-fan { position: relative; flex-shrink: 0; width: 208px; height: 132px; }
-        .sth-fancard { position: absolute; top: 50%; width: 116px; height: 116px; border-radius: 15px; background-size: cover; background-position: center; box-shadow: 0 0 0 1px rgba(var(--st-fg-rgb), 0.12), 0 20px 44px rgba(0,0,0,0.6); transform: translateY(-50%) rotate(var(--r, 0deg)); transition: transform 0.45s cubic-bezier(0.2,0.9,0.3,1); }
-        .sth-libhero:hover .sth-fancard { transform: translateY(-50%) rotate(var(--r, 0deg)) translate(var(--sx, 0px), var(--sy, 0px)); }
-        .sth-statgrid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-        .sth-hscroll { scrollbar-width: thin; scrollbar-color: rgba(var(--st-fg-rgb), 0.14) transparent; }
-        .sth-hscroll::-webkit-scrollbar { height: 5px; }
-        .sth-hscroll::-webkit-scrollbar-track { background: transparent; }
-        .sth-hscroll::-webkit-scrollbar-thumb { background: rgba(var(--st-fg-rgb), 0.14); border-radius: 999px; }
-        .sth-hscroll::-webkit-scrollbar-thumb:hover { background: rgba(var(--st-fg-rgb), 0.24); }
         .sth-vscroll { scrollbar-width: thin; scrollbar-color: rgba(var(--st-fg-rgb), 0.14) transparent; }
         .sth-vscroll::-webkit-scrollbar { width: 5px; }
         .sth-vscroll::-webkit-scrollbar-track { background: transparent; }
@@ -3788,46 +3340,9 @@ export default function StudioHome({
            that are off-screen, which is what keeps the album grid and artist
            list cheap without hand-rolling grid virtualisation. The
            intrinsic-size hint stops the scrollbar jumping as tiles resolve. */
-        .sth-albcell { content-visibility: auto; contain-intrinsic-size: auto 180px; }
-        .sth-artcell { content-visibility: auto; contain-intrinsic-size: auto 56px; }
-        .sth-findtile { transition: transform 0.18s ease; }
-        .sth-findtile:hover { transform: translateY(-3px); }
-        .sth-findtile:active { transform: translateY(-1px); }
         /* Manage follows — solid panel, search, artist cards. */
-        .sth-fm { background: rgba(16,16,18,0.96); border: 1px solid rgba(var(--st-fg-rgb), 0.08); border-radius: 18px; padding: 18px 20px 20px; margin-bottom: 26px; animation: stFadeUp 0.28s cubic-bezier(0.2,0.9,0.3,1) both; }
-        .sth-fm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 15px; }
-        .sth-fm-title { font-size: 15px; font-weight: 650; color: #fff; letter-spacing: -0.01em; }
-        .sth-fm-sub { font-size: 11px; color: rgba(var(--st-fg-rgb), 0.42); margin-top: 3px; line-height: 1.4; }
-        .sth-fm-count { flex-shrink: 0; font-size: 10.5px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.55); background: rgba(var(--st-fg-rgb), 0.06); border: 1px solid rgba(var(--st-fg-rgb), 0.09); border-radius: 999px; padding: 4px 11px; white-space: nowrap; }
-        .sth-fm-search { position: relative; }
-        .sth-fm-search > svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; }
-        .sth-fm-search input { width: 100%; box-sizing: border-box; padding: 11px 38px 11px 40px; border-radius: 12px; background: rgba(var(--st-fg-rgb), 0.05); border: 1px solid rgba(var(--st-fg-rgb), 0.1); color: #fff; font-size: 13px; outline: none; transition: border-color 0.15s ease, background 0.15s ease; }
-        .sth-fm-search input:focus { border-color: rgba(var(--st-fg-rgb), 0.22); background: rgba(var(--st-fg-rgb), 0.07); }
-        .sth-fm-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 6px; border: none; cursor: pointer; background: rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.55); display: flex; align-items: center; justify-content: center; padding: 0; transition: background 0.14s ease, color 0.14s ease; }
-        .sth-fm-clear:hover { background: rgba(var(--st-fg-rgb), 0.14); color: #fff; }
-        .sth-fm-res { margin-top: 10px; border-radius: 13px; border: 1px solid rgba(var(--st-fg-rgb), 0.08); background: rgba(var(--st-fg-rgb), 0.022); overflow: hidden; }
-        .sth-fm-resrow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; transition: background 0.14s ease; }
-        .sth-fm-resrow:hover { background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-fm-resrow + .sth-fm-resrow { border-top: 1px solid rgba(var(--st-fg-rgb), 0.05); }
-        .sth-fm-note { padding: 9px 13px; font-size: 10px; color: rgba(var(--st-fg-rgb), 0.35); line-height: 1.5; border-top: 1px solid rgba(var(--st-fg-rgb), 0.05); background: rgba(var(--st-fg-rgb), 0.015); }
-        .sth-fm-divider { height: 1px; background: rgba(var(--st-fg-rgb), 0.06); margin: 20px 0; }
-        .sth-fm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px; }
-        .sth-fm-card { position: relative; display: flex; align-items: center; gap: 11px; padding: 10px 11px; border-radius: 13px; background: rgba(var(--st-fg-rgb), 0.04); border: 1px solid rgba(var(--st-fg-rgb), 0.07); min-width: 0; transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease; }
-        .sth-fm-card:hover { background: rgba(var(--st-fg-rgb), 0.07); border-color: rgba(var(--st-fg-rgb), 0.14); transform: translateY(-1px); }
-        .sth-fm-pill { display: inline-flex; align-items: center; margin-top: 4px; font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px; }
-        .sth-fm-x { position: absolute; top: 7px; right: 7px; width: 21px; height: 21px; border-radius: 6px; border: none; cursor: pointer; background: rgba(0,0,0,0.45); color: rgba(var(--st-fg-rgb), 0.6); display: flex; align-items: center; justify-content: center; padding: 0; opacity: 0; transform: scale(0.8); transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease, color 0.14s ease; }
-        .sth-fm-card:hover .sth-fm-x { opacity: 1; transform: scale(1); }
-        .sth-fm-x:hover { background: rgba(240,110,110,0.25); color: rgb(250,160,160); }
-        .sth-fm-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 30px 20px; }
-        .sth-libov { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr); gap: 16px; align-items: start; }
-        @media (max-width: 1080px) { .sth-libov { grid-template-columns: minmax(0, 1fr); } }
         /* Leaderboard rows. Fixed columns shared by the tracks and artists
            views so switching tabs doesn't shift anything sideways. */
-        .sth-lb-row { display: grid; grid-template-columns: 22px 30px minmax(0, 1fr) 58px 62px; gap: 11px; align-items: center;
-          padding: 4px 12px; height: 38px; border-radius: 9px; }
-        .sth-lb-row:not(.sth-lb-head):hover { background: rgba(var(--st-fg-rgb), 0.05); }
-        .sth-lb-head { height: 26px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
-          color: rgba(var(--st-fg-rgb), 0.28); border-radius: 0; }
         /* --- Streak badge -------------------------------------------------
            Three layered motions, all cheap: the badge breathes, a halo behind
            it pulses, and the flame itself flickers on a deliberately odd
@@ -3835,16 +3350,8 @@ export default function StudioHome({
            streak card gets .is-flame — the other two habit cards use the same
            component but stay still, since constant motion on three tiles at
            once is noise rather than emphasis. */
-        .sth-streak-badge { position: relative; width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
-          display: flex; align-items: center; justify-content: center;
-          background: rgba(var(--tone), 0.14); color: rgb(var(--tone));
-          transition: background 0.5s ease, color 0.5s ease, box-shadow 0.5s ease; }
         /* Halo sits behind, never intercepts the pointer, and scales with the
            tier's own colour so a hotter streak glows harder. */
-        .sth-streak-badge.is-flame::before { content: ''; position: absolute; inset: -4px; border-radius: 14px; pointer-events: none;
-          background: radial-gradient(closest-side, rgba(var(--tone), 0.34), rgba(var(--tone), 0) 72%);
-          animation: sthStreakGlow 2.6s ease-in-out infinite; }
-        .sth-streak-badge.is-flame svg { animation: sthStreakFlicker 1.9s ease-in-out infinite; transform-origin: 50% 78%; }
         @keyframes sthStreakGlow { 0%, 100% { opacity: 0.45; transform: scale(0.94); } 50% { opacity: 1; transform: scale(1.06); } }
         /* Anchored at the base like a real flame: the tip moves, the foot doesn't. */
         @keyframes sthStreakFlicker {
@@ -3855,35 +3362,22 @@ export default function StudioHome({
         }
         /* One-shot when a new tier is reached — fires on the badge, not the
            card, so the text stays readable while it plays. */
-        .sth-streak-badge.is-new { animation: sthStreakPop 1.1s cubic-bezier(0.2, 0.9, 0.3, 1) 1; }
         @keyframes sthStreakPop {
           0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(var(--tone), 0.55); }
           35%  { transform: scale(1.16); }
           100% { transform: scale(1); box-shadow: 0 0 0 16px rgba(var(--tone), 0); }
         }
-        @media (prefers-reduced-motion: reduce) {
-          .sth-streak-badge.is-flame::before,
-          .sth-streak-badge.is-flame svg,
-          .sth-streak-badge.is-new { animation: none; }
-          /* The colour still changes — that's information, not decoration. */
-          .sth-streak-badge.is-flame::before { opacity: 0.7; }
-        }
 
         /* Wrong code — a shake rather than a message, since the field is only
            76px wide and there's nowhere to put a sentence. */
-        .sth-codebad { animation: sthCodeShake 0.32s ease; }
         @keyframes sthCodeShake {
           0%, 100% { transform: translateX(0); }
           20%      { transform: translateX(-4px); }
           45%      { transform: translateX(3px); }
           70%      { transform: translateX(-2px); }
         }
-        @media (prefers-reduced-motion: reduce) { .sth-codebad { animation: none; } }
 
         /* The three habit figures. */
-        .sth-statstreaks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
-        @media (max-width: 1080px) { .sth-statgrid { grid-template-columns: minmax(0, 1fr); } }
-        @media (max-width: 820px) { .sth-statstreaks { grid-template-columns: minmax(0, 1fr); } }
 
         /* ==================================================================
            REDESIGN (implementation brief) — overrides for the shared shell.
@@ -3991,9 +3485,6 @@ export default function StudioHome({
         .sth-side-pl .nm { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sth-side-pl .ct { font-size: 11.5px; color: var(--text-faint); margin-top: 1px; }
         /* Top bar tabs */
-        .sth-toptab { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 16px; border-radius: var(--r-ctl-m); border: none; background: transparent; cursor: pointer; color: var(--text-dim); font: inherit; font-size: 14.5px; font-weight: 600; transition: background 140ms ease, color 140ms ease; }
-        .sth-toptab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
-        .sth-toptab.on { color: var(--text); background: rgba(255,255,255,0.08); font-weight: 700; }
         .sth-searchbar { border-radius: var(--r-ctl-m); background: var(--surface); border-color: var(--border-control); }
 
 
@@ -4033,19 +3524,16 @@ export default function StudioHome({
            Circular icon buttons become rounded squares at the same radii.
            Two exceptions, both deliberate: toggle switches keep their capsule,
            and artist artwork stays circular because it's a portrait. */
-        .sth-iconbtn, .sth-rowact, .sth-actbtn, .sth-lrow-play, .sth-lrow-more,
-        .sth-searchbar-x, .sth-npside { border-radius: var(--r-ctl-s) !important; }
-        .sth-searchbar, .sth-fchip, .sth-libtag, .sth-relexp-getall, .sth-relexp-close,
-        .sth-libact, .sth-libact-primary, .sth-set-navi { border-radius: var(--r-ctl-m) !important; }
+        .sth-lrow-play, .sth-lrow-more { border-radius: var(--r-ctl-s) !important; }
+        .sth-searchbar, .sth-libtag, .sth-libact, .sth-libact-primary, .sth-set-navi { border-radius: var(--r-ctl-m) !important; }
         .sth-libact, .sth-libact-primary, .sth-libtag { border: none !important; }
-        .sth-card, .sth-libpanel, .sth-npbar, .sth-scroll { border-radius: var(--r-card); }
-        .sth-albart, .sth-selrow .sth-selart, .sth-relexp-art { border-radius: var(--r-art) !important; }
+        .sth-libpanel, .sth-npbar, .sth-scroll { border-radius: var(--r-card); }
+        .sth-albart { border-radius: var(--r-art) !important; }
         /* Scrollbar thumbs and progress bars keep their pill shape — they are
            rails, not controls. */
 
         /* ---- Icons and focus ---- */
-        .sth-npbtn svg, .sth-side-item svg, .sth-toptab svg, .sth-set-navi svg,
-        .sth-libact svg, .st-btn svg, .st-icon-btn svg { stroke-width: 1.5; }
+        .sth-npbtn svg, .sth-side-item svg, .sth-set-navi svg, .sth-libact svg, .st-btn svg, .st-icon-btn svg { stroke-width: 1.5; }
         .sth-lrow, .sth-nr-row, .sth-side-pl, .sth-jump button, .sth-repeat button,
         .sth-alb, .stag-tile { -webkit-user-select: none; user-select: none; }
 
@@ -4053,8 +3541,6 @@ export default function StudioHome({
            24px hit targets with a visible label, rather than 10px of
            near-invisible glyphs pressed against the window edge. */
         .sth-azrail { width: 24px; padding: 2px 4px 6px; }
-        .sth-azkey { min-height: 18px; font-size: 10.5px; color: var(--text-faint); border-radius: 6px; }
-        .sth-azkey:not(:disabled):hover { color: var(--text) !important; background: rgba(255,255,255,0.1); }
         /* ---- Settings ---- */
         .sth-set-rail { width: 206px; flex: 0 0 206px; padding: 24px 14px; border-right: 1px solid var(--border); }
         .sth-set-rail .lbl { padding: 14px 12px 6px; }
@@ -5404,7 +4890,7 @@ export default function StudioHome({
           ? library.filter((x) => (x.album || '').toLowerCase() === (t.album || '').toLowerCase()
               && primaryArtistOf(x).toLowerCase() === primaryArtistOf(t).toLowerCase())
           : [];
-        const close = () => { setRowMenu(null); setConfirmKey(null); };
+        const close = () => { setRowMenu(null); };
         return createPortal(
           <>
             <div onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }}
@@ -5843,17 +5329,6 @@ export default function StudioHome({
           onClose={() => setEditingTrack(null)}
         />
       ) : null}
-
-      {/* Now-playing resume pill — draggable anywhere; position persists.
-          A small drag (under 5px) still counts as a click to reopen the
-          overlay. Default spot is bottom-center (pillPos = null). */}
-      {/* Hidden in the Library, where the Now Playing panel already shows
-          the track and its controls — two now-playing affordances on the
-          same screen is redundant. Shown everywhere else. */}
-      {/* Return-to-stage pill removed — the Now Playing bar's fullscreen
-          button does the same job from a fixed, findable place, and the
-          draggable pill floated over content. Its drag state (pillPos,
-          pillRef, onPillPointerDown) is left above for now. */}
 
       {/* Now Playing bar. Rendered at the ROOT so it persists across every
           section — it used to be mounted inside the library branch, so it
@@ -6683,7 +6158,7 @@ export default function StudioHome({
         <div className="sth-npfull">
           <NowPlayingPanel
             track={currentTrack} isPlaying={isPlaying} art={currentTrack ? coverFor(currentTrack) : null} accent={accent}
-            onOpenFullscreen={toggleLibExpanded} onCollapseToBar={toggleNpBar} expanded
+            onOpenFullscreen={toggleLibExpanded} onCollapseToBar={collapseToBar} expanded
             volume={volume} onSetVolume={onSetVolume} onTogglePlay={onTogglePlay} onPrev={onPrev} onNext={onNext}
             shuffleOn={shuffleOn} repeat={repeat} onToggleShuffle={onToggleShuffle} onToggleRepeat={onToggleRepeat}
             animatedBg={npAnimatedBg} onToggleAnimatedBg={toggleNpAnimatedBg}
@@ -9874,7 +9349,6 @@ function NowPlayingBar(props) {
 }
 
 function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, currentTime = 0, onSeek, onExpand, onToggleImmerse, immerseOn = false, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
-  const acc = readableAccent(accent);
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
      else touched it. The fullscreen stage keeps the darker pair because it
@@ -10374,7 +9848,6 @@ function NowPlayingPanel({ track, isPlaying, art, accent, onOpenFullscreen, onCo
   // Seek-bar scrubbing for the fullscreen transport (mirrors the floating bar).
   const dur = t && Number.isFinite(t.duration) && t.duration > 0 ? t.duration : 0;
   const [scrub, setScrub] = useState(null);
-  const [showLibrary, setShowLibrary] = useState(false);
   // Mount the synced lyrics only after the side column finishes sliding open,
   // so SyncedLyrics measures line positions at the final width and centres
   // immediately (it doesn't re-measure on resize).
@@ -10526,11 +9999,6 @@ function NowPlayingPanel({ track, isPlaying, art, accent, onOpenFullscreen, onCo
       </button>
       <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => onSetVolume(Number(e.target.value))} className="sth-vol" aria-label="Volume" style={{ width: 62, flexShrink: 0, background: `linear-gradient(to right, rgb(${acc}) 0%, rgb(${acc}) ${volume * 100}%, rgba(var(--st-fg-rgb), 0.14) ${volume * 100}%, rgba(var(--st-fg-rgb), 0.14) 100%)` }} />
     </div>
-  ) : null;
-  const libraryBtn = onPlayTrack && library.length ? (
-    <button type="button" className={`sth-npmute${showLibrary ? ' is-on' : ''}`} onClick={() => setShowLibrary((v) => !v)} title={showLibrary ? 'Hide library' : 'Show library'} aria-label={showLibrary ? 'Hide library' : 'Show library'} aria-pressed={showLibrary}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
-    </button>
   ) : null;
   const collapseBtn = onCollapseToBar ? (
     <button type="button" className="sth-npmute" onClick={onCollapseToBar} title="Collapse to a bar" aria-label="Collapse to a floating bar">

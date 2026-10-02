@@ -1405,7 +1405,6 @@ function CoverFullscreenOverlay({
       if (!dstEl) return;
       const measured = dstEl.getBoundingClientRect();
       if (!measured.width) return;
-      const slotEl = railSlotRef.current;
       to = { left: measured.left, top: correctRailTop(measured.top, libraryOpen), width: measured.width, height: measured.height };
     }
 
@@ -1430,13 +1429,9 @@ function CoverFullscreenOverlay({
 
   // Backdrop: 'cover' = blurred album art (beat-pulsed), 'field' = the same
   // animated colour field the now-playing page uses. Persisted locally.
-  const [backdropMode, setBackdropMode] = useState(() => {
+  const [backdropMode] = useState(() => {
     try { return window.localStorage.getItem('immerse:fullscreenBackdrop') === 'field' ? 'field' : 'cover'; } catch { return 'cover'; }
   });
-  const setBackdrop = useCallback((m) => {
-    setBackdropMode(m);
-    try { window.localStorage.setItem('immerse:fullscreenBackdrop', m); } catch { /* ignore */ }
-  }, []);
 
   // ---- Beat-reactive backdrop ------------------------------------------
   // Mirrors AnimatedGradientBg's envelope: average the bass bins, climb fast
@@ -4466,4 +4461,4 @@ function ShareActionButton({ icon, label, onClick, accent, primary = false }) {
  *  feels diffuse rather than a sharp line.
  * ========================================================================= */
 
-export { CoverFullscreenOverlay, LyricShareOverlay, ShareActionButton };
+export { CoverFullscreenOverlay };

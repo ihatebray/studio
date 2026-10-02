@@ -29,7 +29,7 @@ function credPath() {
   return path.join(app.getPath('userData'), 'soulseek-credentials.json');
 }
 
-export function loadSoulseekCredentials() {
+function loadSoulseekCredentials() {
   const envUser = (process.env.SOULSEEK_USERNAME || '').trim();
   const envPass = (process.env.SOULSEEK_PASSWORD || '').trim();
   let fileUser = '';
@@ -282,7 +282,7 @@ function containsWord(haystack, needle) {
   return re.test(haystack);
 }
 
-export function passesJunkFilter(query, filename, folderPath = '') {
+function passesJunkFilter(query, filename, folderPath = '') {
   // Only inspect the FILENAME and its IMMEDIATE parent folder — not the whole
   // path hierarchy. A user's share might sit under ".../Live Sets/..." or
   // ".../Bootlegs/..." or a top folder literally named "Demos"; inspecting
@@ -318,122 +318,11 @@ export function passesJunkFilter(query, filename, folderPath = '') {
  *   - variant penalties      (live/remix/cover/etc. that the target didn't ask for)
  */
 
-// Variant markers that usually indicate the WRONG version of a track when
-// the user imported a normal studio track. Separate from JUNK_WORDS so we
-// can weight them and report which one tripped.
-const VARIANT_MARKERS = [
-  'live', 'remix', 'cover', 'instrumental', 'karaoke', 'acoustic',
-  'sped up', 'speed up', 'slowed', 'nightcore', 'demo', 'remaster',
-  'remastered', 're recorded', 're-recorded', 'rerecorded', 'edit',
-  'radio edit', 'extended', 'reverb', '8d', 'mashup', 'bootleg',
-  'session', 'unplugged', 'rehearsal',
-];
 
-// Words too generic to count as meaningful title/artist evidence.
-const STOPWORDS = new Set([
-  'the', 'a', 'an', 'and', 'of', 'to', 'in', 'on', 'feat', 'ft',
-  'featuring', 'with', 'pt', 'part', 'vol',
-]);
 
-function tokenize(s) {
-  return normalizeForCompare(s)
-    .split(/\s+/)
-    .filter((w) => w && !STOPWORDS.has(w));
-}
 
-// Fraction of `needleTokens` present in `hayTokens` (0..1).
-function tokenOverlap(needleTokens, hayTokens) {
-  if (needleTokens.length === 0) return 1; // nothing to match → not penalised
-  const hay = new Set(hayTokens);
-  let hit = 0;
-  for (const t of needleTokens) if (hay.has(t)) hit += 1;
-  return hit / needleTokens.length;
-}
 
-/**
- * Score one candidate against the intended track.
- * @param {object} cand   one soulseekSearch result (has filename, folder, duration)
- * @param {object} target { title, artist, durationMs }
- * @returns {{score:number, reasons:string[], penalties:string[]}}
- */
-export function scoreSoulseekMatch(cand, target) {
-  const reasons = [];
-  const penalties = [];
 
-  const fileText = `${normalizeForCompare(cand.filename || '')} ${normalizeForCompare(cand.folder || '')}`;
-  const fileTokens = fileText.split(/\s+/).filter(Boolean);
-
-  const titleTokens = tokenize(target?.title || '');
-  const artistTokens = tokenize(target?.artist || '');
-
-  const titleScore = tokenOverlap(titleTokens, fileTokens);   // 0..1
-  const artistScore = tokenOverlap(artistTokens, fileTokens); // 0..1
-
-  // Duration proximity. Soulseek file durations are in seconds; Spotify
-  // gives ms. If either is missing we neither reward nor punish.
-  let durScore = 0.5; // neutral when unknown
-  const targetSec = target?.durationMs ? target.durationMs / 1000 : 0;
-  const candSec = Number(cand.duration) || 0;
-  if (targetSec > 0 && candSec > 0) {
-    const diff = Math.abs(candSec - targetSec);
-    if (diff <= 2) { durScore = 1; reasons.push('duration matches'); }
-    else if (diff <= 5) durScore = 0.85;
-    else if (diff <= 12) durScore = 0.55;
-    else if (diff <= 30) durScore = 0.25;
-    else { durScore = 0; penalties.push(`duration off by ${Math.round(diff)}s`); }
-  }
-
-  // Variant penalty: a marker in the file that is NOT in the requested
-  // title/artist strongly suggests the wrong version.
-  const targetText = `${normalizeForCompare(target?.title || '')} ${normalizeForCompare(target?.artist || '')}`;
-  let variantPenalty = 0;
-  for (const marker of VARIANT_MARKERS) {
-    if (containsWord(fileText, marker) && !containsWord(targetText, marker)) {
-      variantPenalty += 0.5;
-      penalties.push(`"${marker}" version`);
-    }
-  }
-  if (variantPenalty > 1) variantPenalty = 1;
-
-  if (titleScore >= 0.99) reasons.push('title matches');
-  else if (titleScore >= 0.6) reasons.push('title mostly matches');
-  if (artistScore >= 0.99) reasons.push('artist matches');
-
-  // Weighted blend. Title and artist dominate; duration and variant adjust.
-  // Title 0.45, artist 0.30, duration 0.25, then subtract variant penalty.
-  let score = (titleScore * 0.45) + (artistScore * 0.30) + (durScore * 0.25);
-  score -= variantPenalty * 0.55;
-  if (score < 0) score = 0;
-  if (score > 1) score = 1;
-
-  return { score, reasons, penalties, titleScore, artistScore, durScore, variantPenalty };
-}
-
-/**
- * Pick the best-matching result from a list for the intended track.
- * Returns { best, scored, confident } where:
- *   - scored   : every candidate with its score, sorted best-first
- *   - best     : the top candidate (or null if list empty)
- *   - confident: true if `best` cleared the acceptance threshold
- *
- * Among candidates of similar match score we still prefer higher quality,
- * so we add a small quality nudge (bitrate tier / slots) as a tiebreaker.
- */
-export function pickBestMatch(results, target, { threshold = 0.62 } = {}) {
-  const list = Array.isArray(results) ? results : [];
-  const scored = list.map((r) => {
-    const m = scoreSoulseekMatch(r, target);
-    // Small quality tiebreaker (max +0.04) so a clean studio FLAC edges out
-    // a clean studio 192kbps mp3 without overriding match quality.
-    const tier = bitrateTier(r.ext, r.bitrate); // 0..5
-    const quality = (tier / 5) * 0.03 + (r.slots ? 0.01 : 0);
-    return { ...r, _match: m, _rank: m.score + quality };
-  });
-  scored.sort((a, b) => b._rank - a._rank);
-  const best = scored[0] || null;
-  const confident = !!best && best._match.score >= threshold;
-  return { best, scored, confident };
-}
 
 /* ---------- Album relevance ---------- */
 
@@ -548,7 +437,7 @@ export function soulseekBasename(filePath) {
   return idx === -1 ? norm : norm.slice(idx + 1);
 }
 
-export function soulseekParentFolder(filePath) {
+function soulseekParentFolder(filePath) {
   if (typeof filePath !== 'string') return '';
   const norm = filePath.replace(/\\/g, '/');
   const idx = norm.lastIndexOf('/');

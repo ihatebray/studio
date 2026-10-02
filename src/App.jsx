@@ -123,20 +123,6 @@ export default function App() {
   // Album display-art overrides { albumKey: url } — cosmetic album-view art
   // that's independent of every track's own cover. Loaded with the library.
   const [albumCoverOverrides, setAlbumCoverOverrides] = useState({});
-  // AUTO-PIN: LibraryTab reports albums that have art but no pin yet —
-  // first launch after this feature (existing libraries) and every new
-  // import. Whatever cover the import fetched becomes the album's
-  // permanent display art; existing pins are never overwritten (the DB
-  // insert is DO NOTHING on conflict).
-  const handleAutoPinAlbumCovers = useCallback(async (entries) => {
-    if (!entries?.length || !window.electronAPI?.setAlbumCoversBulk) return;
-    try {
-      const res = await window.electronAPI.setAlbumCoversBulk(entries);
-      if (res?.ok && res.covers && Object.keys(res.covers).length) {
-        setAlbumCoverOverrides((m) => ({ ...res.covers, ...m }));
-      }
-    } catch { /* silent — display falls back to track art until next pass */ }
-  }, []);
 
   // Direct set — called from the album metadata editor's save path with a
   // data URI (or null to clear). Main persists the image and returns the
@@ -160,11 +146,6 @@ export default function App() {
     }
   }, [pushToast]);
 
-  // Auto-updater state. Driven by 'update:status' events from the main
-  // process. Initial fetch on mount in case the updater already had a
-  // status before this component mounted (rare but possible if the
-  // renderer hot-reloads).
-  const [updaterStatus, setUpdaterStatus] = useState({ state: 'idle', version: '', progressPct: 0, error: '' });
   const updateToastIdRef = useRef(null);
 
   // "What's new" overlay state. Shown once after every version bump.
@@ -229,26 +210,12 @@ export default function App() {
     try { await api.whatsnewSetLastSeen(whatsNewData.version); } catch { /* ignore */ }
   }, [whatsNewData]);
 
-  // Update history overlay — Settings "View all releases" button opens
-  // a paged overlay showing every GitHub release for the repo. Fetched
-  // lazily on first open and cached for the session.
-  const [updateHistoryOpen, setUpdateHistoryOpen] = useState(false);
-  const openUpdateHistory = useCallback(() => setUpdateHistoryOpen(true), []);
-  const closeUpdateHistory = useCallback(() => setUpdateHistoryOpen(false), []);
 
   useEffect(() => {
     const api = typeof window !== 'undefined' ? window.electronAPI : null;
     if (!api?.onUpdateStatus) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        const s = await api.updateGetStatus?.();
-        if (!cancelled && s) setUpdaterStatus(s);
-      } catch { /* ignore */ }
-    })();
     const unsub = api.onUpdateStatus((s) => {
       if (!s) return;
-      setUpdaterStatus(s);
       // Surface the "ready to install" prompt as a toast with an action
       // button. Push exactly once per download cycle by tracking the
       // toast id; if a second 'downloaded' event arrives (shouldn't,
@@ -278,7 +245,7 @@ export default function App() {
         updateToastIdRef.current = null;
       }
     });
-    return () => { cancelled = true; if (typeof unsub === 'function') unsub(); };
+    return () => { if (typeof unsub === 'function') unsub(); };
   }, [pushToast]);
 
   /* Problems the main process runs into (notices.js): Spotify rate limits,
@@ -324,47 +291,6 @@ export default function App() {
   const [shuffleOn, setShuffleOn] = useState(false);
   const [repeat, setRepeat] = useState('off');
 
-  // ── Sleep timer ────────────────────────────────────────────────
-  // mode: 'off' | '15' | '30' | '60' | '90' | 'endOfTrack' | 'endOfAlbum'
-  // endsAt: timestamp (ms) when timed modes expire, null for event-based modes
-  const [sleepMode, setSleepMode] = useState('off');
-  const [sleepEndsAt, setSleepEndsAt] = useState(null);
-  const sleepTimerRef = useRef(null);
-
-  const startSleepTimer = useCallback((mode) => {
-    // Clear any existing timer
-    if (sleepTimerRef.current) { clearTimeout(sleepTimerRef.current); sleepTimerRef.current = null; }
-    setSleepMode(mode);
-
-    if (mode === 'off') {
-      setSleepEndsAt(null);
-      return;
-    }
-
-    const minutes = { '15': 15, '30': 30, '60': 60, '90': 90 }[mode];
-    if (minutes) {
-      const endsAt = Date.now() + minutes * 60 * 1000;
-      setSleepEndsAt(endsAt);
-      sleepTimerRef.current = setTimeout(() => {
-        // Pause playback
-        if (audioRef.current) { try { audioRef.current.pause(); } catch { /* */ } }
-        setSleepMode('off');
-        setSleepEndsAt(null);
-        sleepTimerRef.current = null;
-      }, minutes * 60 * 1000);
-    } else {
-      // 'endOfTrack' / 'endOfAlbum' — handled in the track-end callback
-      setSleepEndsAt(null);
-    }
-  }, []);
-
-  // Clean up on unmount
-  useEffect(() => () => {
-    if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current);
-  }, []);
-  // Ref so the track-end callback always reads the latest sleep mode
-  const sleepModeRef = useRef('off');
-  sleepModeRef.current = sleepMode;
 
   // Track-to-track transition style:
   //   'off'       — hard cut (the next track's src is loaded only when the
@@ -389,21 +315,6 @@ export default function App() {
     transitionModeRef.current = transitionMode;
   }, [transitionMode]);
 
-  // Crossfade length in seconds. Only meaningful when transitionMode is
-  // 'crossfade'. Bounded 1–12s so a fat-finger can't blend two whole tracks.
-  const [crossfadeSec, setCrossfadeSec] = useState(() => {
-    if (typeof window === 'undefined') return 6;
-    const n = Number(window.localStorage.getItem('immerse:crossfadeSec'));
-    if (Number.isFinite(n) && n >= 1 && n <= 12) return Math.round(n);
-    return 6;
-  });
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try { window.localStorage.setItem('immerse:crossfadeSec', String(crossfadeSec)); }
-      catch { /* ignore */ }
-    }
-    crossfadeSecRef.current = crossfadeSec;
-  }, [crossfadeSec]);
   // Volume persists across launches. Defaults to 30% on first launch
   // so the app doesn't blast at full volume the first time. After that
   // it remembers whatever the user last set.
@@ -424,35 +335,6 @@ export default function App() {
     catch { /* ignore */ }
   }, [volume]);
 
-  /**
-   * isMaximized — tracks whether the window is currently maximized
-   * (filling the work area, taskbar still visible). NOT native
-   * fullscreen — that's a different state we don't currently use.
-   *
-   * Detection uses `window.resize` events plus a comparison of the
-   * window's outer dimensions against the screen's available
-   * dimensions. When they match (within a 4px tolerance for
-   * subpixel/DPI rounding) the window is maximized. This avoids any
-   * dependency on main-process IPC, so it works the moment the new
-   * App.jsx loads — no Electron restart needed.
-   *
-   * Triggered by: the in-app maximize button, double-clicking the
-   * title bar, and OS shortcuts like Win+Up. All three end up
-   * resizing the window, so a single resize listener catches them all.
-   */
-  const [isMaximized, setIsMaximized] = useState(false);
-  useEffect(() => {
-    const check = () => {
-      const TOLERANCE = 4;
-      const maxed =
-        Math.abs(window.outerWidth - window.screen.availWidth) <= TOLERANCE
-        && Math.abs(window.outerHeight - window.screen.availHeight) <= TOLERANCE;
-      setIsMaximized(maxed);
-    };
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
 
   /**
    * gainBoost — multiplier applied to the audio graph's GainNode, on top
@@ -500,19 +382,14 @@ export default function App() {
   //   'custom'  — same as 'idle' but with user-specified delay
   // The delay is fixed at 30s for idle/pause; `ambientCustomDelaySec`
   // applies when mode === 'custom'. Both persist to localStorage.
-  const [ambientMode, setAmbientMode] = useState(() => {
+  const [ambientMode] = useState(() => {
     if (typeof window === 'undefined') return 'idle';
     const v = window.localStorage.getItem('immerse:ambientMode');
     if (v === 'off' || v === 'idle' || v === 'pause' || v === 'custom') return v;
     return 'idle';
   });
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('immerse:ambientMode', ambientMode);
-    }
-  }, [ambientMode]);
 
-  const [ambientCustomDelaySec, setAmbientCustomDelaySec] = useState(() => {
+  const [ambientCustomDelaySec] = useState(() => {
     if (typeof window === 'undefined') return 30;
     const raw = window.localStorage.getItem('immerse:ambientCustomDelaySec');
     const n = Number(raw);
@@ -520,11 +397,6 @@ export default function App() {
     if (Number.isFinite(n) && n >= 5 && n <= 600) return Math.round(n);
     return 30;
   });
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('immerse:ambientCustomDelaySec', String(ambientCustomDelaySec));
-    }
-  }, [ambientCustomDelaySec]);
 
   const [ambientActive, setAmbientActive] = useState(false);
   // Toggle so a user who dismisses ambient mode doesn't immediately get
@@ -532,83 +404,28 @@ export default function App() {
   // next time the player is actually used (currentTrack appears), then
   // flips back to true so future idle periods can re-engage.
   const [ambientArmed, setAmbientArmed] = useState(true);
-  const [uiFontId, setUiFontId] = useState(getStoredFontId);
+  const [uiFontId] = useState(getStoredFontId);
   /** Session flag — flips true the first time any track starts. Resets on next
    * launch. Used to render the Welcome screen until the user plays something. */
   const [hasEverPlayed, setHasEverPlayed] = useState(false);
-  /** User preference — animate the theme gradient behind the now-playing view. */
-  const [animateGradient, setAnimateGradient] = useState(() => {
-    try {
-      const v = typeof window !== 'undefined' ? window.localStorage.getItem('studioPlayerAnimateGradient') : null;
-      // Default: ON. Explicitly "0" or "false" → off.
-      if (v === '0' || v === 'false') return false;
-      return true;
-    } catch {
-      return true;
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('studioPlayerAnimateGradient', animateGradient ? '1' : '0');
-    } catch { /* ignore */ }
-  }, [animateGradient]);
 
   /** Beat reactivity — colour field pulses to the bass envelope of the playing audio.
    * Default OFF (audio analysis has a small CPU cost; keep the calm default behaviour). */
-  const [beatReactive, setBeatReactive] = useState(() => {
+  const [beatReactive] = useState(() => {
     try {
       return typeof window !== 'undefined'
         && window.localStorage.getItem('immerse:beatReactive') === '1';
     } catch { return false; }
   });
-  useEffect(() => {
-    try {
-      if (beatReactive) window.localStorage.setItem('immerse:beatReactive', '1');
-      else window.localStorage.removeItem('immerse:beatReactive');
-    } catch { /* ignore */ }
-  }, [beatReactive]);
 
-  /** Cover fullscreen mode — when true, clicking the cover (or pressing F) opens
-   * an edge-to-edge fullscreen overlay of just the artwork + minimal controls. */
-  const [coverFullscreenEnabled, setCoverFullscreenEnabled] = useState(() => {
-    try {
-      const v = typeof window !== 'undefined' ? window.localStorage.getItem('immerse:coverFullscreen') : null;
-      // Default: ON. The feature is opt-in for the action (you have to click), but
-      // having the affordance available by default is the friendlier choice.
-      if (v === '0' || v === 'false') return false;
-      return true;
-    } catch { return true; }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('immerse:coverFullscreen', coverFullscreenEnabled ? '1' : '0');
-    } catch { /* ignore */ }
-  }, [coverFullscreenEnabled]);
 
-  const [previewVolumePosition, setPreviewVolumePosition] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        ? window.localStorage.getItem('immerse:previewVolumePosition') || 'bottomRight'
-        : 'bottomRight';
-    } catch { return 'bottomRight'; }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('immerse:previewVolumePosition', previewVolumePosition);
-    } catch { /* ignore */ }
-  }, [previewVolumePosition]);
 
-  const [nowPlayingSliderStyle, setNowPlayingSliderStyle] = useState(() => {
+  const [nowPlayingSliderStyle] = useState(() => {
     try {
       const value = typeof window !== 'undefined' ? window.localStorage.getItem('immerse:nowPlayingSliderStyle') : null;
       return value === 'heart' ? 'heart' : 'circle';
     } catch { return 'circle'; }
   });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('immerse:nowPlayingSliderStyle', nowPlayingSliderStyle);
-    } catch { /* ignore */ }
-  }, [nowPlayingSliderStyle]);
 
   // Fullscreen lyrics presentation: 'side' (column beside the cover) or
   // 'flip' (press L to flip the artwork over to a lyric card).
@@ -631,405 +448,30 @@ export default function App() {
    * future migration ever needs to.
    */
 
-  /** Pinnable tabs — master toggle for the dock-tab hiding system. When OFF
-   * (default), every tab is visible, right-click does nothing special, and
-   * any persisted hidden-tab list is ignored. When ON, the right-click menu
-   * offers "Hide tab", and the Settings list shows per-tab eye toggles. */
-  const [pinnableTabsEnabled, setPinnableTabsEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:pinnableTabs') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (pinnableTabsEnabled) window.localStorage.setItem('immerse:dev:pinnableTabs', '1');
-      else window.localStorage.removeItem('immerse:dev:pinnableTabs');
-    } catch { /* ignore */ }
-  }, [pinnableTabsEnabled]);
 
-  /** Hidden-tab list — tab IDs the user has chosen to hide from the dock.
-   * Stored as a JSON array. Has effect only when `pinnableTabsEnabled` is on.
-   * `'library'` and `'settings'` are intentionally never hideable: library is
-   * the home base and settings is the only way to undo a hidden state. */
-  const [hiddenTabIds, setHiddenTabIds] = useState(() => {
-    try {
-      const raw = typeof window !== 'undefined' ? window.localStorage.getItem('immerse:dev:hiddenTabs') : null;
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      // Sanitize: only keep known tab IDs and never include the protected ones.
-      const allowed = new Set(['find', 'new', 'stats', 'queue', 'journal', 'lyrics']);
-      return parsed.filter((x) => typeof x === 'string' && allowed.has(x));
-    } catch { return []; }
-  });
-  useEffect(() => {
-    try {
-      if (hiddenTabIds.length === 0) window.localStorage.removeItem('immerse:dev:hiddenTabs');
-      else window.localStorage.setItem('immerse:dev:hiddenTabs', JSON.stringify(hiddenTabIds));
-    } catch { /* ignore */ }
-  }, [hiddenTabIds]);
 
-  /** Custom dock button order. A persisted array of tab IDs; the dock renders
-   * its reorderable buttons in this order (library & settings are pinned and
-   * excluded). Unknown/new IDs fall back to a default order, so adding a tab
-   * in a future version doesn't break a saved layout. */
-  const [dockOrder, setDockOrder] = useState(() => {
-    try {
-      const raw = typeof window !== 'undefined' ? window.localStorage.getItem('immerse:dockOrder') : null;
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      const allowed = new Set(['find', 'library', 'new', 'settings', 'stats', 'journal']);
-      return parsed.filter((x) => typeof x === 'string' && allowed.has(x));
-    } catch { return []; }
-  });
-  useEffect(() => {
-    try {
-      if (!dockOrder || dockOrder.length === 0) window.localStorage.removeItem('immerse:dockOrder');
-      else window.localStorage.setItem('immerse:dockOrder', JSON.stringify(dockOrder));
-    } catch { /* ignore */ }
-  }, [dockOrder]);
 
-  /** Collapse-to-edge animation — when enabled, the side dock panel collapses
-   * by scaling into the bottom dock pill rather than sliding off-screen. Makes
-   * the dock feel like the source of truth for the panel. Off by default
-   * because the existing slide-off animation is reliably snappy. */
-  const [dockCollapseAnimationEnabled, setDockCollapseAnimationEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:dockCollapseAnimation') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (dockCollapseAnimationEnabled) window.localStorage.setItem('immerse:dev:dockCollapseAnimation', '1');
-      else window.localStorage.removeItem('immerse:dev:dockCollapseAnimation');
-    } catch { /* ignore */ }
-  }, [dockCollapseAnimationEnabled]);
 
-  /** Random play button — when enabled, a dice icon appears in the bottom
-   * dock that plays a uniformly-random track from the library on click.
-   * The decision-fatigue cure. Off by default because not every user wants
-   * extra dock buttons. */
-  const [randomButtonEnabled, setRandomButtonEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:randomButton') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (randomButtonEnabled) window.localStorage.setItem('immerse:dev:randomButton', '1');
-      else window.localStorage.removeItem('immerse:dev:randomButton');
-    } catch { /* ignore */ }
-  }, [randomButtonEnabled]);
 
-  /** Breathing dock pill — when enabled, the bottom dock bar's accent ring
-   * pulses subtly while music is playing. Most visible when the panel is
-   * collapsed. Off by default; pure visual ambience. */
-  const [breathingDockPillEnabled, setBreathingDockPillEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:breathingDockPill') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (breathingDockPillEnabled) window.localStorage.setItem('immerse:dev:breathingDockPill', '1');
-      else window.localStorage.removeItem('immerse:dev:breathingDockPill');
-    } catch { /* ignore */ }
-  }, [breathingDockPillEnabled]);
 
-  // Transparent dock — when enabled, the bottom dock pill's solid dark
-  // backdrop drops away so the cover-art-derived background bleeds
-  // through. The pill still has its blur and inset highlight, but the
-  // 0.7-alpha dark fill is replaced with a near-transparent layer that
-  // lets the accent/cover wash from the immersive stage show through.
-  // Defaults OFF — the solid backdrop is the more readable default.
-  const [dockTransparentEnabled, setDockTransparentEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:dockTransparent') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (dockTransparentEnabled) window.localStorage.setItem('immerse:dev:dockTransparent', '1');
-      else window.localStorage.removeItem('immerse:dev:dockTransparent');
-    } catch { /* ignore */ }
-  }, [dockTransparentEnabled]);
 
-  /**
-   * liquidGlassDockEnabled — when on, replaces the dock's flat surface
-   * with a multi-layer frosted-glass effect: heavy backdrop blur,
-   * inner highlight gradient catching the "top edge" of the slab, a
-   * subtle specular sheen that slowly sweeps across, and a faint inner
-   * ring of accent-tinted light. Goes beyond `dockTransparentEnabled`
-   * (which just thins the fill) — this makes the dock look like a slab
-   * of real polished glass laid over the cover art.
-   *
-   * Both toggles can be on at once; liquid glass composes its layers
-   * over whichever base fill transparency picked.
-   */
-  const [liquidGlassDockEnabled, setLiquidGlassDockEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:liquidGlassDock') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (liquidGlassDockEnabled) window.localStorage.setItem('immerse:liquidGlassDock', '1');
-      else window.localStorage.removeItem('immerse:liquidGlassDock');
-    } catch { /* ignore */ }
-  }, [liquidGlassDockEnabled]);
 
-  // Listening Journal — when enabled, a "Journal" tab joins the dock
-  // alongside Stats/Queue/Lyrics. The tab renders a day-by-day diary of
-  // play events with auto-generated prose summaries and stat cards.
-  // Drawn entirely from existing `playEvents` + `library`; no DB
-  // additions needed.
-  // Journal tab removed in v1.0.5. State + setter retained as a noop to
-  // avoid invasive changes to all the props that referenced them, but
-  // the value is now permanently false and the setter is a no-op so the
-  // journal tab can never appear regardless of prior localStorage state.
-  // Also proactively clears the localStorage flag so future versions
-  // don't accidentally re-enable it.
-  const journalTabEnabled = false;
-  const setJournalTabEnabled = () => {};
   useEffect(() => {
     try { window.localStorage.removeItem('immerse:dev:journalTab'); } catch { /* ignore */ }
   }, []);
 
-  // Queue Painter — when enabled, the Queue tab gains a view-mode switch
-  // (list / painter). Painter mode shows the queue as a horizontal
-  // duration-proportional strip instead of the standard vertical list.
-  // Setting controls *availability* of the switch; the user's choice of
-  // mode within the switch is a separate localStorage key (saved by
-  // the Queue tab itself, mirroring how AlbumStackView did it).
-  const [queuePainterEnabled, setQueuePainterEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:queuePainter') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (queuePainterEnabled) window.localStorage.setItem('immerse:dev:queuePainter', '1');
-      else window.localStorage.removeItem('immerse:dev:queuePainter');
-    } catch { /* ignore */ }
-  }, [queuePainterEnabled]);
 
-  // Recently-played peek — when enabled, a small clock icon appears in
-  // the dock. Clicking it pops a floating panel showing recently-played
-  // tracks. The range is also user-configurable: by count (5/10/20),
-  // by time window (today / current session), or a custom count.
-  // Default: enabled with "last 5" since it's small and useful.
-  const [recentlyPlayedEnabled, setRecentlyPlayedEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:recentlyPlayed') !== '0';
-    } catch { return true; }
-  });
-  useEffect(() => {
-    try {
-      if (recentlyPlayedEnabled) window.localStorage.removeItem('immerse:recentlyPlayed');
-      else window.localStorage.setItem('immerse:recentlyPlayed', '0');
-    } catch { /* ignore */ }
-  }, [recentlyPlayedEnabled]);
 
-  /** First-time-hearing sparkle — when enabled, tracks in the library list
-   * that have never been played (playCount === 0) get a small pulsing dot
-   * next to their title. Helps unheard music feel discoverable in big
-   * libraries. Off by default. */
-  const [firstTimeSparkleEnabled, setFirstTimeSparkleEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:firstTimeSparkle') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (firstTimeSparkleEnabled) window.localStorage.setItem('immerse:dev:firstTimeSparkle', '1');
-      else window.localStorage.removeItem('immerse:dev:firstTimeSparkle');
-    } catch { /* ignore */ }
-  }, [firstTimeSparkleEnabled]);
 
-  /** Track of the moment — when enabled, the welcome screen surfaces a small
-   * card with a track chosen by time-of-day, day-of-week, and recent
-   * listening behaviour. Refreshes every few hours (not every render).
-   * Off by default. */
-  const [trackOfMomentEnabled, setTrackOfMomentEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:trackOfMoment') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (trackOfMomentEnabled) window.localStorage.setItem('immerse:dev:trackOfMoment', '1');
-      else window.localStorage.removeItem('immerse:dev:trackOfMoment');
-    } catch { /* ignore */ }
-  }, [trackOfMomentEnabled]);
 
-  /** Library view switcher style — 'chip' (dropdown chip) or 'tabs' (bottom-border tabs) */
-  const [librarySwitcherStyle, setLibrarySwitcherStyle] = useState(() => {
-    try {
-      const v = typeof window !== 'undefined' && window.localStorage.getItem('immerse:librarySwitcherStyle');
-      return v === 'tabs' ? 'tabs' : 'chip';
-    } catch { return 'chip'; }
-  });
-  useEffect(() => {
-    try { window.localStorage.setItem('immerse:librarySwitcherStyle', librarySwitcherStyle); } catch { /* ignore */ }
-  }, [librarySwitcherStyle]);
 
-  /** Playlists pinned to the dock — array of playlist IDs that appear as dock tabs */
-  const [pinnedPlaylists, setPinnedPlaylists] = useState(() => {
-    try {
-      const raw = typeof window !== 'undefined' && window.localStorage.getItem('immerse:pinnedPlaylists');
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
-  useEffect(() => {
-    try { window.localStorage.setItem('immerse:pinnedPlaylists', JSON.stringify(pinnedPlaylists)); } catch { /* ignore */ }
-  }, [pinnedPlaylists]);
-  const togglePinnedPlaylist = useCallback((id) => {
-    setPinnedPlaylists((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
-  }, []);
 
-  /** Click artist / album name to filter — when enabled, the artist and album
-   * names in the library list and now-playing become clickable. Clicking one
-   * opens the library tab and filters by that text. Off by default; turning
-   * it on makes those names visually distinct (underline-on-hover). */
-  const [statsRangeTabsEnabled, setStatsRangeTabsEnabled] = useState(() => {
-    try {
-      // Default ON. localStorage absence means "user hasn't touched it" → on.
-      // We only treat the explicit '0' string as off so future migrations
-      // (or first-launch reads) stay safe.
-      return typeof window === 'undefined'
-        || window.localStorage.getItem('immerse:dev:statsRangeTabs') !== '0';
-    } catch { return true; }
-  });
-  useEffect(() => {
-    try {
-      if (statsRangeTabsEnabled) window.localStorage.removeItem('immerse:dev:statsRangeTabs');
-      else window.localStorage.setItem('immerse:dev:statsRangeTabs', '0');
-    } catch { /* ignore */ }
-  }, [statsRangeTabsEnabled]);
-  const [clickToFilterEnabled, setClickToFilterEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:clickToFilter') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (clickToFilterEnabled) window.localStorage.setItem('immerse:dev:clickToFilter', '1');
-      else window.localStorage.removeItem('immerse:dev:clickToFilter');
-    } catch { /* ignore */ }
-  }, [clickToFilterEnabled]);
 
-  /** Online artist info — when enabled, the Track tab fetches artist
-   * biography, tags, and listener count from Last.fm. Off by default
-   * because it requires user-supplied API credentials and makes outbound
-   * requests that are logged by Last.fm. */
-  const [artistInfoEnabled, setArtistInfoEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:artistInfo') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (artistInfoEnabled) window.localStorage.setItem('immerse:dev:artistInfo', '1');
-      else window.localStorage.removeItem('immerse:dev:artistInfo');
-    } catch { /* ignore */ }
-  }, [artistInfoEnabled]);
 
-  /** Last.fm API key — user-provided, stored client-side. No secret pair
-   * (Last.fm separates "api_key" for read-only ws.audioscrobbler calls
-   * from "secret" used only for write/auth flows we don't use). */
-  const [lastFmApiKey, setLastFmApiKey] = useState(() => {
-    try {
-      return (typeof window !== 'undefined' ? window.localStorage.getItem('immerse:lastFmApiKey') : null) || '';
-    } catch { return ''; }
-  });
-  useEffect(() => {
-    try {
-      if (lastFmApiKey.trim()) window.localStorage.setItem('immerse:lastFmApiKey', lastFmApiKey.trim());
-      else window.localStorage.removeItem('immerse:lastFmApiKey');
-    } catch { /* ignore */ }
-  }, [lastFmApiKey]);
 
-  /** Track credits — when enabled, the Track tab fetches writers,
-   * producers, engineers, and performers from MusicBrainz. Off by default
-   * because it makes outbound requests (logged by MusicBrainz) and uses a
-   * one-request-per-second throttle to honour their etiquette. No API
-   * key needed; results are cached locally for 7 days. */
-  const [creditsEnabled, setCreditsEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:credits') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (creditsEnabled) window.localStorage.setItem('immerse:dev:credits', '1');
-      else window.localStorage.removeItem('immerse:dev:credits');
-    } catch { /* ignore */ }
-  }, [creditsEnabled]);
 
-  /** Track videos — when enabled, the Track tab offers a "Watch video"
-   * disclosure that lazy-loads a YouTube embed for the playing track.
-   * Off by default because the embed loads from a Google domain and
-   * (when the user actually plays the video) sets third-party cookies.
-   * No API key required; uses YouTube's search-list embed URL so the
-   * top search result auto-loads inside the iframe. */
-  const [videosEnabled, setVideosEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:videos') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (videosEnabled) window.localStorage.setItem('immerse:dev:videos', '1');
-      else window.localStorage.removeItem('immerse:dev:videos');
-    } catch { /* ignore */ }
-  }, [videosEnabled]);
 
-  /** Edge-bleed colour band — when enabled, a thin gradient strip at the
-   * bottom of the immersive stage tinted with the playing track's accent
-   * colour. Like the cover is "leaking light" into the room. Default OFF. */
-  const [edgeBleedEnabled, setEdgeBleedEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:edgeBleed') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (edgeBleedEnabled) window.localStorage.setItem('immerse:dev:edgeBleed', '1');
-      else window.localStorage.removeItem('immerse:dev:edgeBleed');
-    } catch { /* ignore */ }
-  }, [edgeBleedEnabled]);
 
-  /** Two-pane library — when enabled, the library Songs view splits in
-   * two: artists on the left, tracks of the selected artist on the right.
-   * Default OFF. */
-  const [twoPaneEnabled, setTwoPaneEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:twoPane') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (twoPaneEnabled) window.localStorage.setItem('immerse:dev:twoPane', '1');
-      else window.localStorage.removeItem('immerse:dev:twoPane');
-    } catch { /* ignore */ }
-  }, [twoPaneEnabled]);
 
   /** Discord rich presence — when enabled, broadcasts the playing
    * track to the user's Discord status (visible to friends and in
@@ -1111,63 +553,6 @@ export default function App() {
   // image assets) but works zero-setup for everyone else.
   const effectiveDiscordAppId = (discordAppId.trim() || DEFAULT_DISCORD_APP_ID || '').trim();
 
-  /** Twitch / stream now-playing overlay — when enabled, Immerse runs a tiny
-   * local web server whose URL the user adds as an OBS browser source. Off by
-   * default. Persists the toggle; the live server URL/status come from main. */
-  const [streamOverlayEnabled, setStreamOverlayEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:streamOverlay') === '1';
-    } catch { return false; }
-  });
-  const [streamOverlayUrl, setStreamOverlayUrl] = useState('');
-  const [streamOverlayError, setStreamOverlayError] = useState('');
-  /** 'glass' (full card) or 'minimal' (transparent text only). */
-  const [streamOverlayTheme, setStreamOverlayTheme] = useState(() => {
-    try { return (typeof window !== 'undefined' && window.localStorage.getItem('immerse:streamOverlayTheme')) || 'glass'; } catch { return 'glass'; }
-  });
-  const [streamOverlayShowPaused, setStreamOverlayShowPaused] = useState(() => {
-    try { return typeof window === 'undefined' ? true : window.localStorage.getItem('immerse:streamOverlayShowPaused') !== '0'; } catch { return true; }
-  });
-  useEffect(() => {
-    try {
-      if (streamOverlayEnabled) window.localStorage.setItem('immerse:streamOverlay', '1');
-      else window.localStorage.removeItem('immerse:streamOverlay');
-    } catch { /* ignore */ }
-  }, [streamOverlayEnabled]);
-  useEffect(() => { try { window.localStorage.setItem('immerse:streamOverlayTheme', streamOverlayTheme); } catch { /* ignore */ } }, [streamOverlayTheme]);
-  useEffect(() => { try { window.localStorage.setItem('immerse:streamOverlayShowPaused', streamOverlayShowPaused ? '1' : '0'); } catch { /* ignore */ } }, [streamOverlayShowPaused]);
-
-  // Start/stop the overlay server when the toggle changes.
-  useEffect(() => {
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.twitchOverlayStart) return undefined;
-    let cancelled = false;
-    if (streamOverlayEnabled) {
-      setStreamOverlayError('');
-      api.twitchOverlayStart().then((r) => {
-        if (cancelled) return;
-        if (r?.ok) { setStreamOverlayUrl(r.url || ''); }
-        else { setStreamOverlayError(r?.error || 'Could not start overlay server.'); setStreamOverlayUrl(''); }
-      }).catch((e) => { if (!cancelled) setStreamOverlayError(String(e?.message || e)); });
-    } else {
-      api.twitchOverlayStop?.().catch(() => { /* ignore */ });
-      setStreamOverlayUrl('');
-      setStreamOverlayError('');
-    }
-    return () => { cancelled = true; };
-  }, [streamOverlayEnabled]);
-
-  // Push theme/accent/show-paused options to the overlay when they change.
-  useEffect(() => {
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.twitchSetOptions || !streamOverlayEnabled) return;
-    api.twitchSetOptions({
-      theme: streamOverlayTheme,
-      showWhenPaused: streamOverlayShowPaused,
-    }).catch(() => { /* ignore */ });
-  }, [streamOverlayEnabled, streamOverlayTheme, streamOverlayShowPaused]);
-
   // Opt-in "now playing" toast on track change. Off by default; toggled in
   // Settings via the immerse:nowPlayingToast flag (read live so the toggle
   // takes effect without a reload). Uses a single deduped slot so rapid
@@ -1189,117 +574,6 @@ export default function App() {
     });
   }, [queue[currentIndex]?.id, isPlaying, pushToast]);
 
-  // Push now-playing state to the OBS overlay on every track / play-state
-  // change. Intentionally UNCONDITIONAL (and independent of Discord): the
-  // main-process setNowPlaying is just a cheap state write when the overlay
-  // server isn't running, and the overlay's own toggle (in Settings) owns the
-  // server lifecycle. Previously the only push lived inside the Discord effect,
-  // gated behind discordPresenceEnabled, so the overlay stayed blank unless
-  // Discord was also configured. Unlike Discord (public http(s) URLs only), an
-  // OBS browser source renders data: URLs directly, so local tracks with only
-  // embedded art still show their cover here.
-  useEffect(() => {
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.twitchSetNowPlaying) return;
-    const track = queue[currentIndex];
-    if (!track) { api.twitchSetNowPlaying(null).catch(() => { /* ignore */ }); return; }
-    // Send whatever cover the app stores (usually a studio-cover:// URL, sometimes
-    // data: or a remote http URL). The overlay server's /cover endpoint resolves
-    // any of these to real bytes OBS can load.
-    const overlayCover = track.coverArt || track.coverArtUrl || track.albumArtUrl || '';
-    api.twitchSetNowPlaying({
-      title: track.title || 'Unknown track',
-      artist: track.artist || '',
-      album: track.album || '',
-      coverArtUrl: overlayCover,
-      isPlaying,
-      // NOTE: theme + accent are intentionally omitted here. They're owned by
-      // Settings (theme) and the now-playing page (cover accent) via
-      // twitchSetOptions; the overlay preserves them across track updates, so
-      // re-sending them here would clobber the user's choice / the cover tint.
-    }).catch(() => { /* ignore */ });
-  }, [
-    queue[currentIndex]?.id,
-    queue[currentIndex]?.coverArt,
-    isPlaying,
-  ]);
-
-  /** Panel resize — when enabled, the inner edge of the side panel becomes
-   * a drag handle for resizing the panel's width. Persisted. Off by default. */
-  const [panelResizableEnabled, setPanelResizableEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:panelResizable') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (panelResizableEnabled) window.localStorage.setItem('immerse:dev:panelResizable', '1');
-      else window.localStorage.removeItem('immerse:dev:panelResizable');
-    } catch { /* ignore */ }
-  }, [panelResizableEnabled]);
-
-  /** Dock drag — when enabled, the bottom dock can be picked up and moved
-   * anywhere on screen. Persisted. Off by default. */
-  const [dockDraggableEnabled, setDockDraggableEnabled] = useState(() => {
-    try {
-      return typeof window !== 'undefined'
-        && window.localStorage.getItem('immerse:dev:dockDraggable') === '1';
-    } catch { return false; }
-  });
-  useEffect(() => {
-    try {
-      if (dockDraggableEnabled) window.localStorage.setItem('immerse:dev:dockDraggable', '1');
-      else window.localStorage.removeItem('immerse:dev:dockDraggable');
-    } catch { /* ignore */ }
-  }, [dockDraggableEnabled]);
-
-  /** Panel width (px). Bounds enforced at use site. Default 340 matches the
-   * historical hard-coded width. */
-  const [panelWidth, setPanelWidth] = useState(() => {
-    try {
-      const v = typeof window !== 'undefined' ? window.localStorage.getItem('immerse:panelWidth') : null;
-      const n = Number(v);
-      if (Number.isFinite(n) && n >= 240 && n <= 720) return Math.round(n);
-      return 340;
-    } catch { return 340; }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('immerse:panelWidth', String(panelWidth));
-    } catch { /* ignore */ }
-  }, [panelWidth]);
-
-  /** Dock position. Stored as { xFromLeft, yFromTop } in pixels — both
-   * relative to the top-left of the window. `null` means default position
-   * (bottom-center). Reset to null any time the user disables dock-drag. */
-  const [dockPosition, setDockPosition] = useState(() => {
-    try {
-      const raw = typeof window !== 'undefined' ? window.localStorage.getItem('immerse:dockPosition') : null;
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (parsed && Number.isFinite(parsed.xFromLeft) && Number.isFinite(parsed.yFromTop)) {
-        return { xFromLeft: parsed.xFromLeft, yFromTop: parsed.yFromTop };
-      }
-      return null;
-    } catch { return null; }
-  });
-  useEffect(() => {
-    try {
-      if (dockPosition === null) window.localStorage.removeItem('immerse:dockPosition');
-      else window.localStorage.setItem('immerse:dockPosition', JSON.stringify(dockPosition));
-    } catch { /* ignore */ }
-  }, [dockPosition]);
-  // When dock-drag is turned off, reset position to default so the user
-  // doesn't end up with a mysteriously-misplaced dock when they didn't
-  // remember moving it.
-  useEffect(() => {
-    if (!dockDraggableEnabled && dockPosition !== null) {
-      setDockPosition(null);
-    }
-  }, [dockDraggableEnabled, dockPosition]);
-  /** Bumps after saving Spotify creds so Find view re-checks configured state. */
-  const [spotifyCredsRefreshKey, setSpotifyCredsRefreshKey] = useState(0);
 
   const audioRef = useRef(null);            // ALWAYS points at the active element
   const inactiveAudioRef = useRef(null);    // the standby element (preloads the next track)
@@ -1326,7 +600,7 @@ export default function App() {
    *                    'ended' so we don't double-advance)
    * transitionModeRef: mirror of `transitionMode` state, read inside event
    *                    handlers/callbacks without forcing a re-bind
-   * crossfadeSecRef  : mirror of `crossfadeSec`, same reason */
+   * crossfadeSecRef  : crossfade length in seconds */
   const preloadedKeyRef = useRef(null);
   const handoffArmedRef = useRef(false);
   const transitionModeRef = useRef('off');
@@ -1988,16 +1262,6 @@ export default function App() {
   maybeStartHandoffRef.current = maybeStartHandoff;
 
   const handleNext = useCallback(() => {
-    // ── Sleep timer: end-of-track mode → pause instead of advancing ──
-    if (sleepModeRef.current === 'endOfTrack') {
-      const el = audioRef.current;
-      if (el) { try { el.pause(); el.currentTime = 0; } catch { /* */ } }
-      setIsPlaying(false);
-      setSleepMode('off');
-      setSleepEndsAt(null);
-      return;
-    }
-
     // Manual navigation cancels any in-flight transition and resets gains so
     // they don't get stuck mid-ramp; the load effect then hard-cuts normally.
     handoffArmedRef.current = false;
@@ -2019,20 +1283,6 @@ export default function App() {
         const inEl = inactiveAudioRef.current;
         if (inEl) { try { inEl.pause(); } catch { /* ignore */ } }
         setIsPlaying(false);
-        return;
-      }
-    }
-
-    // ── Sleep timer: end-of-album mode → check if next track's album differs ──
-    if (sleepModeRef.current === 'endOfAlbum') {
-      const curAlbum = (queue[currentIndex]?.album || '').trim().toLowerCase();
-      const nextAlbum = (queue[next]?.album || '').trim().toLowerCase();
-      if (curAlbum && nextAlbum !== curAlbum) {
-        const el = audioRef.current;
-        if (el) { try { el.pause(); el.currentTime = 0; } catch { /* */ } }
-        setIsPlaying(false);
-        setSleepMode('off');
-        setSleepEndsAt(null);
         return;
       }
     }
@@ -2418,22 +1668,6 @@ export default function App() {
     if (!hasEverPlayed) setHasEverPlayed(true);
   };
 
-  /** Pick a uniformly random track from the library and play it. The full
-   * library is seeded as the queue context so the user can hit "next" and
-   * keep going from a random point. Returns the track that was picked, or
-   * null if the library is empty.
-   *
-   * Note: this is a "true random" pick regardless of the user's `shuffleOn`
-   * setting — playTrack itself will then shuffle the queue if shuffle is on,
-   * which is fine since the user explicitly asked for randomness. */
-  const playRandomTrack = useCallback(() => {
-    if (!library.length) return null;
-    const t = library[Math.floor(Math.random() * library.length)];
-    if (!t) return null;
-    playTrack(t, library);
-    return t;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [library]);
 
   /**
    * Queue mutations — keep the current index pointed at the same track across
@@ -2472,27 +1706,6 @@ export default function App() {
     });
   }, [currentIndex, hasEverPlayed]);
 
-  /** Remove the track at `index` from the queue. */
-  const removeFromQueue = useCallback((index) => {
-    setQueue((prev) => {
-      if (index < 0 || index >= prev.length) return prev;
-      const next = prev.slice(0, index).concat(prev.slice(index + 1));
-      // Adjust current index:
-      //   · Removing a track BEFORE current → shift current back by 1
-      //   · Removing the CURRENT track → keep index in place, which now points
-      //     to what used to be the next track (natural "skip forward" behavior).
-      //     If we removed the last item, clamp to -1.
-      //   · Removing a track AFTER current → no change
-      if (index < currentIndex) {
-        setCurrentIndex((c) => c - 1);
-      } else if (index === currentIndex) {
-        if (next.length === 0) setCurrentIndex(-1);
-        else if (currentIndex >= next.length) setCurrentIndex(next.length - 1);
-        // else: stay put — new track at same index will play
-      }
-      return next;
-    });
-  }, [currentIndex]);
 
   /** Move the track at `from` to position `to` in the queue. */
   const reorderQueue = useCallback((from, to) => {
@@ -2514,34 +1727,8 @@ export default function App() {
     });
   }, [currentIndex]);
 
-  /** Drop every track from the queue except the one currently playing. */
-  const clearUpNext = useCallback(() => {
-    setQueue((prev) => {
-      if (currentIndex < 0 || !prev[currentIndex]) return [];
-      const kept = [prev[currentIndex]];
-      setCurrentIndex(0);
-      return kept;
-    });
-  }, [currentIndex]);
 
-  /** Jump to a specific index in the queue (used when user clicks a row in the queue UI). */
-  const jumpToQueueIndex = useCallback((index) => {
-    if (index < 0 || index >= queue.length) return;
-    setCurrentIndex(index);
-    if (!hasEverPlayed) setHasEverPlayed(true);
-  }, [queue.length, hasEverPlayed]);
 
-  const playPauseLibraryRow = (track, sortedList, context = 'list') => {
-    if (currentTrack?.id === track.id && isPlaying) {
-      audioRef.current?.pause();
-      return;
-    }
-    if (currentTrack?.id === track.id && !isPlaying) {
-      audioRef.current?.play()?.catch(() => {});
-      return;
-    }
-    playTrack(track, sortedList, context);
-  };
 
   const handleSpotifyImportDone = async (track) => {
     if (!window.electronAPI?.loadLibrary) return;
@@ -2777,10 +1964,6 @@ export default function App() {
     // re-anchor on their own; seekNonce covers user seeks within a song.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue[currentIndex]?.id, isPlaying, seekNonce, discordPresenceEnabled, effectiveDiscordAppId, discordPresenceDetail, discordHideWhenPaused]);
-
-  const handleSpotifyCredsSaved = () => {
-    setSpotifyCredsRefreshKey((k) => k + 1);
-  };
 
   /**
    * Clear the entire library. `deleteFiles=true` also trashes audio files the
@@ -3112,21 +2295,6 @@ export default function App() {
     } catch { /* ignore */ }
   }, [playEvents]);
 
-  // Reset stats — clears both DB and local mirror. Used by the Stats
-  // tab's reset action. After the DB call returns, we also zero
-  // playCount/lastPlayed in the in-memory library and empty the
-  // playEvents list so the UI updates instantly.
-  const resetAllStats = useCallback(async () => {
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.resetStats) return { ok: false, error: 'Not supported' };
-    const res = await api.resetStats();
-    if (res?.ok) {
-      setLibrary((lib) => lib.map((t) => ({ ...t, playCount: 0, lastPlayed: null })));
-      setPlayEvents([]);
-      try { window.localStorage.removeItem('immerse:playEvents'); } catch { /* ignore */ }
-    }
-    return res || { ok: false };
-  }, []);
 
   // Dedupe lock for the per-track "scrobble" threshold. Tracks whose id
   // is in this set have already had a play recorded in the current play
@@ -3448,13 +2616,6 @@ export default function App() {
     return r;
   };
 
-  const clearFollowedArtistOverride = async (artistName) => {
-    const api = window.electronAPI;
-    if (!api?.clearFollowedArtistOverride) return { ok: false };
-    const r = await api.clearFollowedArtistOverride(artistName);
-    if (r?.ok) await refreshOverrides();
-    return r;
-  };
 
   /* ---------- Playlist CRUD ---------- */
 
@@ -3591,23 +2752,7 @@ export default function App() {
     return r;
   };
 
-  const removeTracksFromPlaylist = async (playlistId, trackIds) => {
-    const api = window.electronAPI;
-    if (!api?.removeTracksFromPlaylist) return { ok: false, error: 'Not supported' };
-    const r = await api.removeTracksFromPlaylist(playlistId, trackIds || []);
-    if (r?.ok) await refreshPlaylists();
-    return r;
-  };
 
-  /** Load a playlist's ordered track objects (joins track IDs against library). */
-  const loadPlaylistTracks = async (playlistId) => {
-    const api = window.electronAPI;
-    if (!api?.loadPlaylistTrackIds) return [];
-    const ids = await api.loadPlaylistTrackIds(playlistId);
-    if (!Array.isArray(ids) || ids.length === 0) return [];
-    const libMap = new Map(libraryRef.current.map((t) => [t.id, t]));
-    return ids.map((id) => libMap.get(id)).filter(Boolean);
-  };
 
   const inElectron = typeof window !== 'undefined' && !!window.electronAPI;
   const uiFontStack = presetById(uiFontId).stack;
@@ -3692,7 +2837,6 @@ export default function App() {
         playEvents={playEvents}
         releases={visibleReleases}
         onSpotifyImportDone={handleSpotifyImportDone}
-        onSpotifyCredsSaved={handleSpotifyCredsSaved}
         transitionMode={transitionMode}
         onSetTransitionMode={setTransitionMode}
         onUpdateTrackMetadata={updateTrackMetadata}
@@ -3769,11 +2913,6 @@ export default function App() {
           data={whatsNewData}
           onClose={dismissWhatsNew}
         />
-      ) : null}
-      {/* Update history overlay — on-demand from Settings. Fetches the
-          full list of GitHub releases and lets users page through them. */}
-      {updateHistoryOpen ? (
-        <UpdateHistoryOverlay onClose={closeUpdateHistory} />
       ) : null}
       {/* Easter egg — fireflies drift across the window while "Fireflies"
           by Owl City plays. Pure decoration; pointer-events disabled so
@@ -4126,286 +3265,6 @@ function WhatsNewOverlay({ data, onClose }) {
   );
 }
 
-/**
- * UpdateHistoryOverlay — paged view of every GitHub release for the
- * repo. Triggered by Settings → "View all releases" button.
- *
- * Shape mirrors WhatsNewOverlay (same modal styling, same MarkdownLite
- * renderer) but adds prev/next arrow navigation along the bottom so
- * users can flip through releases without dismissing.
- *
- * Behavior:
- *   - Fetches all releases on mount. Shows a loading spinner until done.
- *   - Initial page is the FIRST release in the list (newest), which is
- *     usually the version the user is currently running.
- *   - Prev/Next arrows wrap around — clicking next on the last release
- *     loops to the first. Same for prev. (Disabling at the edges felt
- *     too restrictive for a small list.)
- *   - Page indicator at the bottom shows "N of M" + a row of dots so
- *     the user can see where they are in the timeline at a glance.
- *
- * Releases that pre-date the working auto-updater (v1.0.0 - v1.0.3 in
- * Immerse's case) are shown as-is. The user explicitly asked NOT to
- * filter them; this is meant to be a complete record.
- */
-function UpdateHistoryOverlay({ onClose }) {
-  const [releases, setReleases] = useState(null); // null = loading, [] = empty/error, [...] = loaded
-  const [error, setError] = useState('');
-  const [idx, setIdx] = useState(0);
-
-  useEffect(() => {
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.whatsnewFetchAllReleases) {
-      setError('Update history is only available in the desktop app.');
-      setReleases([]);
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await api.whatsnewFetchAllReleases();
-        if (cancelled) return;
-        if (r?.ok && Array.isArray(r.releases)) {
-          setReleases(r.releases);
-        } else {
-          setError(r?.error || 'Could not load release history.');
-          setReleases([]);
-        }
-      } catch (e) {
-        if (cancelled) return;
-        setError(String(e?.message || e));
-        setReleases([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Escape dismisses; left/right arrows navigate.
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') {
-        onClose?.();
-      } else if (e.key === 'ArrowRight' && Array.isArray(releases) && releases.length > 1) {
-        setIdx((i) => (i + 1) % releases.length);
-      } else if (e.key === 'ArrowLeft' && Array.isArray(releases) && releases.length > 1) {
-        setIdx((i) => (i - 1 + releases.length) % releases.length);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [releases, onClose]);
-
-  const current = Array.isArray(releases) && releases.length > 0 ? releases[idx] : null;
-  const dateLine = useMemo(() => {
-    if (!current?.publishedAt) return '';
-    try {
-      const d = new Date(current.publishedAt);
-      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-    } catch { return ''; }
-  }, [current]);
-
-  return (
-    <div
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        background: 'rgba(0,0,0,0.55)',
-        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 24,
-      }}
-    >
-      <div style={{
-        width: 'min(560px, 100%)',
-        maxHeight: 'calc(100vh - 80px)',
-        display: 'flex', flexDirection: 'column',
-        borderRadius: 18,
-        background: 'rgba(22, 22, 24, 0.88)',
-        backdropFilter: 'blur(40px) saturate(1.6)', WebkitBackdropFilter: 'blur(40px) saturate(1.6)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(29,185,84,0.12), inset 0 1px 0 rgba(255,255,255,0.06)',
-        overflow: 'hidden',
-      }}>
-        {/* Header */}
-        <div style={{
-          padding: '18px 22px 14px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'flex-start', gap: 14,
-        }}>
-          <div style={{
-            flexShrink: 0,
-            width: 38, height: 38,
-            borderRadius: 10,
-            background: 'rgba(29,185,84,0.16)',
-            border: '1px solid rgba(29,185,84,0.4)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 18,
-          }}>
-            <span aria-hidden style={{ color: '#1db954' }}>📜</span>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontSize: 10.5, letterSpacing: 0.6, textTransform: 'uppercase',
-              color: '#1db954', fontWeight: 700,
-            }}>
-              Update history
-            </div>
-            <div style={{
-              fontSize: 18, fontWeight: 600, color: '#fff',
-              marginTop: 2,
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>
-              {current?.name || (releases === null ? 'Loading…' : 'No releases')}
-              {current?.prerelease ? (
-                <span style={{
-                  marginLeft: 8, fontSize: 10, fontWeight: 700,
-                  padding: '2px 6px', borderRadius: 4,
-                  background: 'rgba(243,170,114,0.15)',
-                  color: 'rgba(243,170,114,0.95)',
-                  textTransform: 'uppercase', letterSpacing: 0.5,
-                  verticalAlign: 'middle',
-                }}>
-                  pre
-                </span>
-              ) : null}
-            </div>
-            {dateLine ? (
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
-                Released {dateLine}
-              </div>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              flexShrink: 0,
-              width: 28, height: 28,
-              borderRadius: 8,
-              border: '1px solid rgba(255,255,255,0.1)',
-              background: 'rgba(255,255,255,0.04)',
-              color: 'rgba(255,255,255,0.7)',
-              cursor: 'pointer',
-              fontSize: 14,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            ×
-          </button>
-        </div>
-
-        {/* Body */}
-        <div style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '14px 22px 18px',
-          fontSize: 12.5,
-          lineHeight: 1.65,
-          color: 'rgba(255,255,255,0.82)',
-        }}>
-          {releases === null ? (
-            <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.4)', fontSize: 11.5 }}>
-              Loading release history…
-            </div>
-          ) : error ? (
-            <div style={{
-              padding: '12px 14px', borderRadius: 8,
-              background: 'rgba(243,114,114,0.1)',
-              border: '1px solid rgba(243,114,114,0.25)',
-              color: '#f37272', fontSize: 11.5,
-            }}>
-              {error}
-            </div>
-          ) : releases.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 0', color: 'rgba(255,255,255,0.4)', fontSize: 11.5 }}>
-              No releases yet.
-            </div>
-          ) : !current?.body ? (
-            <div style={{
-              padding: '12px 14px', borderRadius: 8,
-              background: 'rgba(255,255,255,0.04)',
-              color: 'rgba(255,255,255,0.55)', fontSize: 11.5,
-              fontStyle: 'italic',
-            }}>
-              No release notes were written for this version.
-            </div>
-          ) : (
-            <MarkdownLite text={current.body} />
-          )}
-          {current?.url ? (
-            <a
-              href={current.url}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                display: 'inline-block', marginTop: 14,
-                fontSize: 11, color: 'rgba(255,255,255,0.45)',
-                borderBottom: '1px solid rgba(255,255,255,0.15)',
-                textDecoration: 'none',
-              }}
-            >
-              View on GitHub →
-            </a>
-          ) : null}
-        </div>
-
-        {/* Footer with prev/next paging */}
-        {Array.isArray(releases) && releases.length > 0 ? (
-          <div style={{
-            padding: '12px 16px 14px',
-            borderTop: '1px solid rgba(255,255,255,0.06)',
-            display: 'flex', alignItems: 'center', gap: 10,
-          }}>
-            <button
-              type="button"
-              onClick={() => setIdx((i) => (i - 1 + releases.length) % releases.length)}
-              disabled={releases.length <= 1}
-              aria-label="Previous release"
-              style={{
-                width: 32, height: 32, borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.04)',
-                color: releases.length <= 1 ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.8)',
-                fontSize: 14,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: releases.length <= 1 ? 'default' : 'pointer',
-              }}
-            >
-              ‹
-            </button>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-              {/* Dot row, with a numeric label so 30 dots aren't too dense to read */}
-              <div style={{
-                fontSize: 11, color: 'rgba(255,255,255,0.5)', fontVariantNumeric: 'tabular-nums',
-                minWidth: 50, textAlign: 'center',
-              }}>
-                {idx + 1} of {releases.length}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIdx((i) => (i + 1) % releases.length)}
-              disabled={releases.length <= 1}
-              aria-label="Next release"
-              style={{
-                width: 32, height: 32, borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.04)',
-                color: releases.length <= 1 ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.8)',
-                fontSize: 14,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: releases.length <= 1 ? 'default' : 'pointer',
-              }}
-            >
-              ›
-            </button>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 /**
  * MarkdownLite — minimal renderer for GitHub release-notes markdown.

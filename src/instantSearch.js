@@ -178,7 +178,7 @@ export function leadCredit(s) {
    removes the brackets these usually live in. */
 const VERSION_WORDS = /\b(live|remix|acoustic|instrumental|karaoke|demo|edit|radio edit|sped ?up|slowed|reverb|nightcore|cover|remaster(?:ed)?|extended|reprise|interlude|a ?cappella|8d|mashup)\b/i;
 
-export function versionTag(raw) {
+function versionTag(raw) {
   const m = VERSION_WORDS.exec(String(raw || ''));
   return m ? m[0].toLowerCase().replace(/\s+/g, ' ') : '';
 }
@@ -316,7 +316,7 @@ export function passesScopes(parsed, { artist = '', album = '', year = '', title
  * worse than a mediocre one you can, because when it puts the wrong thing
  * first you have no idea what to change.
  */
-export function textScore(query, candidate) {
+function textScore(query, candidate) {
   const q = normTitle(query);
   const c = normTitle(candidate);
   if (!q || !c) return 0;
@@ -469,7 +469,7 @@ export function slskQuality(ext, bitrate) {
   return { label: e ? e.toUpperCase() : '—', tier: 0 };
 }
 
-export function parseSlskName(filename) {
+function parseSlskName(filename) {
   const noExt = String(filename || '').replace(/\.[a-z0-9]{2,5}$/i, '');
   let s = noExt;
   s = s.replace(/^\s*[[(]\s*\d{1,3}\s*[\])]\s*[-._–]*\s*/, '');
@@ -484,7 +484,7 @@ export function parseSlskName(filename) {
 }
 
 /** Leading track number, if the peer put one there. Null when they didn't. */
-export function trackNumberFromName(filename) {
+function trackNumberFromName(filename) {
   const base = String(filename || '').replace(/\.[a-z0-9]{2,5}$/i, '');
   const m = /^\s*[[(]?\s*(\d{1,3})\s*[\])]?\s*(?:[-._–]|\s)/.exec(base);
   if (!m) return null;
@@ -572,7 +572,7 @@ const MATCH_FLOOR = 62;
  * function rather than logged — deliberately, since this runs per file per
  * track and is hot.
  */
-export function scoreFileForTrack(file, track, ctx = {}) {
+function scoreFileForTrack(file, track, ctx = {}) {
   const parsed = file._parsed || parseSlskName(file.filename);
   /* Which half of "Artist - Title" is the title depends on the whole result
      set, which groupSlskFiles already worked out; ctx.artistLead carries that
@@ -727,27 +727,6 @@ export function describeCoverage(coverage, folderCount = 0) {
  *  Release grouping
  * ------------------------------------------------------------------------- */
 
-/**
- * Split a discography into the buckets people actually think in.
- *
- * Spotify's album_group is authoritative for album vs single vs appears_on;
- * the EP call is ours, since Spotify has no EP type and files them as singles.
- * Three to six tracks and "EP" in the name is the convention that holds.
- */
-/**
- * A one-track "album" is a single, and a single is a song wearing album
- * chrome: opening it yields a tracklist of one row that the Songs section
- * already showed. Callers FILTER on this rather than demoting, because a
- * demotion still costs a slot on a thin result set — which is exactly when
- * a stray single is most annoying.
- *
- * Only an explicit count of 1 qualifies. A missing count is UNKNOWN, not
- * one, and treating 0 as a single would silently eat any provider that
- * doesn't report the field.
- */
-export function isLoneSingle(a) {
-  return (Number(a?.totalTracks) || 0) === 1;
-}
 /* Superseded by isSongSizedRelease below for every release-filtering caller.
    Kept exported because it answers a narrower, still-meaningful question:
    "is this EXACTLY one track", which is a different claim from "is this too

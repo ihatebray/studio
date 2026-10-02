@@ -190,7 +190,7 @@ function saveTokens(data, prev = {}) {
   return tok;
 }
 
-export function beginSignIn() {
+function beginSignIn() {
   teardown();
   const verifier = b64url(crypto.randomBytes(48));
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
@@ -310,7 +310,7 @@ const CLIENT_SEMVER = '1.2.52.442';
 const PATHFINDER_APP_VERSION = '896000000';
 
 /* ---- minimal protobuf ---- */
-export function varint(n) {
+function varint(n) {
   const out = [];
   let v = BigInt(n);
   if (v < 0n) v = BigInt.asUintN(64, v);
@@ -323,16 +323,16 @@ export function varint(n) {
   return Buffer.from(out);
 }
 const pbKey = (field, wire) => varint((field << 3) | wire);
-export const pbInt = (field, n) => Buffer.concat([pbKey(field, 0), varint(n)]);
+const pbInt = (field, n) => Buffer.concat([pbKey(field, 0), varint(n)]);
 const pbBool = (field, b) => pbInt(field, b ? 1 : 0);
 const pbBytes = (field, buf) => Buffer.concat([pbKey(field, 2), varint(buf.length), buf]);
-export const pbStr = (field, str) => pbBytes(field, Buffer.from(String(str), 'utf8'));
-export const pbMsg = (field, ...parts) => pbBytes(field, Buffer.concat(parts));
+const pbStr = (field, str) => pbBytes(field, Buffer.from(String(str), 'utf8'));
+const pbMsg = (field, ...parts) => pbBytes(field, Buffer.concat(parts));
 
 /** Decodes one message level into { field: [values] }. Length-delimited
  *  values stay Buffers; the caller decides what's a string and what's a
  *  nested message. */
-export function pbDecode(buf) {
+function pbDecode(buf) {
   const out = {};
   let i = 0;
   const readVarint = () => {
@@ -360,7 +360,7 @@ export function pbDecode(buf) {
 }
 const pbFirst = (msg, f) => (msg[f] ? msg[f][0] : undefined);
 
-export function platformData() {
+function platformData() {
   const osmod = typeof process.getSystemVersion === 'function' ? process.getSystemVersion() : os.release();
   if (process.platform === 'win32') {
     const build = Number(String(os.release()).split('.')[2]) || 21370;
@@ -381,7 +381,7 @@ export function platformData() {
 /* Hash cash, as librespot's util::solve_hash_cash: SHA-1 of an empty context
    seeds the counter; find a 16-byte suffix whose SHA-1 with the prefix ends in
    `length` zero bits (read as a big-endian i64 from bytes 12..20). */
-export function solveHashCash(prefixHex, length) {
+function solveHashCash(prefixHex, length) {
   const prefix = Buffer.from(prefixHex, 'hex');
   const md0 = crypto.createHash('sha1').update(Buffer.alloc(0)).digest();
   const target = md0.readBigInt64BE(12);
@@ -474,7 +474,7 @@ async function text(url) {
   return res.text();
 }
 
-export function hashIn(js, op, kind) {
+function hashIn(js, op, kind) {
   const marker = `"${op}","${kind}","`;
   const at = js.indexOf(marker);
   if (at < 0) return null;
@@ -486,7 +486,7 @@ export function hashIn(js, op, kind) {
    queries live in lazily-loaded ones. The runtime builds chunk URLs from two
    object literals — id → name and id → content hash — so both are read out
    of the entry bundle and every chunk URL reconstructed from them. */
-export function chunkUrls(entryJs, base) {
+function chunkUrls(entryJs, base) {
   const out = new Set();
   const m = /\.u=\w+=>\(?\(?(\{[^{}]*\})\[\w+\]\|\|\w+\)\+"\."\+(\{[^{}]*\})\[\w+\]\+"\.js"/.exec(entryJs);
   if (!m) return [];
@@ -697,7 +697,7 @@ export function webApiRateLimit() {
   return webApiBlockedUntil > Date.now() ? { until: webApiBlockedUntil } : null;
 }
 
-export async function webApi(p, attempt = 0, method = 'GET') {
+async function webApi(p, attempt = 0, method = 'GET') {
   if (webApiBlockedUntil > Date.now()) throw rateLimited((webApiBlockedUntil - Date.now()) / 1000);
   const token = await accessToken();
   const res = await fetch(p.startsWith('http') ? p : `${WEB_API}${p}`, {
@@ -795,7 +795,7 @@ function shapeTrack(t) {
 
 /* ------------------------------------------------------------ public API */
 
-export async function artistOverview(artistId) {
+async function artistOverview(artistId) {
   const data = await query('queryArtistOverview', {
     uri: `spotify:artist:${artistId}`, locale: '', includePrerelease: true, preReleaseV2: true,
   });
@@ -835,7 +835,7 @@ export async function artistOverview(artistId) {
    the artist page shows above the fold (Sonora loads the rest separately for
    the same reason), so the complete list comes from the catalogue endpoint,
    with the same signed-in token. Newest first within each group. */
-export async function artistDiscography(artistId) {
+async function artistDiscography(artistId) {
   const out = [];
   let next = `/artists/${encodeURIComponent(artistId)}/albums?include_groups=album,single,compilation,appears_on&limit=50&market=from_token`;
   while (next && out.length < 400) {
@@ -892,26 +892,7 @@ export async function albumTracks(albumId) {
   return { album, artists: albumArtists, albumArtUrl, tracks };
 }
 
-export async function albumPlaycounts(albumId) {
-  const out = [];
-  for (let offset = 0; offset < 500; offset += 50) {
-    const data = await query('getAlbum', { uri: `spotify:album:${albumId}`, locale: '', offset, limit: 50 });
-    const a = data?.albumUnion;
-    const items = a?.tracksV2?.items || a?.tracks?.items || [];
-    for (const it of items) {
-      const t = it?.track;
-      if (t) out.push({ spotifyId: idOf(t.uri), title: t.name, trackNumber: t.trackNumber, playcount: num(t.playcount) });
-    }
-    const total = a?.tracksV2?.totalCount || a?.tracks?.totalCount || 0;
-    if (!items.length || offset + items.length >= total) break;
-  }
-  return out;
-}
 
-export async function trackPlaycount(trackId) {
-  const data = await query('getTrack', { uri: `spotify:track:${trackId}` });
-  return num(data?.trackUnion?.playcount);
-}
 
 /* Catalogue search through the signed-in account, in the exact shapes
    spotifyClient's search functions return, so main.js can use it as a
@@ -1142,21 +1123,6 @@ export async function homeFeed() {
   return { recents, shelves };
 }
 
-/** One home shelf by its section uri (spotify:section:…), as a list of
- *  cards. The response is read loosely: the first list of section items in
- *  it, wherever Spotify put it. */
-export async function homeSectionItems(uri) {
-  const data = await query('homeSection', {
-    uri, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', sp_t: '', limit: 20, offset: 0,
-  });
-  const find = (node, depth = 0) => {
-    if (!node || typeof node !== 'object' || depth > 8) return null;
-    if (Array.isArray(node?.sectionItems?.items)) return node.sectionItems.items;
-    for (const v of Object.values(node)) { const hit = find(v, depth + 1); if (hit) return hit; }
-    return null;
-  };
-  return (find(data) || []).map((it) => libraryCard(it?.uri, it?.content?.data)).filter(cardOk);
-}
 
 /** A browse page's shelves (`spotify:page:<id>`), as home shelves:
  *  [{ title, items }]. Made For You is one: Daily Mixes, Discover Weekly,
@@ -1310,62 +1276,7 @@ export async function findArtist(name) {
 
 /* ---- the signed-in user's own Spotify ---- */
 
-const libTrack = (t, addedAt) => (t ? {
-  spotifyId: t.id,
-  title: t.name,
-  artists: (t.artists || []).map((a) => a.name).join(', '),
-  artistIds: (t.artists || []).map((a) => a.id),
-  album: t.album?.name || '',
-  albumId: t.album?.id || null,
-  albumArtUrl: t.album?.images?.[1]?.url || t.album?.images?.[0]?.url || null,
-  durationMs: t.duration_ms,
-  explicit: !!t.explicit,
-  addedAt: addedAt || null,
-} : null);
 
-export async function myLibrary(kind) {
-  switch (kind) {
-    case 'liked': {
-      const rows = await paged('/me/tracks?limit=50');
-      return rows.map((r) => libTrack(r.track, r.added_at)).filter(Boolean);
-    }
-    case 'albums': {
-      const rows = await paged('/me/albums?limit=50', 1000);
-      return rows.map((r) => r.album && ({
-        albumId: r.album.id, name: r.album.name,
-        artists: (r.album.artists || []).map((a) => a.name).join(', '),
-        albumArtUrl: r.album.images?.[1]?.url || r.album.images?.[0]?.url || null,
-        releaseDate: r.album.release_date, totalTracks: r.album.total_tracks, addedAt: r.added_at,
-      })).filter(Boolean);
-    }
-    case 'artists': {
-      const out = [];
-      let next = '/me/following?type=artist&limit=50';
-      while (next && out.length < 1000) {
-        const p = await webApi(next);
-        out.push(...(p.artists?.items || []));
-        next = p.artists?.next || null;
-      }
-      return out.map((a) => ({ id: a.id, name: a.name, image: a.images?.[1]?.url || a.images?.[0]?.url || null, genres: a.genres || [] }));
-    }
-    case 'top': {
-      const [artists, tracks] = await Promise.all([
-        webApi('/me/top/artists?limit=20&time_range=short_term'),
-        webApi('/me/top/tracks?limit=20&time_range=short_term'),
-      ]);
-      return {
-        artists: (artists.items || []).map((a) => ({ id: a.id, name: a.name, image: a.images?.[1]?.url || a.images?.[0]?.url || null })),
-        tracks: (tracks.items || []).map((t) => libTrack(t)).filter(Boolean),
-      };
-    }
-    case 'recent': {
-      const p = await webApi('/me/player/recently-played?limit=50');
-      return (p.items || []).map((r) => ({ ...libTrack(r.track), playedAt: r.played_at })).filter((x) => x.spotifyId);
-    }
-    default:
-      throw new StepError('webapi', `unknown library kind ${kind}`);
-  }
-}
 
 /* Walks every step on a known artist and reports where it stops. Settings
    calls this so "it doesn't work" comes with a reason. */
@@ -1427,7 +1338,6 @@ export function registerSpotifyPartnerIpc(ipcMain) {
   ipcMain.handle('spotifyPartner:diagnose', wrap(diagnose));
   ipcMain.handle('spotifyPartner:artist', wrap(cachedOverview));
   ipcMain.handle('spotifyPartner:findArtist', wrap(findArtist));
-  ipcMain.handle('spotifyPartner:albumPlays', wrap(albumPlaycounts));
   ipcMain.handle('spotifyPartner:discography', wrap(async (id) => {
     const hit = discogCache.get(id);
     if (hit && Date.now() - hit.at < 60 * 60 * 1000) return hit.data;
@@ -1447,7 +1357,4 @@ export function registerSpotifyPartnerIpc(ipcMain) {
     discogCache.set(id, { at: Date.now(), data });
     return data;
   }));
-  ipcMain.handle('spotifyPartner:trackPlays', wrap(trackPlaycount));
-  ipcMain.handle('spotifyPartner:topTracks', wrap(artistTopTracks));
-  ipcMain.handle('spotifyPartner:library', wrap(myLibrary));
 }

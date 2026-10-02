@@ -53,7 +53,7 @@ export function unfollow(id) {
    left out here (New Releases filters them itself, with no re-check). */
 const hiddenFile = () => path.join(app.getPath('userData'), 'studio-follows-hidden.json');
 let hiddenCache = null;
-export function listHidden() {
+function listHidden() {
   if (hiddenCache) return hiddenCache;
   try {
     const v = JSON.parse(fs.readFileSync(hiddenFile(), 'utf8'));

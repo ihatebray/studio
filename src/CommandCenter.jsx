@@ -190,19 +190,8 @@ export default function CommandCenter({
     const id = setTimeout(() => librarySearchRef.current?.focus(), 60);
     return () => clearTimeout(id);
   }, [cardTab, libraryOpen]);
-  // Centered mode has no ghost flight to cover the card's exit — keep the
-  // card mounted briefly so its Out animation can play. Rail mode needs the
-  // same thing: it used to stay mounted only because a cover ghost happened
-  // to exist, so any close without a ghost (or with a failed measurement)
-  // yanked the card out of the DOM with no exit at all. cardExiting now owns
-  // the exit in BOTH modes — the ghost is irrelevant to it.
-  const [cardExiting, setCardExiting] = useState(false);
   const cardExitTimerRef = useRef(null);
   useEffect(() => () => { if (cardExitTimerRef.current) clearTimeout(cardExitTimerRef.current); }, []);
-  // The close choreography, in reverse order of the entrance (which goes
-  // card → menu → icons). Everything lands at 420ms, exactly when the
-  // artwork touches back down in the center.
-  const CARD_EXIT_MS = 260;
 
   // --- Movable command center ------------------------------------------
   // The card can be dragged anywhere on screen by its grip strip; the

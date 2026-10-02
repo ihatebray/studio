@@ -13,12 +13,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   discordSetActivity: (payload) => ipcRenderer.invoke('discord:setActivity', payload),
   discordStatus: () => ipcRenderer.invoke('discord:status'),
 
-  // Stream overlay (OBS browser source)
-  twitchOverlayStart: () => ipcRenderer.invoke('twitch:start'),
-  twitchOverlayStop: () => ipcRenderer.invoke('twitch:stop'),
-  twitchOverlayStatus: () => ipcRenderer.invoke('twitch:status'),
-  twitchSetOptions: (opts) => ipcRenderer.invoke('twitch:setOptions', opts),
-  twitchSetNowPlaying: (payload) => ipcRenderer.invoke('twitch:setNowPlaying', payload),
   discordLookupArtwork: (query) => ipcRenderer.invoke('discord:lookupArtwork', query),
   discordResolveCoverUrl: (args) => ipcRenderer.invoke('discord:resolveCoverUrl', args),
   getMetadata: (filePath) => ipcRenderer.invoke('file:getMetadata', filePath),
@@ -33,7 +27,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadAlbumCovers: () => ipcRenderer.invoke('albumCovers:load'),
   setAlbumCoverUrl: (albumKey, url) => ipcRenderer.invoke('albumCovers:set', { albumKey, url }),
   setAlbumCoversBulk: (entries) => ipcRenderer.invoke('albumCovers:setBulk', { entries }),
-  clearAlbumCover: (albumKey) => ipcRenderer.invoke('albumCovers:clear', { albumKey }),
   setTrackFavorite: (id, isFavorite) => ipcRenderer.invoke('library:setFavorite', { id, isFavorite }),
   recordTrackPlay: (id, listenedMs = null) => ipcRenderer.invoke('library:recordPlay', { id, listenedMs }),
   /** Refine a play event once the real listening time for it is known. */
@@ -43,19 +36,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getStatsHealth: () => ipcRenderer.invoke('library:statsHealth'),
   /** Composition of the library — counts, decades, genres, single-track artists. */
   getLibraryOverview: () => ipcRenderer.invoke('library:overview'),
-  resetStats: () => ipcRenderer.invoke('library:resetStats'),
-  rescanMetadata: () => ipcRenderer.invoke('library:rescanMetadata'),
   refetchTrackMetadata: (trackId) => ipcRenderer.invoke('library:refetchTrackMetadata', trackId),
   /** The library changed in the background (missing details filled in). */
   onLibraryChanged: (cb) => {
     const listener = (_event, payload) => cb(payload);
     ipcRenderer.on('library:changed', listener);
     return () => ipcRenderer.removeListener('library:changed', listener);
-  },
-  onRescanProgress: (cb) => {
-    const listener = (_event, payload) => cb(payload);
-    ipcRenderer.on('library:rescanProgress', listener);
-    return () => ipcRenderer.removeListener('library:rescanProgress', listener);
   },
   loadPlaylists: () => ipcRenderer.invoke('playlists:load'),
   loadPlaylistTrackIds: (playlistId) => ipcRenderer.invoke('playlists:loadTrackIds', playlistId),
@@ -66,25 +52,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   renamePlaylist: (id, name) => ipcRenderer.invoke('playlists:rename', { id, name }),
   removeTrackFromPlaylist: (playlistId, trackId) => ipcRenderer.invoke('playlists:removeTrack', { playlistId, trackId }),
   removeTracksFromPlaylist: (playlistId, trackIds) => ipcRenderer.invoke('playlists:removeTracks', { playlistId, trackIds }),
-  toolsGetState: () => ipcRenderer.invoke('tools:getState'),
   spotifyGetCredsState: () => ipcRenderer.invoke('spotify:credsState'),
-  spotifyGetCredentials: () => ipcRenderer.invoke('spotify:getCreds'),
   spotifySetCredentials: (creds) => ipcRenderer.invoke('spotify:setCreds', creds),
   spotifySearch: (query) => ipcRenderer.invoke('spotify:search', query),
   spotifySearchAlbums: (query) => ipcRenderer.invoke('spotify:searchAlbums', query),
   spotifyGetAlbumTracks: (albumId) => ipcRenderer.invoke('spotify:albumTracks', albumId),
-  albumResolveMissing: (params) => ipcRenderer.invoke('album:resolveMissing', params),
-  albumConfirmLink: (params) => ipcRenderer.invoke('album:confirmLink', params),
   // Spotify user OAuth (PKCE). Used for reading playlist contents,
   // which client-credentials apps can't do as of Nov 2024.
   spotifyBeginUserAuth: () => ipcRenderer.invoke('spotify:beginUserAuth'),
   spotifyUserAuthState: () => ipcRenderer.invoke('spotify:userAuthState'),
-  spotifyDisconnectUser: () => ipcRenderer.invoke('spotify:disconnectUser'),
   spotifyGetMyPlaylists: () => ipcRenderer.invoke('spotify:getMyPlaylists'),
-  // Auto-updater
-  updateCheckNow: () => ipcRenderer.invoke('update:checkNow'),
   updateInstall: () => ipcRenderer.invoke('update:install'),
-  updateGetStatus: () => ipcRenderer.invoke('update:getStatus'),
   onUpdateStatus: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('update:status', listener);
@@ -98,7 +76,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   whatsnewGetLastSeen: () => ipcRenderer.invoke('whatsnew:getLastSeen'),
   whatsnewSetLastSeen: (version) => ipcRenderer.invoke('whatsnew:setLastSeen', version),
   whatsnewFetchReleaseNotes: (version) => ipcRenderer.invoke('whatsnew:fetchReleaseNotes', version),
-  whatsnewFetchAllReleases: () => ipcRenderer.invoke('whatsnew:fetchAllReleases'),
   /* Behind-the-scenes problems from main (notices.js): rate limits,
      fallbacks, the playback helper. { key, kind, title, detail, source, at } */
   onAppNotice: (cb) => {
@@ -106,15 +83,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:notice', listener);
     return () => ipcRenderer.removeListener('app:notice', listener);
   },
-  // Metadata provider switch notice (Spotify → iTunes fallback)
-  onMetadataProviderSwitched: (cb) => {
-    const listener = (_event, payload) => cb(payload);
-    ipcRenderer.on('metadata:providerSwitched', listener);
-    return () => ipcRenderer.removeListener('metadata:providerSwitched', listener);
-  },
-  // First-run tutorial flag
-  tutorialGetSeen: () => ipcRenderer.invoke('tutorial:getSeen'),
-  tutorialSetSeen: (seen) => ipcRenderer.invoke('tutorial:setSeen', seen),
   onSpotifyUserAuthChanged: (cb) => {
     const listener = (_event, payload) => cb(payload);
     ipcRenderer.on('spotify:userAuthChanged', listener);
@@ -122,7 +90,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // Soulseek
   soulseekGetCredsState: () => ipcRenderer.invoke('soulseek:credsState'),
-  soulseekGetCredentials: () => ipcRenderer.invoke('soulseek:getCreds'),
   soulseekSetCredentials: (creds) => ipcRenderer.invoke('soulseek:setCreds', creds),
   soulseekStatus: () => ipcRenderer.invoke('soulseek:status'),
   soulseekTest: () => ipcRenderer.invoke('soulseek:test'),
@@ -131,7 +98,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   soulseekDownload: (params) => ipcRenderer.invoke('soulseek:download', params),
   soulseekDownloadAlbum: (params) => ipcRenderer.invoke('soulseek:downloadAlbum', params),
   soulseekCancelDownload: (id) => ipcRenderer.invoke('soulseek:cancelDownload', id),
-  soulseekFetchAlbumArt: (queries) => ipcRenderer.invoke('soulseek:fetchAlbumArt', queries),
   // Playlist import
   spotifyFetchPlaylist: (input) => ipcRenderer.invoke('spotify:fetchPlaylist', input),
   playlistDetectConflicts: (tracks) => ipcRenderer.invoke('playlist:detectConflicts', tracks),
@@ -159,7 +125,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /* Get is now Save: every caller that used to download through YouTube
      adds a streamed library row and hearts the track on Spotify instead. */
   importFromYoutubeSearch: (meta) => ipcRenderer.invoke('library:saveSpotify', meta),
-  spotifySaveTrack: (meta) => ipcRenderer.invoke('library:saveSpotify', meta),
   importFromYoutubeId: ({ videoId, meta }) => ipcRenderer.invoke('import:fromYoutubeId', { videoId, meta }),
   searchYoutubeCandidates: (params) => ipcRenderer.invoke('youtube:searchCandidates', params),
   geniusCredits: (params) => ipcRenderer.invoke('genius:credits', params),
@@ -177,9 +142,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyPartnerDiagnose: () => ipcRenderer.invoke('spotifyPartner:diagnose'),
   spotifyPartnerArtist: (id) => ipcRenderer.invoke('spotifyPartner:artist', id),
   spotifyPartnerFindArtist: (name) => ipcRenderer.invoke('spotifyPartner:findArtist', name),
-  spotifyPartnerAlbumPlays: (id) => ipcRenderer.invoke('spotifyPartner:albumPlays', id),
   spotifyPartnerDiscography: (id) => ipcRenderer.invoke('spotifyPartner:discography', id),
-  spotifyPartnerTopTracks: (id) => ipcRenderer.invoke('spotifyPartner:topTracks', id),
   previewResolve: (track) => ipcRenderer.invoke('preview:resolve', track),
   /* Spotify playback (studio-spotify helper). Control only — audio never
      comes through here; the helper plays to the sound card itself. */
@@ -198,8 +161,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('spotifyPlayer:event', listener);
     return () => ipcRenderer.removeListener('spotifyPlayer:event', listener);
   },
-  spotifyPartnerTrackPlays: (id) => ipcRenderer.invoke('spotifyPartner:trackPlays', id),
-  spotifyPartnerLibrary: (kind) => ipcRenderer.invoke('spotifyPartner:library', kind),
   /* My Spotify pages (spotifyFeed.js). Each resolves { ok, data | error }. */
   spotifyFeedPeek: (key) => ipcRenderer.invoke('spotifyFeed:peek', key),
   spotifyFeedHome: (force) => ipcRenderer.invoke('spotifyFeed:home', force),
@@ -236,16 +197,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchAllLyrics: (params) => ipcRenderer.invoke('lyrics:searchAll', params),
   loadCachedReleases: () => ipcRenderer.invoke('releases:loadCached'),
   refreshReleases: (artistNames, mode) => ipcRenderer.invoke('releases:refresh', { artistNames, mode }),
-  getReleasesDebug: () => ipcRenderer.invoke('releases:getDebug'),
   loadReleaseOverrides: () => ipcRenderer.invoke('releases:loadOverrides'),
   addFollowedArtist: (artistName, itunesArtistId) => ipcRenderer.invoke('releases:addArtist', artistName, itunesArtistId),
   excludeFollowedArtist: (artistName) => ipcRenderer.invoke('releases:excludeArtist', artistName),
   clearFollowedArtistOverride: (artistName) => ipcRenderer.invoke('releases:clearOverride', artistName),
   lookupReleaseAlbumTracks: (collectionId) => ipcRenderer.invoke('releases:lookupAlbumTracks', collectionId),
-  // Apple charts (home) + follow-artist picker search
-  fetchCharts: () => ipcRenderer.invoke('charts:fetch'),
-  lookupChartSong: (id) => ipcRenderer.invoke('charts:lookupSong', id),
-  searchArtistCandidates: (q) => ipcRenderer.invoke('artists:searchCandidates', q),
   /** Wide, landscape header art for an artist page. Spotify's API only has
       the square avatar, so this comes from TheAudioDB. Resolves to null when
       the artist isn't covered — callers fall back to the avatar. */
@@ -257,9 +213,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Real artist portraits for a batch of names. Cached and throttled in the
       main process — safe to call with every artist on screen. */
   artistImages: (names) => ipcRenderer.invoke('artists:images', names),
-  /** Per-cover colour overrides — one click beats a better algorithm. */
-  /** Where the sampled cover lives, so the tuning lab can load the same file. */
-  resolveCoverPath: (url) => ipcRenderer.invoke('covers:resolvePath', url),
   /** Write the exact sampled bytes to Downloads (or a custom dir), embedded artwork included. */
   exportCover: (url, name, dir) => ipcRenderer.invoke('covers:export', { url, name, dir }),
   /** Open a Save As dialog to pick where to export the cover art. */
@@ -273,17 +226,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadArtistHeaders: () => ipcRenderer.invoke('artistHeaders:load'),
   setArtistHeader: (artistKey, fields) => ipcRenderer.invoke('artistHeaders:set', { artistKey, ...fields }),
   clearArtistHeader: (artistKey) => ipcRenderer.invoke('artistHeaders:clear', { artistKey }),
-  getArtistInfo: (artists) => ipcRenderer.invoke('artists:info', artists),
-  minimize: () => ipcRenderer.send('window:minimize'),
-  maximize: () => ipcRenderer.send('window:maximize'),
   fullscreen: () => ipcRenderer.send('window:fullscreen'),
-  isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
-  onFullscreenChanged: (cb) => {
-    // Returns an unsubscribe function so the React effect can clean up
-    // on unmount without leaking ipcRenderer listeners.
-    const handler = (_evt, isFs) => cb(!!isFs);
-    ipcRenderer.on('window:fullscreenChanged', handler);
-    return () => ipcRenderer.removeListener('window:fullscreenChanged', handler);
-  },
   close: () => ipcRenderer.send('window:close'),
 });

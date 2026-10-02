@@ -231,14 +231,6 @@ export default function StudioShell({
   const { accent, wash, mid } = themeRgb;
   const coverUrl = currentTrack?.coverArt || null;
 
-  // Keep the OBS/Twitch overlay's accent in sync with the playing cover —
-  // cheap no-op when the overlay server isn't running (ported behaviour).
-  useEffect(() => {
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!api?.twitchSetOptions || !accent) return;
-    api.twitchSetOptions({ accent }).catch(() => { /* ignore */ });
-  }, [accent]);
-
   /* ---------- Lyrics (ported verbatim from ImmersiveLibraryPage) --------- */
   const [lyricsData, setLyricsData] = useState(null); // { synced, plain, instrumental }
   const [lyricsTrackId, setLyricsTrackId] = useState(null);

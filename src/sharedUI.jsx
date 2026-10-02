@@ -339,34 +339,6 @@ function ExplicitBadge() {
 }
 
 
-function GhostBtn({ children, onClick, title, active, size = 36 }) {
-  const [hov, setHov] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={title}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
-      style={{
-        width: size, height: size, borderRadius: '50%', border: 'none', background: 'transparent',
-        color: active ? '#fff' : hov ? '#fff' : 'rgba(255,255,255,0.65)',
-        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        position: 'relative', padding: 0, transition: 'color 0.16s',
-      }}
-    >
-      {active ? (
-        <span
-          aria-hidden
-          style={{
-            position: 'absolute', bottom: 2, width: 3, height: 3, borderRadius: '50%', background: '#fff',
-          }}
-        />
-      ) : null}
-      {children}
-    </button>
-  );
-}
 
 /** Skip button (prev/next) — thin line icon, just brightens on hover. */
 function MediaSkipBtn({ children, onClick, title }) {
@@ -423,34 +395,6 @@ function MediaPlayPauseBtn({ onClick, isPlaying }) {
   );
 }
 
-/** Toggle button (shuffle/repeat) — bare icon with active dot under it. */
-function MediaToggleBtn({ children, onClick, title, active }) {
-  const [hov, setHov] = useState(false);
-  return (
-    <Tooltip label={title} side="top">
-      <button type="button" onClick={onClick} aria-label={title}
-        onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-        style={{
-          width: 32, height: 40, border: 'none', background: 'transparent',
-          color: active ? '#fff' : hov ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.55)',
-          cursor: 'pointer', padding: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'color 0.2s',
-          position: 'relative',
-        }}>
-        {children}
-        {/* Active dot indicator below icon */}
-        {active ? (
-          <span aria-hidden style={{
-            position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)',
-            width: 3, height: 3, borderRadius: '50%',
-            background: '#fff',
-          }} />
-        ) : null}
-      </button>
-    </Tooltip>
-  );
-}
 
 /**
  * ImmerseTooltipLayer — a single app-wide layer that replaces EVERY native
@@ -838,7 +782,7 @@ function VideoPicker({ open, meta, seed = null, accent = '150,150,150', onClose,
   );
 }
 
-export { Tooltip, HeartSlider, ExplicitBadge, GhostBtn, MediaSkipBtn, MediaPlayPauseBtn, MediaToggleBtn, ImmerseTooltipLayer, DownloadProgressBar, useDownloadProgress, VideoPicker };
+export { HeartSlider, ExplicitBadge, MediaSkipBtn, MediaPlayPauseBtn, ImmerseTooltipLayer, DownloadProgressBar, useDownloadProgress, VideoPicker };
 
 /**
  * The play triangle, with the corners rounded.

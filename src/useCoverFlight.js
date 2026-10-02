@@ -34,8 +34,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
  *  The caller owns both refs and the open flag; this owns only the ghost.
  * ========================================================================= */
 
-export const FLIGHT_MS = 420;
-export const FLIGHT_EASE = 'cubic-bezier(0.3, 0.7, 0.25, 1)';
+const FLIGHT_MS = 420;
+const FLIGHT_EASE = 'cubic-bezier(0.3, 0.7, 0.25, 1)';
 const SETTLE_MS = 190;
 /* Drift under this many px is left alone. The settle hop exists for the case
  * where the destination genuinely moved (a dragged card), not for rounding

@@ -17,10 +17,10 @@ import { itunesCrossCheck } from './itunesClient.js';
 import { helperTracks, helperLike } from './spotifyPlayer.js';
 import { upsertTracks, idsForFilePaths, loadAllTracks } from './libraryDb.js';
 
-export const SPOTIFY_PATH_PREFIX = 'spotify:track:';
+const SPOTIFY_PATH_PREFIX = 'spotify:track:';
 
 export const isStreamedPath = (p) => typeof p === 'string' && p.startsWith(SPOTIFY_PATH_PREFIX);
-export const streamedPathFor = (id) => `${SPOTIFY_PATH_PREFIX}${id}`;
+const streamedPathFor = (id) => `${SPOTIFY_PATH_PREFIX}${id}`;
 
 const realId = (id) => {
   const s = String(id || '').trim();
@@ -159,7 +159,7 @@ async function rowFor(meta) {
  * so a Spotify refusal (rate limit, an old sign-in without the permission)
  * still leaves the track saved, and is reported as `likeError`.
  */
-export async function saveSpotifyTracks(metas) {
+async function saveSpotifyTracks(metas) {
   const why = notReady();
   if (why) return { ok: false, error: why, tracks: [], failed: [] };
 

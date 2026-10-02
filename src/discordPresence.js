@@ -75,7 +75,6 @@ let client = null;          // active RPC.Client instance, or null
 let currentAppId = null;    // appId of the active client
 let isReady = false;        // true once Discord has acknowledged the handshake
 let pendingActivity = null; // latest activity stashed for next ready/connect (coalesced)
-let lastSentActivity = null;// last activity we successfully sent
 let lastError = null;       // last reported error, for the renderer to query
 let invalidAppIdMarker = null; // appId we've confirmed is invalid
 
@@ -252,7 +251,6 @@ async function disconnect() {
   currentAppId = null;
   isReady = false;
   pendingActivity = null;
-  lastSentActivity = null;
   lastError = null;
   return { ok: true };
 }
@@ -269,13 +267,8 @@ async function applyActivity(activity) {
       const preview = li.length > 80 ? `${li.slice(0, 77)}...` : li;
       console.log(`[discord] sending activity: large_image=${preview} (${li.length} chars), details="${activity.details}"`);
     }
-    if (activity === null) {
-      await client.clearActivity();
-      lastSentActivity = null;
-    } else {
-      await client.setActivity(activity);
-      lastSentActivity = activity;
-    }
+    if (activity === null) await client.clearActivity();
+    else await client.setActivity(activity);
     return { ok: true };
   } catch (e) {
     lastError = String(e?.message || e);

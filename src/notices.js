@@ -31,10 +31,6 @@ export function notice({ key, kind = 'warning', title, detail = '', source = '',
   }
 }
 
-/** Let a situation be noticed again straight away (it cleared, then recurred). */
-export function resetNotice(key) {
-  lastSent.delete(key);
-}
 
 /** "about 3 minutes", "about 2 hours" */
 export function waitWords(sec) {

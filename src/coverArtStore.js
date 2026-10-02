@@ -229,16 +229,3 @@ export async function storeCoverFromUrl(url) {
   return job;
 }
 
-/**
- * Canonicalise any cover value: data: URIs and http(s) URLs both come back as
- * studio-cover:// where possible. The single entry point callers should use
- * when they can await.
- */
-export async function canonicalCoverUrl(input) {
-  if (typeof input !== 'string' || !input.trim()) return null;
-  const u = input.trim();
-  if (u.startsWith('studio-cover://')) return u;
-  if (u.startsWith('data:image/')) return storeCoverFromDataUri(u);
-  if (/^https?:\/\//i.test(u)) return storeCoverFromUrl(u);
-  return null;
-}

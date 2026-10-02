@@ -85,7 +85,7 @@ export function useNotices() {
 
 /** Ask the top bar to open the notifications panel (a toast was clicked). */
 export const OPEN_NOTICES_EVENT = 'studio:open-notices';
-export function openNotices() {
+function openNotices() {
   try { window.dispatchEvent(new Event(OPEN_NOTICES_EVENT)); } catch { /* ignore */ }
 }
 
@@ -167,7 +167,7 @@ export function useToastBus() {
 
 const POS_KEY = 'studio:toastPosition';
 
-export const TOAST_POSITIONS = [
+const TOAST_POSITIONS = [
   { id: 'lane', name: 'Own lane', note: 'The page makes room above the player; covers nothing' },
   { id: 'player', name: 'In the player bar', note: 'Over the song info for a moment' },
   { id: 'right', name: 'Bottom right', note: 'Above the player, right corner' },
@@ -194,7 +194,7 @@ const emit = () => subscribers.forEach((fn) => fn());
 const subscribe = (fn) => { subscribers.add(fn); return () => subscribers.delete(fn); };
 const snapshot = () => store;
 
-export function setToastPosition(id) {
+function setToastPosition(id) {
   if (!TOAST_POSITIONS.some((p) => p.id === id) || store.position === id) return;
   store = { ...store, position: id };
   try { localStorage.setItem(POS_KEY, id); } catch { /* ignore */ }
@@ -209,7 +209,7 @@ export function setToastLayout(next) {
   emit();
 }
 
-export function useToastPlacement() {
+function useToastPlacement() {
   return useSyncExternalStore(subscribe, snapshot);
 }
 

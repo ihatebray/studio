@@ -196,10 +196,6 @@ export default function ArtistGrid({
     return out;
   }, [artists, playEvents]);
 
-  const maxTracks = useMemo(
-    () => artists.reduce((m, a) => Math.max(m, a.tracks.length), 1),
-    [artists],
-  );
 
   if (!artists.length) {
     return (

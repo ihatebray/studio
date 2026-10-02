@@ -11,7 +11,7 @@ import modulusProBold from './assets/fonts/ModulusPro-Bold.woff2';
 import modulusProExtraBold from './assets/fonts/ModulusPro-ExtraBold.woff2';
 import modulusProBlack from './assets/fonts/ModulusPro-Black.woff2';
 
-export const UI_FONT_PRESETS = [
+const UI_FONT_PRESETS = [
   // ── Rounded (clean & versatile) ────────────────────────────────────────
   {
     id: 'volte-rounded',
@@ -722,7 +722,7 @@ const STORAGE_KEY = 'studioPlayerUiFont';
 const CUSTOM_FONTS_KEY = 'studioPlayerCustomFonts';
 
 /** Load user-added custom fonts from localStorage. */
-export function getCustomFonts() {
+function getCustomFonts() {
   try {
     const raw = localStorage.getItem(CUSTOM_FONTS_KEY);
     if (!raw) return [];
@@ -734,14 +734,6 @@ export function getCustomFonts() {
   }
 }
 
-/** Persist custom fonts list to localStorage. */
-export function setCustomFonts(list) {
-  try {
-    localStorage.setItem(CUSTOM_FONTS_KEY, JSON.stringify(list));
-  } catch {
-    /* ignore */
-  }
-}
 
 /** Convert a custom font entry to a preset-compatible object. */
 function customToPreset(f) {
@@ -757,26 +749,11 @@ function customToPreset(f) {
 }
 
 /** All available presets — built-ins plus user-added custom fonts. */
-export function getAllPresets() {
+function getAllPresets() {
   const custom = getCustomFonts().map(customToPreset);
   return [...UI_FONT_PRESETS, ...custom];
 }
 
-/** Preserves list order; each `{ name, presets }` is one group. Includes custom fonts. */
-export function presetsGrouped() {
-  const all = getAllPresets();
-  const order = [];
-  const byName = new Map();
-  for (const p of all) {
-    const g = p.group || 'Other';
-    if (!byName.has(g)) {
-      byName.set(g, []);
-      order.push(g);
-    }
-    byName.get(g).push(p);
-  }
-  return order.map((name) => ({ name, presets: byName.get(name) }));
-}
 
 export function getStoredFontId() {
   try {

@@ -35,83 +35,10 @@ if (require('electron-squirrel-startup')) {
 
 import path from 'path';
 import fs from 'fs';
-import {
-  ensureLibraryOpen,
-  loadAllTracks,
-  loadAlbumCovers,
-  setAlbumCover,
-  loadArtistHeaders,
-  setArtistHeader,
-  clearArtistHeader,
-  loadArtistImageCache,
-  setArtistImageCache,
-  loadCoverColours,
-  setCoverColour,
-  setAlbumCoversBulk,
-  upsertTracks,
-  removeTracksByIds,
-  clearAllLibraryData,
-  updateTrackMetadata,
-  updateAlbumMetadata,
-  loadAllPlaylists,
-  loadPlaylistTrackIds,
-  createPlaylist,
-  updatePlaylist,
-  deletePlaylist,
-  renamePlaylist,
-  removeTrackFromPlaylist,
-  addTracksToPlaylist,
-  removeTracksFromPlaylist,
-  closeLibraryDb,
-  isPlaybackPathAllowed,
-  loadCachedLyrics,
-  saveCachedLyrics,
-  deleteCachedLyrics,
-  setTrackFavorite,
-  recordTrackPlay,
-  loadPlayEvents,
-  getStatsHealth,
-  getLibraryOverview,
-  clearAllStats,
-  loadFollowedArtistOverrides,
-  addFollowedArtist,
-  excludeFollowedArtist,
-  clearFollowedArtistOverride,
-  setItunesArtistIdForArtist,
-  loadCachedReleases,
-  upsertArtistReleases,
-  getAlbumLink,
-  setAlbumLink,
-} from './libraryDb.js';
-import { toolsInstalled } from './binPaths.js';
+import { ensureLibraryOpen, loadAllTracks, loadAlbumCovers, setAlbumCover, loadArtistHeaders, setArtistHeader, clearArtistHeader, loadArtistImageCache, setArtistImageCache, loadCoverColours, setCoverColour, setAlbumCoversBulk, upsertTracks, removeTracksByIds, clearAllLibraryData, updateTrackMetadata, updateAlbumMetadata, loadAllPlaylists, loadPlaylistTrackIds, createPlaylist, updatePlaylist, deletePlaylist, renamePlaylist, removeTrackFromPlaylist, addTracksToPlaylist, removeTracksFromPlaylist, closeLibraryDb, isPlaybackPathAllowed, loadCachedLyrics, saveCachedLyrics, deleteCachedLyrics, setTrackFavorite, recordTrackPlay, loadPlayEvents, getStatsHealth, getLibraryOverview, clearAllStats, loadFollowedArtistOverrides, addFollowedArtist, excludeFollowedArtist, clearFollowedArtistOverride, setItunesArtistIdForArtist, loadCachedReleases, upsertArtistReleases } from './libraryDb.js';
 import { analyzeSamples, themeFromAnalysis } from './coverTheme.js';
 import { analyseCover } from './coverColour.js';
-import {
-  spotifyCredentialsConfigured,
-  loadSpotifyCredentials,
-  saveSpotifyCredentials,
-  spotifySearchTracks,
-  spotifySearchAlbums,
-  spotifyGetAlbumTracks,
-  spotifyGetTrack,
-  spotifyGetArtist,
-  getSpotifyAccessToken,
-  // User-OAuth (PKCE) — used by the playlist endpoint, which Spotify
-  // locked down for client-credentials apps in Nov 2024.
-  buildAuthorizeUrl,
-  generatePkcePair,
-  generateOAuthState,
-  exchangeAuthCode,
-  loadUserToken,
-  clearUserToken,
-  hasUserToken,
-  getValidUserToken,
-  SPOTIFY_OAUTH_PORT,
-  spotifyArtistByName,
-  spotifySearchArtists,
-  spotifyArtistTopTracks,
-  spotifyArtistAlbums,
-} from './spotifyClient.js';
+import { spotifyCredentialsConfigured, saveSpotifyCredentials, spotifySearchTracks, spotifySearchAlbums, spotifyGetAlbumTracks, spotifyGetTrack, spotifyGetArtist, getSpotifyAccessToken, buildAuthorizeUrl, generatePkcePair, generateOAuthState, exchangeAuthCode, loadUserToken, clearUserToken, hasUserToken, getValidUserToken, SPOTIFY_OAUTH_PORT, spotifyArtistByName, spotifySearchArtists, spotifyArtistTopTracks, spotifyArtistAlbums } from './spotifyClient.js';
 import {
   itunesSearchTracks,
   itunesSearchAlbums,
@@ -131,21 +58,10 @@ import {
   ITUNES_ID_PREFIX,
 } from './itunesClient.js';
 import http from 'http';
-import { downloadYoutubeAudioForQuery, downloadYoutubeAudioById, searchCandidatesForPicker, resolvePreviewStream } from './ytdlpImport.js';
-import {
-  loadSoulseekCredentials,
-  saveSoulseekCredentials,
-  soulseekCredentialsConfigured,
-  soulseekStatus,
-  soulseekTestConnection,
-  soulseekDisconnect,
-  soulseekSearch,
-  soulseekDownload,
-  soulseekCancelDownload,
-} from './soulseekClient.js';
+import { downloadYoutubeAudioById, searchCandidatesForPicker, resolvePreviewStream } from './ytdlpImport.js';
+import { saveSoulseekCredentials, soulseekCredentialsConfigured, soulseekStatus, soulseekTestConnection, soulseekDisconnect, soulseekSearch, soulseekDownload, soulseekCancelDownload } from './soulseekClient.js';
 import { resolveCoverFilePath, mimeForCoverPath, storeCoverFromDataUri } from './coverArtStore.js';
 import * as discordPresence from './discordPresence.js';
-import * as twitchOverlay from './twitchOverlay.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist, helperDiscography, helperPathfinder } from './spotifyPlayer.js';
@@ -869,17 +785,6 @@ async function initAutoUpdater() {
   }
 }
 
-ipcMain.handle('update:checkNow', async () => {
-  if (!nativeAutoUpdater) {
-    return { ok: false, error: 'Updater not initialized (dev mode or not packaged).' };
-  }
-  try {
-    nativeAutoUpdater.checkForUpdates();
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 ipcMain.handle('update:install', () => {
   if (!nativeAutoUpdater) return { ok: false, error: 'Updater not initialized.' };
@@ -892,7 +797,6 @@ ipcMain.handle('update:install', () => {
   return { ok: true };
 });
 
-ipcMain.handle('update:getStatus', () => updaterStatus);
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
@@ -995,91 +899,9 @@ ipcMain.handle('whatsnew:fetchReleaseNotes', async (_e, version) => {
   }
 });
 
-/**
- * Fetch every GitHub Release for the repo, ordered newest-first.
- *
- * Used by the Settings → Update History overlay so users can flip
- * back through every version of the app. GitHub's default page size
- * is 30, which is plenty for the foreseeable future — we don't
- * paginate because hitting 30 releases would mean the app's been
- * iterating for a while and we'd want to rethink the UI by then
- * anyway.
- *
- * Returns `{ ok, releases: [...], error? }`. Each release entry has
- * `{ version, name, body, url, publishedAt, draft, prerelease }`.
- * Draft releases (not yet published) are filtered out client-side;
- * everything else (including pre-releases and known-broken old
- * versions) is included verbatim — the overlay shows them all so
- * users see the full timeline.
- */
-ipcMain.handle('whatsnew:fetchAllReleases', async () => {
-  const url = 'https://api.github.com/repos/ihatebray/immerse/releases?per_page=100';
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'immerse-app',
-      },
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      return { ok: false, error: `GitHub API ${res.status}: ${txt.slice(0, 200)}` };
-    }
-    const data = await res.json();
-    if (!Array.isArray(data)) return { ok: false, error: 'Unexpected GitHub response.' };
-    const releases = data
-      .filter((r) => !r.draft)
-      .map((r) => ({
-        // Tag names like "v1.0.5" → "1.0.5" for comparison; keep the
-        // raw tag too in case callers want it.
-        version: String((r.tag_name || '').replace(/^v/, '')),
-        tagName: String(r.tag_name || ''),
-        name: String(r.name || r.tag_name || ''),
-        body: String(r.body || '').trim(),
-        url: String(r.html_url || ''),
-        publishedAt: r.published_at || null,
-        prerelease: !!r.prerelease,
-      }));
-    return { ok: true, releases };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
-/**
- * Tutorial-seen storage. Single-line JSON file like the what's-new one
- * but tracks whether the user has dismissed the first-run tutorial.
- * Renderer reads on mount and shows the tutorial automatically the
- * first time; Settings has an "Open tutorial" button that triggers it
- * regardless of this flag.
- */
-function tutorialSeenPath() {
-  return path.join(app.getPath('userData'), 'tutorial-seen.json');
-}
 
-ipcMain.handle('tutorial:getSeen', () => {
-  try {
-    const raw = fs.readFileSync(tutorialSeenPath(), 'utf8');
-    const j = JSON.parse(raw);
-    return { ok: true, seen: !!j?.seen };
-  } catch {
-    return { ok: true, seen: false };
-  }
-});
 
-ipcMain.handle('tutorial:setSeen', (_e, seen) => {
-  try {
-    fs.mkdirSync(path.dirname(tutorialSeenPath()), { recursive: true });
-    fs.writeFileSync(
-      tutorialSeenPath(),
-      JSON.stringify({ seen: !!seen }),
-      'utf8',
-    );
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 function newTrackId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1672,31 +1494,6 @@ ipcMain.handle('genius:credits', async (_event, params) => {
   catch (e) { return { ok: false, error: String(e?.message || e) }; }
 });
 
-// ── Stream overlay (OBS browser source) ────────────────────────────
-// Wires the local now-playing overlay server (twitchOverlay.js) to the
-// renderer. Without these handlers api.twitchOverlay* is undefined, so the
-// Settings toggle could never turn on. start/status return { ok, running?, url }.
-ipcMain.handle('twitch:start', async () => {
-  try { return await twitchOverlay.start(); }
-  catch (e) { return { ok: false, error: String(e?.message || e) }; }
-});
-ipcMain.handle('twitch:stop', async () => {
-  try { return twitchOverlay.stop(); }
-  catch (e) { return { ok: false, error: String(e?.message || e) }; }
-});
-ipcMain.handle('twitch:status', async () => {
-  try { return twitchOverlay.status(); }
-  catch (e) { return { ok: false, running: false, url: '', error: String(e?.message || e) }; }
-});
-ipcMain.handle('twitch:setOptions', async (_e, opts) => {
-  try { return twitchOverlay.setOptions(opts || {}); }
-  catch (e) { return { ok: false, error: String(e?.message || e) }; }
-});
-ipcMain.handle('twitch:setNowPlaying', async (_e, payload) => {
-  try { return twitchOverlay.setNowPlaying(payload ?? null); }
-  catch (e) { return { ok: false, error: String(e?.message || e) }; }
-});
-
 /**
  * Look up a public cover-art URL for a track when the Spotify URL isn't
  * available — for example, tracks imported back when albumArtUrl wasn't
@@ -1878,11 +1675,6 @@ ipcMain.handle('albumCovers:set', async (event, { albumKey, url } = {}) => {
   }
 });
 
-// Clear an album's override (album view falls back to a track cover).
-ipcMain.handle('albumCovers:clear', async (event, { albumKey } = {}) => {
-  try { return await setAlbumCover(albumKey, null); }
-  catch (e) { return { ok: false, error: String(e?.message || e) }; }
-});
 
 /* ---- Image theming ------------------------------------------------------
  * Sampling a remote image in the renderer is a race, not a computation.
@@ -2034,22 +1826,6 @@ ipcMain.handle('covers:export', async (_e, { url, name, dir, saveAs } = {}) => {
   }
 });
 
-/* Where a cover actually lives on disk.
-   Comparisons kept disagreeing because the tuning lab was being fed a JPG
-   downloaded separately while the app sampled the file it had fetched — two
-   different encodings, often two different resolutions, sometimes a different
-   edition of the artwork. Identical code on different pixels gives different
-   colours, which is exactly what we were seeing. This returns the path so the
-   lab can be handed the same bytes. */
-ipcMain.handle('covers:resolvePath', async (_e, url) => {
-  try {
-    const p = resolveCoverFilePath(String(url || ''));
-    if (!p) return { ok: false, error: 'Not a studio-cover url.' };
-    return { ok: true, path: p };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 /* ---- Per-cover colour overrides ---------------------------------------- */
 ipcMain.handle('coverColours:load', async () => {
@@ -2349,105 +2125,7 @@ ipcMain.handle('library:loadPlayEvents', async (event, sinceMs) => {
   catch (e) { console.error('[library:loadPlayEvents] threw:', e); return []; }
 });
 
-/**
- * Reset all listening stats — zeros play_count, nulls last_played on
- * every track, and deletes every row in play_events. Used by the
- * "Reset stats" action in the Stats tab. Irreversible.
- */
-ipcMain.handle('library:resetStats', async () => {
-  try { return await clearAllStats(); }
-  catch (e) { console.error('[library:resetStats] threw:', e); return { ok: false, error: String(e?.message || e) }; }
-});
 
-/**
- * Re-scan metadata for every track in the library — re-parse each file
- * and fill in missing/suspicious fields. Sends progress events back to
- * the renderer so a long re-scan can show a progress bar.
- *
- * "Missing/suspicious" fields:
- *   - artist / album are empty
- *   - year is null
- *   - genre is empty
- *   - trackNumber is null OR it equals 63 (the classic ID3v1 corruption
- *     value — the byte 0x3F = '?')
- *
- * Existing values that look fine are NEVER overwritten; this is purely
- * additive. If the user has hand-edited a track's metadata, their edits
- * stay.
- *
- * For each file we update via updateTrackMetadata, which validates
- * each field individually — if a single field rejects (e.g. invalid
- * track number) we just skip that field rather than failing the whole
- * track.
- */
-ipcMain.handle('library:rescanMetadata', async (event) => {
-  try {
-    const all = await loadAllTracks();
-    const sender = event.sender;
-    const total = all.length;
-    let scanned = 0;
-    let updated = 0;
-    let failed = 0;
-
-    for (const t of all) {
-      scanned += 1;
-      // Send progress every track. The renderer can throttle if needed.
-      try { sender.send('library:rescanProgress', { scanned, total, updated, failed }); }
-      catch { /* renderer might be gone */ }
-
-      if (!t.filePath || !fs.existsSync(t.filePath)) {
-        failed += 1;
-        continue;
-      }
-
-      let parsed;
-      try { parsed = await parseAudioFileToTrack(t.filePath); }
-      catch { failed += 1; continue; }
-      if (!parsed) { failed += 1; continue; }
-
-      // Build the update set: only include fields where the existing
-      // value is clearly missing or suspicious AND the new parse
-      // produced something better.
-      const updates = {};
-
-      if ((!t.artist || t.artist === 'Unknown Artist') && parsed.artist) {
-        updates.artist = parsed.artist;
-      }
-      if ((!t.album || t.album === 'Unknown Album') && parsed.album) {
-        updates.album = parsed.album;
-      }
-      if (!t.title && parsed.title) {
-        updates.title = parsed.title;
-      }
-      if (t.year == null && parsed.year != null) {
-        updates.year = parsed.year;
-      }
-      if ((!t.genre || !t.genre.trim()) && parsed.genre) {
-        updates.genre = parsed.genre;
-      }
-      // Track number: also overwrite the classic-corruption value 63.
-      const tNumIsBad = t.trackNumber == null || t.trackNumber === 63;
-      if (tNumIsBad && parsed.trackNumber != null && parsed.trackNumber !== 63) {
-        updates.trackNumber = parsed.trackNumber;
-      }
-      if (t.discNumber == null && parsed.discNumber != null) {
-        updates.discNumber = parsed.discNumber;
-      }
-
-      if (Object.keys(updates).length === 0) continue;
-
-      const r = await updateTrackMetadata(t.id, updates);
-      if (r?.ok) updated += 1;
-    }
-
-    try { sender.send('library:rescanProgress', { scanned, total, updated, failed, done: true }); }
-    catch { /* ignore */ }
-    return { ok: true, total, updated, failed };
-  } catch (e) {
-    console.error('[library:rescanMetadata] threw:', e);
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 
 /* ---------- Playlists ---------- */
@@ -2616,11 +2294,9 @@ ipcMain.handle('dialog:openFolder', async () => {
 // Streamed (Saved) rows have no file to read.
 ipcMain.handle('file:getMetadata', async (event, filePath) => (isStreamedPath(filePath) ? null : parseAudioFileToTrack(filePath)));
 
-ipcMain.handle('tools:getState', () => ({ installed: toolsInstalled() }));
 
 ipcMain.handle('spotify:credsState', () => ({ configured: spotifyCredentialsConfigured() }));
 
-ipcMain.handle('spotify:getCreds', () => loadSpotifyCredentials());
 
 ipcMain.handle('spotify:setCreds', (event, { clientId, clientSecret }) => {
   if (!clientId || !clientSecret) return { ok: false, error: 'Client ID and Client Secret are required.' };
@@ -2829,13 +2505,6 @@ ipcMain.handle('spotify:userAuthState', () => {
   };
 });
 
-ipcMain.handle('spotify:disconnectUser', () => {
-  clearUserToken();
-  // Notify renderer so the UI updates immediately even if the user has
-  // multiple Settings panes open or whatever.
-  mainWindow?.webContents.send('spotify:userAuthChanged', { connected: false });
-  return { ok: true };
-});
 
 /**
  * Return the connected user's playlists (owned + followed). Used by the
@@ -3006,171 +2675,7 @@ ipcMain.handle('spotify:albumTracks', async (event, albumId) => {
   return data;
 });
 
-/**
- * Resolve a LIBRARY album (which only knows its name + artist + the tracks
- * the user owns) to a Spotify album, and compute which tracks are missing.
- *
- * This is the engine behind "show missing tracks" for existing libraries.
- * Because library tracks don't store a Spotify album ID, we search Spotify by
- * "artist album" and SCORE each candidate edition by how well its official
- * tracklist matches what the user actually owns — the same scoring philosophy
- * used for Soulseek matching. The best edition wins, but we return the other
- * candidates too so the UI can offer a confirm/correct step (deluxe vs.
- * standard, etc.).
- *
- * params: { album, artist, ownedTitles: string[], albumId?: string }
- *   - if albumId is supplied (a previously-confirmed match), we skip search
- *     and use it directly.
- * returns: {
- *   ok, resolved: { albumId, name, artists, albumArtUrl, totalTracks, releaseDate },
- *   confidence: 0..1, alternatives: [ {albumId,name,totalTracks,releaseDate,score} ],
- *   tracks: [ official tracks ], missing: [ official tracks not owned ],
- *   error?
- * }
- */
-ipcMain.handle('album:resolveMissing', async (event, params = {}) => {
-  const album = String(params.album || '').trim();
-  const artist = String(params.artist || '').trim();
-  const ownedTitles = Array.isArray(params.ownedTitles) ? params.ownedTitles : [];
-  const forcedId = String(params.albumId || '').trim();
 
-  if (!album) return { ok: false, error: 'No album name.' };
-
-  // Normalize a title for comparison: lowercase, strip parentheticals and
-  // punctuation, collapse whitespace. Mirrors the Soulseek matcher's approach.
-  const norm = (s) => String(s || '')
-    .toLowerCase()
-    .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const ownedNorm = new Set(ownedTitles.map(norm).filter(Boolean));
-
-  // Score one candidate album's official tracklist against what's owned:
-  // overlap = fraction of owned titles found in the official list; plus a
-  // small reward for the official count being >= owned count (a real album
-  // should contain at least what you have) and a penalty for wild count
-  // mismatch (guards against matching a giant compilation).
-  const scoreEdition = (officialTracks) => {
-    const offNorm = officialTracks.map((t) => norm(t.title));
-    const offSet = new Set(offNorm);
-    let hit = 0;
-    for (const o of ownedNorm) if (offSet.has(o)) hit += 1;
-    const overlap = ownedNorm.size ? hit / ownedNorm.size : 0;
-    const offCount = officialTracks.length || 1;
-    const ownedCount = ownedNorm.size || 1;
-    // Count-fit: best when official >= owned and not absurdly larger.
-    let countFit;
-    if (offCount >= ownedCount) {
-      const ratio = ownedCount / offCount; // 1 when equal, →0 as official balloons
-      countFit = 0.4 + 0.6 * ratio;        // never below 0.4 if it's a superset
-    } else {
-      countFit = offCount / ownedCount;    // official smaller than owned = suspicious
-    }
-    return { score: overlap * 0.8 + countFit * 0.2, overlap, offCount };
-  };
-
-  try {
-    let candidates;
-    let usedStoredLink = false;
-    let storedConfirmed = false;
-    // 1) An explicitly-passed albumId (user just picked one) wins.
-    // 2) Otherwise, a previously-stored link for this album short-circuits the
-    //    fuzzy search — exact and instant. A *confirmed* link is authoritative;
-    //    an auto-resolved one is still used but can be re-evaluated.
-    if (forcedId) {
-      candidates = [{ albumId: forcedId }];
-    } else {
-      const link = await getAlbumLink(album, artist).catch(() => null);
-      if (link?.spotifyAlbumId) {
-        candidates = [{ albumId: link.spotifyAlbumId }];
-        usedStoredLink = true;
-        storedConfirmed = !!link.confirmed;
-      } else {
-        const found = await spotifySearchAlbums(`${artist} ${album}`.trim());
-        // Keep the top handful to score; fetching every edition's tracklist is
-        // a network call each, so cap it.
-        candidates = (Array.isArray(found) ? found : []).slice(0, 6);
-        if (candidates.length === 0) {
-          return { ok: false, error: 'No matching album found on Spotify.' };
-        }
-      }
-    }
-
-    // Fetch + score each candidate edition.
-    const scored = [];
-    for (const c of candidates) {
-      let detail;
-      try {
-        detail = await spotifyGetAlbumTracks(c.albumId);
-      } catch {
-        continue;
-      }
-      const s = scoreEdition(detail.tracks || []);
-      scored.push({
-        albumId: c.albumId,
-        name: detail.album || c.name || album,
-        artists: detail.artists || c.artists || artist,
-        albumArtUrl: detail.albumArtUrl || c.albumArtUrl || '',
-        totalTracks: (detail.tracks || []).length,
-        releaseDate: c.releaseDate || '',
-        tracks: detail.tracks || [],
-        ...s,
-      });
-    }
-
-    if (scored.length === 0) {
-      return { ok: false, error: 'Could not load any album tracklist from Spotify.' };
-    }
-
-    scored.sort((a, b) => b.score - a.score);
-    const best = scored[0];
-
-    // Compute missing tracks: official tracks whose normalized title the user
-    // doesn't already own.
-    const missing = best.tracks.filter((t) => !ownedNorm.has(norm(t.title)));
-
-    return {
-      ok: true,
-      resolved: {
-        albumId: best.albumId, name: best.name, artists: best.artists,
-        albumArtUrl: best.albumArtUrl, totalTracks: best.totalTracks,
-        releaseDate: best.releaseDate,
-      },
-      confidence: Math.round(best.score * 100) / 100,
-      // confirmed: the user previously locked this edition in, so the UI can
-      // skip the "is this right?" prompt. fromStoredLink: resolved via a saved
-      // link (confirmed or auto) rather than a fresh search.
-      confirmed: storedConfirmed,
-      fromStoredLink: usedStoredLink,
-      alternatives: scored.slice(0, 5).map((s) => ({
-        albumId: s.albumId, name: s.name, artists: s.artists,
-        totalTracks: s.totalTracks, releaseDate: s.releaseDate,
-        score: Math.round(s.score * 100) / 100,
-      })),
-      tracks: best.tracks,
-      missing,
-    };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
-
-/**
- * Persist the user's chosen Spotify edition for a library album (the
- * confirm/correct step). Once saved with confirmed=true, album:resolveMissing
- * will use it directly forever instead of re-guessing.
- * params: { album, artist, albumId, confirmed }
- */
-ipcMain.handle('album:confirmLink', async (event, params = {}) => {
-  const album = String(params.album || '').trim();
-  const artist = String(params.artist || '').trim();
-  const albumId = String(params.albumId || '').trim();
-  const confirmed = params.confirmed !== false; // default true
-  if (!album || !albumId) return { ok: false, error: 'album and albumId required.' };
-  return setAlbumLink(album, artist, albumId, confirmed);
-});
 
 // Session-scoped caches for Spotify enrichment lookups. When the user
 // imports a whole album (or re-runs an album sync), every track shares
@@ -3234,157 +2739,6 @@ function pickPrimaryGenre(genres) {
     .join(' ');
 }
 
-ipcMain.handle('import:fromSpotifyYoutube', async (event, meta) => {
-  const progressKey = String(meta?.progressId || meta?.spotifyId || '').trim();
-  try {
-    await ensureLibraryOpen();
-    /** Library metadata comes from the Spotify / iTunes search row. yt-dlp
-     *  gives us the audio bytes only — no track numbers, no album position.
-     *  The search row is the authoritative source for those, and we
-     *  enrich it via /v1/tracks + /v1/artists when fields are missing. */
-    const title = String(meta?.title || '').trim();
-    const artists = String(meta?.artists || '').trim();
-    const album = String(meta?.album || '').trim();
-    const albumArtUrl = String(meta?.albumArtUrl || '').trim();
-    const durationMs = Number(meta?.durationMs);
-    const spotifyIdRaw = String(meta?.spotifyId || '').trim();
-    // The releases-from-iTunes path uses synthetic IDs like "itunes:12345";
-    // only treat as a real Spotify ID when no protocol prefix is present.
-    const realSpotifyId = spotifyIdRaw && !spotifyIdRaw.includes(':') ? spotifyIdRaw : '';
-
-    // Position, year, genre, explicit — read caller-supplied first; if
-    // any are missing AND we have a real Spotify ID, enrich from the
-    // Spotify track + artist endpoints. Enrichment is best-effort: a
-    // network failure leaves the field null instead of blocking import.
-    let trackNumber = Number.isFinite(Number(meta?.trackNumber)) && Number(meta.trackNumber) > 0
-      ? Number(meta.trackNumber) : null;
-    let discNumber = Number.isFinite(Number(meta?.discNumber)) && Number(meta.discNumber) > 0
-      ? Number(meta.discNumber) : null;
-    let explicitMeta = typeof meta?.explicit === 'boolean' ? meta.explicit : null;
-    let year = (() => {
-      const y = Number(meta?.year);
-      return Number.isFinite(y) && y >= 1000 && y <= 9999 ? Math.floor(y) : null;
-    })();
-    let genre = typeof meta?.genre === 'string' ? meta.genre.trim() : '';
-
-    const needsEnrichment = !!realSpotifyId && (
-      trackNumber == null
-      || discNumber == null
-      || explicitMeta == null
-      || year == null
-      || !genre
-    );
-    if (needsEnrichment) {
-      try {
-        const enriched = await getCachedSpotifyTrack(realSpotifyId);
-        if (enriched) {
-          if (trackNumber == null && enriched.trackNumber) trackNumber = enriched.trackNumber;
-          if (discNumber == null && enriched.discNumber) discNumber = enriched.discNumber;
-          if (explicitMeta == null) explicitMeta = enriched.explicit;
-          if (year == null) year = yearFromReleaseDate(enriched.releaseDate);
-          if (!genre && enriched.primaryArtistId) {
-            const artistData = await getCachedSpotifyArtist(enriched.primaryArtistId);
-            genre = pickPrimaryGenre(artistData?.genres);
-          }
-        }
-      } catch (e) {
-        console.log('[import] spotify enrichment failed (non-fatal):', String(e?.message || e));
-      }
-    }
-
-    if (!title) return { ok: false, error: 'Missing title.' };
-    const targetDurationSec = Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : 0;
-    emitImportProgress({ id: progressKey, state: 'preparing' });
-    const filePath = await downloadYoutubeAudioForQuery({
-      artists: artists || 'Unknown Artist',
-      title,
-      targetDurationSec,
-      expectedExplicit: explicitMeta,
-    }, {
-      // Parse yt-dlp's stdout for the download percentage and post-processing
-      // phase so the renderer can draw a live progress bar. yt-dlp prints
-      // lines like "[download]  42.3% of 3.8MiB at 1.2MiB/s"; the audio
-      // extraction / thumbnail / metadata steps that follow have no percent,
-      // so we surface those as an indeterminate 'processing' phase.
-      onLog: (chunk) => {
-        if (!progressKey) return;
-        const s = String(chunk || '');
-        const matches = s.match(/\[download\]\s+([\d.]+)%/g);
-        if (matches && matches.length) {
-          const m = matches[matches.length - 1].match(/([\d.]+)%/);
-          if (m) emitImportProgress({ id: progressKey, state: 'downloading', pct: Math.max(0, Math.min(100, parseFloat(m[1]))) / 100 });
-        } else if (/\[ExtractAudio\]|\[Merger\]|\[EmbedThumbnail\]|\[Metadata\]|Deleting original|Destination:/i.test(s)) {
-          emitImportProgress({ id: progressKey, state: 'processing' });
-        }
-      },
-    });
-    const parsed = await parseAudioFileToTrack(filePath);
-    const durationFromFile = typeof parsed.duration === 'number' && parsed.duration > 0 ? parsed.duration : 0;
-    const durationFromSpotify = Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : 0;
-    const duration = durationFromFile > 0 ? durationFromFile : durationFromSpotify;
-
-    let coverStored = null;
-    if (albumArtUrl) {
-      try {
-        coverStored = (await fetchSpotifyCoverAsDataUrl(albumArtUrl)) || albumArtUrl;
-      } catch {
-        coverStored = albumArtUrl;
-      }
-    }
-
-    // Genre fallback: if Spotify gave us nothing AND yt-dlp tagged the
-    // file (usually with "Music" — YouTube's default category), prefer
-    // empty over the meaningless default. The user can fill it later
-    // from the metadata editor.
-    const fileGenre = String(parsed.genre || '').trim();
-    const useFileGenre = !genre && fileGenre && fileGenre.toLowerCase() !== 'music';
-
-    const track = {
-      id: newTrackId(),
-      filePath: parsed.filePath,
-      duration,
-      title,
-      artist: artists || 'Unknown Artist',
-      album: album || 'Unknown Album',
-      // Keep a remote URL for Discord RPC dynamic artwork when available.
-      // UI artwork still uses coverArt (which may be a stored data URL).
-      coverArtUrl: albumArtUrl || coverStored,
-      coverArt: coverStored,
-      // Position fields: Spotify is authoritative, fall back to whatever
-      // the (probably empty) yt-dlp file tags carried.
-      trackNumber: trackNumber != null ? trackNumber : (parsed.trackNumber ?? null),
-      discNumber: discNumber != null ? discNumber : (parsed.discNumber ?? null),
-      // Year: Spotify's release_date is authoritative. yt-dlp's date
-      // tag is the upload date or some uploader's guess, which is
-      // frequently wrong. Only use the file's year if Spotify gave us
-      // nothing.
-      year: year != null ? year : (parsed.year ?? null),
-      // Genre: Spotify artist genre is the most reliable signal. If
-      // Spotify came up empty AND the file tag isn't the meaningless
-      // YouTube default, fall back to the file tag.
-      genre: genre || (useFileGenre ? fileGenre : ''),
-      explicit: explicitMeta,
-    };
-    const res = await upsertTracks([track]);
-    if (!res.ok) return { ok: false, error: res.error || 'Could not save to library.' };
-    emitImportProgress({ id: progressKey, state: 'done' });
-    return { ok: true, track };
-  } catch (e) {
-    emitImportProgress({ id: progressKey, state: 'failed' });
-    // If yt-dlp's tier matching rejected everything, surface the candidates
-    // so the renderer can pop the manual-pick modal. e.candidates is set by
-    // ytdlpImport.js when it throws a 'no-tier-match' error.
-    if (e?.code === 'no-tier-match' && Array.isArray(e?.candidates)) {
-      return {
-        ok: false,
-        code: 'no-tier-match',
-        error: String(e?.message || e),
-        candidates: e.candidates,
-      };
-    }
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 /**
  * Import a track from a specific YouTube video ID, bypassing tier matching.
@@ -3582,29 +2936,8 @@ function emitSoulseekAlbumProgress(payload) {
   } catch { /* window may be closed */ }
 }
 
-// yt-dlp (Spotify song/album) import progress. Keyed by the caller-supplied
-// `progressId` (which the renderer sets to the row's own download key), or
-// the spotifyId as a fallback. Throttled like the soulseek stream so a fast
-// download doesn't flood IPC; terminal states pass through immediately.
-const lastImportEmitAt = new Map();
-const IMPORT_EMIT_INTERVAL_MS = 150;
-function emitImportProgress(payload) {
-  if (!payload || !payload.id) return;
-  if (payload.state === 'downloading') {
-    const now = Date.now();
-    const last = lastImportEmitAt.get(payload.id) || 0;
-    if (now - last < IMPORT_EMIT_INTERVAL_MS) return;
-    lastImportEmitAt.set(payload.id, now);
-  } else {
-    lastImportEmitAt.delete(payload.id);
-  }
-  try {
-    mainWindow?.webContents.send('import:progress', payload);
-  } catch { /* window may be closed */ }
-}
 
 ipcMain.handle('soulseek:credsState', () => ({ configured: soulseekCredentialsConfigured() }));
-ipcMain.handle('soulseek:getCreds', () => loadSoulseekCredentials());
 ipcMain.handle('soulseek:setCreds', (event, { username, password }) => {
   if (!username || !password) {
     return { ok: false, error: 'Username and password are required.' };
@@ -3633,61 +2966,9 @@ ipcMain.handle('soulseek:disconnect', () => soulseekDisconnect());
  * keeps its gradient placeholder.
  */
 
-const albumArtCache = new Map(); // normalized query → imageUrl | null
-const ALBUM_ART_CACHE_MAX = 500;
+ // normalized query → imageUrl | null
 
-function normalizeForArtCache(s) {
-  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-}
 
-ipcMain.handle('soulseek:fetchAlbumArt', async (event, queries) => {
-  const result = { artByKey: {} };
-  if (!Array.isArray(queries) || !queries.length) return result;
-  if (!spotifyCredentialsConfigured()) {
-    // Fill all keys with null so the renderer knows we tried.
-    for (const q of queries) {
-      if (q?.key) result.artByKey[q.key] = null;
-    }
-    return result;
-  }
-
-  // Sequential rather than parallel: Spotify rate-limits at ~180 req/min,
-  // and the user is waiting for the UI to update. 10 sequential lookups
-  // at ~150ms each is ~1.5s total, which beats running into a 429 and
-  // having to retry the whole batch.
-  for (const q of queries) {
-    if (!q?.key) continue;
-    const queryText = String(q.query || '').trim();
-    if (!queryText) {
-      result.artByKey[q.key] = null;
-      continue;
-    }
-    const cacheKey = normalizeForArtCache(queryText);
-    if (albumArtCache.has(cacheKey)) {
-      result.artByKey[q.key] = albumArtCache.get(cacheKey);
-      continue;
-    }
-    try {
-      const albums = await spotifySearchAlbums(queryText);
-      const top = Array.isArray(albums) && albums.length ? albums[0] : null;
-      const url = top?.albumArtUrl || null;
-      // Trim cache before inserting if full. Simple FIFO — not LRU,
-      // but good enough at this scale.
-      if (albumArtCache.size >= ALBUM_ART_CACHE_MAX) {
-        const firstKey = albumArtCache.keys().next().value;
-        albumArtCache.delete(firstKey);
-      }
-      albumArtCache.set(cacheKey, url);
-      result.artByKey[q.key] = url;
-    } catch {
-      // Any Spotify error (auth, rate limit, network) — return null for
-      // this key and continue with the others. We don't cache failures
-      // since they might be transient.
-      result.artByKey[q.key] = null;
-    }
-  }
-  return result;
-});
 
 ipcMain.handle('soulseek:search', async (event, query) => {
   try {
@@ -4465,11 +3746,6 @@ ipcMain.handle('playlist:importBatch', async (event, params = {}) => {
   };
 });
 
-ipcMain.on('window:minimize', () => mainWindow?.minimize());
-ipcMain.on('window:maximize', () => {
-  if (mainWindow?.isMaximized()) mainWindow.unmaximize();
-  else mainWindow?.maximize();
-});
 ipcMain.on('window:close', () => mainWindow?.close());
 
 /** In-memory lyrics cache keyed by "artist|title" — hot layer over persistent DB. */
@@ -5124,7 +4400,6 @@ let releasesRefreshInFlight = false;
 let releasesAutoRefreshLastRunAt = 0;
 const RELEASES_AUTO_REFRESH_COOLDOWN_MS = 5 * 60 * 1000; // applies ONLY to auto-refresh
 // Last refresh's per-artist outcome, so the renderer can surface a debug view
-let lastRefreshDebug = null; // { resolved: [{name, id, albumCount, recentCount}], failures: [...] }
 
 async function itunesSearchArtistLocal(name) {
   try {
@@ -5205,99 +4480,15 @@ async function fetchJsonWithRetry(url, { retries = 3, timeoutMs = 9000 } = {}) {
 // token in the URL to 600x600 before handing records back, so nothing
 // here needs to touch artwork sizing.
 
-let chartsCache = null; // { at, data }
-const CHARTS_TTL_MS = 30 * 60 * 1000;
 
-ipcMain.handle('charts:fetch', async () => {
-  try {
-    if (chartsCache && Date.now() - chartsCache.at < CHARTS_TTL_MS) return chartsCache.data;
-    
-    // Charts are not wired up. iTunes' RSS feeds could back this later;
-    // returning empty keeps the tab inert rather than half-broken.
-    const data = { ok: true, songs: [], albums: [] };
-    chartsCache = { at: Date.now(), data };
-    return data;
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 // The iTunes Search API's base; the lookups below were written against a
 // constant that was never declared.
 const ITUNES_API = 'https://itunes.apple.com';
 
-ipcMain.handle('charts:lookupSong', async (_e, id) => {
-  try {
-    if (!id) return { ok: false, error: 'no id' };
-    
-    // Charts IDs are iTunes track IDs, so this is a direct lookup. (It used
-    // to call an itunesGetTrackById that never existed, so it always failed.)
-    const res = await net.fetch(`${ITUNES_API}/lookup?${new URLSearchParams({ id: String(id), entity: 'song' })}`, {
-      headers: { 'User-Agent': 'Immerse/1.0' },
-    });
-    if (!res.ok) throw new Error(`iTunes lookup ${res.status}`);
-    const json = await res.json();
-    const t = (Array.isArray(json?.results) ? json.results : []).find((r) => r?.wrapperType === 'track' || r?.kind === 'song');
-    if (!t) return { ok: false, error: 'not found' };
 
-    return {
-      ok: true,
-      track: {
-        trackId: t.trackId || id,
-        trackName: t.trackName || '',
-        artistName: t.artistName || '',
-        collectionName: t.collectionName || '',
-        artworkUrl: String(t.artworkUrl100 || '').replace(/\/\d+x\d+bb\./, '/600x600bb.'),
-        trackTimeMillis: t.trackTimeMillis || 0,
-        trackNumber: t.trackNumber ?? null,
-        explicit: t.trackExplicitness === 'explicit',
-      },
-    };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
+ // qLower -> { at, data }
 
-const artistSearchCache = new Map(); // qLower -> { at, data }
-const ARTIST_SEARCH_TTL_MS = 5 * 60 * 1000;
-
-ipcMain.handle('artists:searchCandidates', async (_e, q) => {
-  try {
-    const term = String(q || '').trim();
-    if (term.length < 2) return { ok: true, candidates: [] };
-    const key = term.toLowerCase();
-    const cached = artistSearchCache.get(key);
-    if (cached && Date.now() - cached.at < ARTIST_SEARCH_TTL_MS) return cached.data;
-
-    const results = await itunesSearchArtists(term, 8);
-    const candidates = results.map((r) => ({
-      artistId: r.artistId,
-      artistName: r.artistName,
-      genre: r.genre || '',
-    }));
-
-    // Best-effort enrichment: artwork, release count and latest year come
-    // from the artist's album list (iTunes has no artist-artwork field).
-    if (candidates.length) {
-      try {
-        for (const c of candidates) {
-          const albums = await itunesLookupArtistAlbumsLocal(c.artistId, 25);
-          if (!albums.length) continue;
-          c.artworkUrl = albums[0].artworkUrl || '';
-          c.albumCount = albums.length;
-          const yr = parseInt(String(albums[0].releaseDate).slice(0, 4), 10);
-          if (Number.isFinite(yr) && yr > 1900) c.latestYear = yr;
-        }
-      } catch { /* enrichment is optional */ }
-    }
-
-    const data = { ok: true, candidates };
-    artistSearchCache.set(key, { at: Date.now(), data });
-    return data;
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 /* ---------------------------------------------------------------------------
  *  Artist header images.
@@ -5435,75 +4626,9 @@ ipcMain.handle('artists:headerImage', async (_e, name, artistId) => {
   }
 });
 
-// Per-artist info cache (genre / latest year / release count / artwork), keyed
-// by iTunes artist id, so the Followed-artists list doesn't re-hit iTunes on
-// every open.
-const followedArtistInfoCache = new Map(); // artistId -> { at, data }
-const FOLLOWED_ARTIST_INFO_TTL_MS = 12 * 60 * 60 * 1000; // 12h
+ // artistId -> { at, data }
+ // 12h
 
-/**
- * Look up display info for a set of followed artists, regardless of whether
- * they have a release in the recent-releases cache. Input: an array of
- * { name, itunesArtistId }. Resolves any missing IDs by name, then batches
- * album lookups to compute genre, latest release year, release count and cover
- * art. Returns { ok, info } keyed by lowercased artist name.
- */
-ipcMain.handle('artists:info', async (_e, artists) => {
-  try {
-    const list = Array.isArray(artists) ? artists : [];
-    if (!list.length) return { ok: true, info: {} };
-
-    // Resolve each artist to an iTunes artistId (use the pinned id when present).
-    const resolved = []; // { key, id }
-    for (const a of list) {
-      const name = String(a?.name || '').trim();
-      if (!name) continue;
-      const key = name.toLowerCase();
-      let id = Number(a?.itunesArtistId) || null;
-      if (!id) {
-        try {
-          const artist = await itunesSearchArtistLocal(name);
-          if (artist?.artistId) id = artist.artistId;
-        } catch { /* skip — leave this artist without info */ }
-      }
-      if (id) resolved.push({ key, id });
-    }
-    if (!resolved.length) return { ok: true, info: {} };
-
-    const info = {};
-    const need = []; // ids not in cache
-    for (const r of resolved) {
-      const c = followedArtistInfoCache.get(r.id);
-      if (c && Date.now() - c.at < FOLLOWED_ARTIST_INFO_TTL_MS) { info[r.key] = c.data; }
-      else need.push(r);
-    }
-
-    // Get artist info for uncached ids
-    for (const r of need) {
-      try {
-        const albums = await itunesLookupArtistAlbumsLocal(r.id, 50);
-        if (albums.length) {
-          const latestYear = albums
-            .map((a) => parseInt(String(a.releaseDate).slice(0, 4), 10))
-            .filter((y) => Number.isFinite(y) && y > 1900)
-            .sort((a, b) => b - a)[0] || 0;
-          const data = {
-            genre: albums[0].genre || '',
-            latestYear,
-            releaseCount: albums.length,
-            artworkUrl: albums[0].artworkUrl || '',
-          };
-          followedArtistInfoCache.set(r.id, { at: Date.now(), data });
-          info[r.key] = data;
-        }
-      } catch { /* skip this artist; they just stay bare */ }
-    }
-
-    return { ok: true, info };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
 
 /**
  * Refresh releases for a list of artist names. Resolves each artist's iTunes
@@ -5624,7 +4749,6 @@ async function refreshReleasesForArtists(artistNames, knownIds) {
   const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(`[releases] refresh done in ${secs}s — ${resolved.length}/${artistNames.length} artists, ${newlyResolved} newly resolved, ${allReleases.length} rows stored, ${recentTotal} recent, ${failures.length} failures`);
 
-  lastRefreshDebug = { resolved, failures, at: Date.now() };
   return { upserted: allReleases.length, resolved, failures };
 }
 
@@ -5702,10 +4826,6 @@ ipcMain.handle('releases:refresh', async (event, { artistNames, mode = 'manual' 
   }
 });
 
-/** Get the debug report from the most recent refresh for display in the UI. */
-ipcMain.handle('releases:getDebug', async () => {
-  return { ok: true, debug: lastRefreshDebug };
-});
 
 /** Get current follow-overrides (manual adds + manual excludes). */
 ipcMain.handle('releases:loadOverrides', async () => {

@@ -530,7 +530,7 @@ export function SoulseekCredsPanel({ compact = false, onStatus, onSaved }) {
  * has the full version (test connection, playback check); this is the
  * first-run version of the same sign-in.
  */
-export function SpotifySignInPanel({ onSignedIn }) {
+function SpotifySignInPanel({ onSignedIn }) {
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');

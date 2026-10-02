@@ -2677,7 +2677,6 @@ const STYLES = `
 .isx-filter-d { font-size: 11px; color: rgba(var(--st-sub-rgb), 0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .isx-tip { padding: 12px 12px 4px; font-size: 11.5px; line-height: 1.5; color: rgba(var(--st-sub-rgb), 0.38); }
 .isx-input::placeholder { color: rgba(var(--st-fg-rgb), 0.28); font-weight: 500; }
-.isx-busy { flex-shrink: 0; font-size: 11px; color: rgba(var(--st-sub-rgb), 0.32); animation: stPulse 1.4s ease infinite; }
 .isx-token { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; max-width: 260px;
   padding: 4px 7px 4px 8px; border-radius: 7px; white-space: nowrap; overflow: hidden; font-family: inherit; font-size: 11.5px; font-weight: 700;
   background: rgba(var(--st-acc-rgb), 0.16); color: rgb(var(--st-acc-rgb)); border: 1px solid rgba(var(--st-acc-rgb), 0.3); }
@@ -2861,12 +2860,6 @@ const STYLES = `
 
 /* Band pager. Lives in the section header rather than as a row of its own,
    so the band stays a fixed three rows and costs no extra cursor stop. */
-.isx-pager { display: inline-flex; gap: 3px; margin-left: 8px; }
-.isx-pager button { display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; padding: 0; border-radius: 6px; cursor: pointer; font-family: inherit;
-  border: 1px solid rgba(var(--st-fg-rgb), 0.12); background: rgba(var(--st-fg-rgb), 0.04);
-  color: rgba(var(--st-fg-rgb), 0.45); }
-.isx-pager button:hover { background: rgba(var(--st-fg-rgb), 0.12); color: #fff; }
 
 /* "You have this" — the chip that keeps a deliberately skipped search from
    reading as a broken one. */

@@ -45,7 +45,7 @@ const canvasStyleFor = (style) => {
 const WHITE = [[255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255]];
 
 /* With `useCover` off, plain white: it reads on any album's bar colour. */
-export function vizPalette(palette, accent, useCover = true) {
+function vizPalette(palette, accent, useCover = true) {
   if (!useCover) return WHITE;
   const parse = (c) => String(c || '').split(',').map((n) => Number(n.trim())).filter((n) => Number.isFinite(n));
   let cols = (palette || []).map(parse).filter((c) => c.length === 3);

@@ -21,7 +21,7 @@ function userTokenPath() {
 /**
  * Disk file wins per-field when non-empty, then env fills gaps.
  */
-export function loadSpotifyCredentials() {
+function loadSpotifyCredentials() {
   const envId = (process.env.SPOTIFY_CLIENT_ID || '').trim();
   const envSecret = (process.env.SPOTIFY_CLIENT_SECRET || '').trim();
   let fileId = '';
@@ -42,7 +42,7 @@ export function loadSpotifyCredentials() {
 
 let tokenCache = { token: null, expiresAt: 0 };
 
-export function invalidateSpotifyTokenCache() {
+function invalidateSpotifyTokenCache() {
   tokenCache = { token: null, expiresAt: 0 };
 }
 
@@ -139,8 +139,8 @@ export async function getSpotifyAccessToken() {
  * ========================================================================= */
 
 export const SPOTIFY_OAUTH_PORT = 8888;
-export const SPOTIFY_OAUTH_REDIRECT_URI = `http://127.0.0.1:${SPOTIFY_OAUTH_PORT}/callback`;
-export const SPOTIFY_OAUTH_SCOPES = [
+const SPOTIFY_OAUTH_REDIRECT_URI = `http://127.0.0.1:${SPOTIFY_OAUTH_PORT}/callback`;
+const SPOTIFY_OAUTH_SCOPES = [
   'playlist-read-private',
   'playlist-read-collaborative',
 ].join(' ');
@@ -212,7 +212,7 @@ export function loadUserToken() {
   }
 }
 
-export function saveUserToken(tok) {
+function saveUserToken(tok) {
   fs.mkdirSync(path.dirname(userTokenPath()), { recursive: true });
   fs.writeFileSync(userTokenPath(), JSON.stringify(tok), 'utf8');
 }
@@ -377,7 +377,6 @@ export async function getValidUserToken() {
    one rate limit turned each later keystroke into more 429s (and Developer
    Mode's waits get longer the more it's asked). */
 let clientBlockedUntil = 0;
-export function spotifyClientRateLimited() { return clientBlockedUntil > Date.now(); }
 
 async function spotifyGet(urlStr, attempt = 0) {
   if (clientBlockedUntil > Date.now()) {

@@ -345,7 +345,7 @@ export const helperPathfinder = (op, hash, variables) => helperRequest({ cmd: 'p
 /** An artist's whole discography from the session (artist pages). */
 export const helperDiscography = (id) => helperRequest({ cmd: 'discography', id: String(id || '') }, 30_000);
 
-export function stopHelper() {
+function stopHelper() {
   quitting = true;
   clearTimeout(restartTimer);
   if (proc) {

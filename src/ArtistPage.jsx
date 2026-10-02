@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { PreviewButton, stop as stopPreview } from './previewPlayer.jsx';
 import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent, accentTextColor } from './coverTheme.js';
 import { PlayIcon } from './sharedUI.jsx';
-import { formatTotalMs, titleCollator, parseGenres } from './mediaUtils.js';
+import { formatTotalMs } from './mediaUtils.js';
 
 /* =========================================================================
  *  studio — artist page
@@ -851,7 +851,6 @@ export default function ArtistPage({
   const [profileState, setProfileState] = useState('idle'); // idle | loading | done
   const [remote, setRemote] = useState(null);   // spotifyArtistAlbums result
   const [remoteState, setRemoteState] = useState('idle');
-  const [showAllTracks, setShowAllTracks] = useState(false);
   const [stuck, setStuck] = useState(false);
   const scrollRef = useRef(null);
 
@@ -1089,7 +1088,6 @@ export default function ArtistPage({
 
   /* ---- Artist profile (photo, genres) ---------------------------------- */
   useEffect(() => {
-    setShowAllTracks(false);
     setRemote(null);
     setRemoteState('idle');
     if (!key) return undefined;
@@ -1248,34 +1246,12 @@ export default function ArtistPage({
     return m;
   }, [playEvents]);
 
-  const topTracks = useMemo(() => {
-    const list = [...(artist?.tracks || [])];
-    list.sort((a, b) => (playCounts.get(b.id) || 0) - (playCounts.get(a.id) || 0)
-      || (b.addedAt || 0) - (a.addedAt || 0)
-      || titleCollator.compare(a.title || '', b.title || ''));
-    return list;
-  }, [artist, playCounts]);
 
   const totalPlays = useMemo(
     () => (artist?.tracks || []).reduce((n, t) => n + (playCounts.get(t.id) || 0), 0),
     [artist, playCounts],
   );
 
-  /* ---- Genres — file tags first, Spotify only to fill a gap ------------ */
-  const genres = useMemo(() => {
-    const seen = new Map();
-    for (const t of artist?.tracks || []) {
-      for (const g of parseGenres(t.genre)) {
-        const k = g.toLowerCase();
-        if (!seen.has(k)) seen.set(k, { g, n: 0 });
-        seen.get(k).n += 1;
-      }
-    }
-    if (seen.size) {
-      return [...seen.values()].sort((a, b) => b.n - a.n).slice(0, 4).map((x) => x.g);
-    }
-    return (profile?.genres || []).slice(0, 4);
-  }, [artist, profile]);
 
   /* ---- Catalogue you don't own ------------------------------------------
    * Only fetched on demand: it's a second network call per artist and most
@@ -1325,43 +1301,7 @@ export default function ArtistPage({
     if (sp.status === 'error' && (disc.status === 'error' || disc.status === 'idle') && remoteState === 'idle' && profile?.id) loadRemote();
   }, [sp.status, disc.status, remoteState, profile, loadRemote]);
 
-  const catalogue = useMemo(() => (spData
-    ? [...(spData.albums || []), ...(spData.singles || []), ...(spData.compilations || [])]
-      .map((r) => ({ ...r, albumGroup: r.group === 'single' ? 'single' : 'album' }))
-    : remote), [spData, remote]);
 
-  const missing = useMemo(() => {
-    const remote = catalogue;
-    if (!Array.isArray(remote) || !remote.length) return [];
-    const owned = new Set();
-    for (const t of artist?.tracks || []) {
-      const n = normRelease(t.album);
-      if (n) owned.add(n);
-    }
-    /* A track with no album tag counts as owning the single of the same name —
-       that's how a loose rip lines up with Spotify's single release.
-       Restricted to UNTAGGED tracks on purpose: matching every track title
-       would let one song off an album mark the whole album as owned, which
-       hides a real gap. */
-    for (const t of artist?.tracks || []) {
-      if ((t.album || '').trim()) continue;
-      const n = normRelease(t.title);
-      if (n) owned.add(n);
-    }
-    const seen = new Set();
-    const out = [];
-    for (const r of remote) {
-      const n = normRelease(r.name);
-      if (!n || owned.has(n) || seen.has(n)) continue;
-      seen.add(n);
-      out.push(r);
-    }
-    /* Records before one-offs — a missing album is a real gap, a missing
-       single usually isn't. Newest first within each. */
-    const rank = (r) => (r.albumGroup === 'single' || r.totalTracks === 1 ? 1 : 0);
-    out.sort((a, b) => rank(a) - rank(b) || String(b.releaseDate).localeCompare(String(a.releaseDate)));
-    return out;
-  }, [catalogue, artist]);
 
   /* Spotify's Popular list, each row matched to a library track if you have
      it — a match plays, a miss goes to search. */
@@ -1466,17 +1406,10 @@ export default function ArtistPage({
 
   const albums = artist.albums || [];
   const singles = artist.singles || [];
-  const appearsOn = artist.appearsOn || [];
   const totalMs = (artist.totalSec || 0) * 1000;
   const runtime = formatTotalMs(totalMs);
   const currentId = currentTrack?.id;
 
-  const playAll = (list, shuffle = false) => {
-    const src = list && list.length ? list : artist.tracks;
-    if (!src || !src.length) return;
-    const ordered = shuffle ? [...src].sort(() => Math.random() - 0.5) : src;
-    onPlayTrack?.(ordered[0], ordered);
-  };
 
   const statLine = [
     albums.length ? `${albums.length} album${albums.length === 1 ? '' : 's'}` : null,
