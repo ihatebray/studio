@@ -236,66 +236,6 @@ function CardGrid({ children }) {
   );
 }
 
-/** One row of the top-tracks list. Same column rhythm as the album page's
- *  tracklist, plus a plays column — the reason this list exists. */
-function TrackRow({ n, track, art, plays, playing, isPlaying, accent, onPlay, onTogglePlay }) {
-  const [hot, setHot] = useState(false);
-  /* Clicking the row that's already current toggles it. Restarting a track
-     you're listening to is never what the click meant. */
-  const activate = () => { if (playing && onTogglePlay) onTogglePlay(); else onPlay(); };
-  const showPause = playing && isPlaying;
-  return (
-    <div
-      role="button" tabIndex={0} onClick={activate}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } }}
-      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
-      style={{
-        display: 'grid', gridTemplateColumns: '30px 40px minmax(0, 2.4fr) minmax(0, 1.4fr) 62px 52px',
-        alignItems: 'center', gap: 14, padding: '7px 12px', borderRadius: 9, cursor: 'pointer',
-        background: hot ? 'rgba(var(--st-fg-rgb), 0.055)' : 'transparent',
-        transition: 'background 0.13s ease',
-      }}>
-      <span style={{
-        textAlign: 'right', fontSize: 12.5, fontWeight: 650, fontVariantNumeric: 'tabular-nums',
-        color: playing ? `rgb(${accent})` : `rgba(var(--st-sub-rgb), ${hot ? 0.8 : 0.35})`,
-        display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-      }}>
-        {/* Hover states what the click will do — pause for the track you can
-            hear, play for anything else. */}
-        {hot ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-            {showPause
-              ? <><rect x="6.5" y="5" width="3.6" height="14" rx="1.1" /><rect x="13.9" y="5" width="3.6" height="14" rx="1.1" /></>
-              : <path d="M8 6.5v11l9.5-5.5z" />}
-          </svg>
-        ) : n}
-      </span>
-      <span style={{
-        width: 40, height: 40, borderRadius: 6, flexShrink: 0,
-        background: art ? `url("${String(art).replace(/"/g, '%22')}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
-      }} />
-      <span style={{ minWidth: 0 }}>
-        <span style={{
-          display: 'block', fontSize: 13.5, fontWeight: 650,
-          color: playing ? `rgb(${accent})` : 'var(--st-text)',
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>{track.title || 'Unknown track'}</span>
-      </span>
-      <span style={{
-        fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.45)',
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-      }}>{(track.album || '').trim() || 'Single'}</span>
-      <span style={{
-        textAlign: 'right', fontSize: 12, fontWeight: 650, fontVariantNumeric: 'tabular-nums',
-        color: 'rgba(var(--st-sub-rgb), 0.4)',
-      }}>{plays ? plays.toLocaleString() : '—'}</span>
-      <span style={{
-        textAlign: 'right', fontSize: 12, fontWeight: 650, fontVariantNumeric: 'tabular-nums',
-        color: 'rgba(var(--st-sub-rgb), 0.4)',
-      }}>{fmtDur(track.duration)}</span>
-    </div>
-  );
-}
 
 /* ---- Spotify pieces ------------------------------------------------------
    Everything below renders data from the signed-in Spotify account
@@ -304,13 +244,6 @@ function TrackRow({ n, track, art, plays, playing, isPlaying, accent, onPlay, on
    sections read as more of the same page, not a panel bolted onto it. */
 
 const fmtCount = (n) => (Number.isFinite(n) && n > 0 ? Math.round(n).toLocaleString() : '');
-const fmtShort = (n) => {
-  if (!Number.isFinite(n) || n <= 0) return '';
-  if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K`;
-  return String(n);
-};
 const fmtMs = (ms) => (ms ? fmtDur(ms / 1000) : '');
 
 /* Column layout shared by the header and every row, so the labels sit

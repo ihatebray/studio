@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent, accentTextColor } from './coverTheme.js';
+import { sampleImageTheme, isFallbackTheme, recordWashSource } from './coverTheme.js';
 import { PlayIcon } from './sharedUI.jsx';
 
 /* =========================================================================

@@ -392,7 +392,6 @@ export default function StudioShell({
         onRenamePlaylist={onRenamePlaylist}
         onUpdatePlaylist={onUpdatePlaylist}
         onSetAlbumCover={onSetAlbumCover}
-        onUpdateAlbumMetadata={onUpdateAlbumMetadata}
         onRemoveFromPlaylist={onRemoveFromPlaylist}
         onImportFiles={onImportFiles}
         onImportSpotify={onImportSpotify}

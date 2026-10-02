@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import Icons from './Icons.jsx';
 import { formatTime, titleCollator } from './mediaUtils.js';
 import { DownloadProgressBar, useDownloadProgress, VideoPicker, PlayIcon } from './sharedUI.jsx';
 import { useToast } from './Toasts.jsx';

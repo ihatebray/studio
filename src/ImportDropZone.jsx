@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 /* =========================================================================
  *  ImportDropZone — drop audio files or folders anywhere on the window.

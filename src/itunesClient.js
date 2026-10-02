@@ -28,18 +28,6 @@ const ITUNES_LOOKUP_URL = 'https://itunes.apple.com/lookup';
 /** Prefix marking iTunes IDs travelling through Spotify-shaped fields. */
 export const ITUNES_ID_PREFIX = 'itunes:';
 
-/**
- * The LEAD credit of an artist string — who a record is actually BY, before
- * guests ride along. Mirrors leadCredit() in instantSearch.js on purpose: the
- * renderer and this module have to agree about whose song something is, or the
- * two of them filter features differently and the disagreement shows up as
- * rows that survive one pass and not the other.
- */
-function leadCreditOf(s) {
-  return String(s || '')
-    .split(/\s*(?:,|;|\/|&|\bfeat\.?\b|\bft\.?\b|\bwith\b|\bvs\.?\b)\s*/i)[0]
-    .trim();
-}
 
 /**
  * Is this credit BY this artist? Mirrors creditMatchesArtist in

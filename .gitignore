@@ -12,3 +12,4 @@ spotify-user-token.json
 .env.local
 studio-spotify/target/
 
+dist/
