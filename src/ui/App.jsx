@@ -11,6 +11,7 @@ import { useToastBus, ToastStack, ToastContext, recordNotice } from './Toasts.js
 import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from '../lib/spotifyMediaElement.js';
 import { playContextFor } from '../lib/playContext.js';
 import { titleCollator } from '../lib/mediaUtils.js';
+import { loadCustomFonts } from '../lib/customFonts.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
 import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
 
@@ -404,7 +405,9 @@ export default function App() {
   // next time the player is actually used (currentTrack appears), then
   // flips back to true so future idle periods can re-engage.
   const [ambientArmed, setAmbientArmed] = useState(true);
-  const [uiFontId] = useState(getStoredFontId);
+  const [uiFontId, setUiFontId] = useState(getStoredFontId);
+  /* Fonts you added yourself are registered with the page once, at startup. */
+  useEffect(() => { loadCustomFonts(); }, []);
   /** Session flag — flips true the first time any track starts. Resets on next
    * launch. Used to render the Welcome screen until the user plays something. */
   const [hasEverPlayed, setHasEverPlayed] = useState(false);
@@ -2767,6 +2770,8 @@ export default function App() {
         onReorderQueue={reorderQueue}
         imgbbApiKey={imgbbApiKey}
         onSetImgbbApiKey={setImgbbApiKey}
+        uiFontId={uiFontId}
+        onSetUiFontId={setUiFontId}
       />
 
       {/* Drag strip and window controls both removed from here.

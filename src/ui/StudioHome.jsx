@@ -103,6 +103,8 @@ export default function StudioHome({
   onSetDiscordPresenceDetail,
   imgbbApiKey = '',
   onSetImgbbApiKey,
+  uiFontId,              // the UI font (uiFonts.js), and its setter
+  onSetUiFontId,
   /** Re-runs first-launch setup. Temporary, for reviewing the flow. */
   onReplayOnboarding,
   discordHideWhenPaused = true,
@@ -2637,6 +2639,8 @@ export default function StudioHome({
               onSetDiscordPresenceDetail={onSetDiscordPresenceDetail}
               onSetDiscordPresenceEnabled={onSetDiscordPresenceEnabled}
               onSetImgbbApiKey={onSetImgbbApiKey}
+              uiFontId={uiFontId}
+              onSetUiFontId={onSetUiFontId}
               onSetTransitionMode={onSetTransitionMode}
               onSpotifyCredsSaved={onSpotifyCredsSaved}
               pickAccentFixed={pickAccentFixed}

@@ -96,6 +96,8 @@ export default function StudioShell({
   onSetDiscordHideWhenPaused,
   imgbbApiKey = '',
   onSetImgbbApiKey,
+  uiFontId,
+  onSetUiFontId,
   // The live play queue (owned by App.jsx) — the overlay's "Up next" card.
   queue = [],
   queueIndex = -1,
@@ -375,6 +377,8 @@ export default function StudioShell({
         onSetDiscordHideWhenPaused={onSetDiscordHideWhenPaused}
         imgbbApiKey={imgbbApiKey}
         onSetImgbbApiKey={onSetImgbbApiKey}
+        uiFontId={uiFontId}
+        onSetUiFontId={onSetUiFontId}
         themeRgb={themeRgb}
       />
 

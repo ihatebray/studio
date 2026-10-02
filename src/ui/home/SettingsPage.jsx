@@ -5,9 +5,12 @@ import { SoulseekCredsPanel, SpotifyCredsPanel } from '../StudioOnboarding.jsx';
 import { ToastPositionPicker } from '../Toasts.jsx';
 import { hexToRgb, rgbToHex } from './common.jsx';
 import { NP_BAR_DEFAULT, THEME_DEFAULTS } from './constants.js';
+import FontSettings from './FontSettings.jsx';
 import { SetHowTo, SetLit, SetRow, SetSeg, SetToggle, SpotifyAccountPanel, StudioColorPicker } from './Settings.jsx';
 
 export default function SettingsPage({
+  uiFontId,
+  onSetUiFontId,
   accentFixed,
   accentMode,
   clearing,
@@ -69,6 +72,7 @@ export default function SettingsPage({
   const cat = setCat === 'playback' || setCat === 'discord' ? 'system' : setCat;
   const CATS = {
     colour: ['Color', 'Which surfaces take their colour from the artwork, and how strongly.'],
+    font: ['Font', 'The typeface for the whole app. Rounded faces only; add your own under My fonts.'],
     layout: ['Layout', 'How pages and lists are arranged.'],
     library: ['Library', 'What the song table shows, and managing the library itself.'],
     system: ['System', 'Playback behaviour and what studio shares with Discord.'],
@@ -86,6 +90,7 @@ export default function SettingsPage({
       <nav className="sth-set-rail" aria-label="Settings categories">
         <div className="lbl st-eyebrow">Appearance</div>
         {navBtn('colour', 'Color', <><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18" /></>)}
+        {navBtn('font', 'Font', <><path d="M5 19 10.5 5h1L17 19" /><path d="M7.5 13.5h7" /></>)}
         {navBtn('layout', 'Layout', <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>)}
         {navBtn('library', 'Library', <path d="M4 6h16M4 12h16M4 18h10" />)}
         <div className="lbl st-eyebrow">System</div>
@@ -154,6 +159,8 @@ export default function SettingsPage({
             </SetRow>
           </div>
         ) : null}
+
+        {cat === 'font' ? <FontSettings uiFontId={uiFontId} onSetUiFontId={onSetUiFontId} /> : null}
 
         {cat === 'layout' ? (
           <div className="sth-set-list">
