@@ -11,7 +11,6 @@ import { useToastBus, ToastStack, ToastContext, recordNotice } from './Toasts.js
 import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from './spotifyMediaElement.js';
 import { playContextFor } from './playContext.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
-import { useMiniPlayerBridge } from './useMiniPlayerBridge.js';
 import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
 
 function uid() {
@@ -1671,11 +1670,24 @@ export default function App() {
    *  Summed rather than maxed: what a listener wants to know is how much is
    *  coming off in total, not which node took it. Read live off the audio
    *  thread, so the boost popover only polls this while it is open. */
+  const helperReductionRef = useRef({ db: 0, at: 0 });
   const getGainReduction = useCallback(() => {
     const c = compressorRef.current?.reduction ?? 0;
     const l = limiterRef.current?.reduction ?? 0;
-    return (Number.isFinite(c) ? c : 0) + (Number.isFinite(l) ? l : 0);
+    // Spotify plays through the helper, not this graph; its limiter reports
+    // with each levels event, which only arrive while it is playing.
+    const sp = helperReductionRef.current;
+    const h = Date.now() - sp.at < 250 ? sp.db : 0;
+    return (Number.isFinite(c) ? c : 0) + (Number.isFinite(l) ? l : 0) + h;
   }, []);
+
+  /* The same boost for Spotify, applied by the helper's own limiter. */
+  useEffect(() => {
+    window.electronAPI?.spotifyPlayerBoost?.(gainBoost)?.catch?.(() => {});
+  }, [gainBoost]);
+  useEffect(() => window.electronAPI?.onSpotifyPlayerEvent?.((ev) => {
+    if (ev?.event === 'levels' && Number.isFinite(ev.gr)) helperReductionRef.current = { db: ev.gr, at: Date.now() };
+  }), []);
 
   // Resume the audio context whenever playback begins — Chrome auto-suspends
   // it on inactivity, and after a tab backgrounds-then-foregrounds the
@@ -2979,7 +2991,7 @@ export default function App() {
        started — not references into `library`. So updating the library alone
        left `currentTrack.isFavorite` frozen at whatever it was when the song
        started, and every surface reading the current track (the now-playing
-       bar's heart, the mini player, the panel) could never show the change.
+       bar's heart, the panel) could never show the change.
        Both have to move together. */
     const applyFav = (value) => {
       setLibrary((lib) => lib.map((t) => (t.id === id ? { ...t, isFavorite: value } : t)));
@@ -3596,32 +3608,6 @@ export default function App() {
     const libMap = new Map(libraryRef.current.map((t) => [t.id, t]));
     return ids.map((id) => libMap.get(id)).filter(Boolean);
   };
-
-  // Feeds the always-on-top mini window and applies the commands it sends
-  // back. Every callback here is the same one StudioShell gets — the mini is
-  // a remote for THIS engine, not a second one, so there's still exactly one
-  // <audio> graph, one Discord presence, one stream of play events.
-  //
-  // Placement: below every transport callback it closes over (toggleFavorite
-  // is the last, ~line 2722) and above the render. It publishes nothing until
-  // the mini window is actually open.
-  useMiniPlayerBridge({
-    currentTrack,
-    isPlaying,
-    currentTime,
-    duration,
-    volume,
-    shuffleOn,
-    repeat,
-    onTogglePlay: togglePlay,
-    onPrev: handlePrev,
-    onNext: handleNext,
-    onSeek: seekTo,
-    onSetVolume: setVolume,
-    onToggleShuffle: toggleShuffle,
-    onToggleRepeat: () => setRepeat((p) => (p === 'off' ? 'all' : p === 'all' ? 'one' : 'off')),
-    onToggleFavorite: toggleFavorite,
-  });
 
   const inElectron = typeof window !== 'undefined' && !!window.electronAPI;
   const uiFontStack = presetById(uiFontId).stack;

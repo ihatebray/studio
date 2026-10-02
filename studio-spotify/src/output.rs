@@ -11,7 +11,10 @@
 //!   still writing from the old position, until the player announces the new
 //!   one (`arm`);
 //! * volume is applied at the output, so a change is heard at once instead
-//!   of after the queue.
+//!   of after the queue;
+//! * boost (gain past full volume, for quietly mastered tracks) is applied
+//!   to each packet as it is queued, through a peak limiter so the extra
+//!   gain never clips.
 //!
 //! Like the stock backend, audio goes to the sound card and nowhere else.
 
@@ -38,6 +41,18 @@ const DRAIN_POLL: Duration = Duration::from_millis(10);
 /// default where a fixed size is refused.
 const DEVICE_FRAMES: u32 = 2048;
 
+/// Boost range, as a gain multiplier: 1 is off, 16 is +24 dB.
+pub const MIN_BOOST: f32 = 1.0;
+pub const MAX_BOOST: f32 = 16.0;
+/// The limiter's ceiling, just under full scale.
+const CEILING: f32 = 0.977; // -0.2 dBFS
+/// How fast the limiter lets go once a peak has passed.
+const RELEASE_S: f32 = 0.08;
+
+pub fn clamp_boost(v: f32) -> f32 {
+    if v.is_finite() { v.clamp(MIN_BOOST, MAX_BOOST) } else { MIN_BOOST }
+}
+
 const OPEN: u8 = 0;
 const CLEARED: u8 = 1;
 
@@ -49,6 +64,7 @@ pub struct Cue {
     state: Arc<AtomicU8>,
     generation: Arc<AtomicU32>,
     volume: Arc<AtomicU32>,
+    boost: Arc<AtomicU32>,
     /// Track the player is being moved to; only its announcement arms.
     expect: Arc<Mutex<Option<String>>>,
     stale: Arc<AtomicU8>,
@@ -60,6 +76,7 @@ impl Cue {
     pub fn new(volume: f32) -> Self {
         let cue = Self::default();
         cue.set_volume(volume);
+        cue.set_boost(MIN_BOOST);
         cue
     }
 
@@ -105,8 +122,50 @@ impl Cue {
         f32::from_bits(self.volume.load(Ordering::Relaxed))
     }
 
+    pub fn set_boost(&self, v: f32) {
+        self.boost.store(clamp_boost(v).to_bits(), Ordering::Relaxed);
+    }
+
+    fn boost(&self) -> f32 {
+        f32::from_bits(self.boost.load(Ordering::Relaxed))
+    }
+
     fn admit(&self) -> bool {
         self.state.load(Ordering::Relaxed) == OPEN
+    }
+}
+
+/// Gain past full volume, then a peak limiter so it can't clip. Instant
+/// attack (the gain drops to exactly what the loudest sample of a frame
+/// allows), exponential release. At a boost of 1 nothing is touched.
+struct Limiter {
+    gain: f32,
+    release: f32,
+}
+
+impl Limiter {
+    fn new(rate: u32) -> Self {
+        Self { gain: 1.0, release: 1.0 - (-1.0 / (RELEASE_S * rate as f32)).exp() }
+    }
+
+    /// Boosts `samples` (interleaved) in place; returns the deepest gain
+    /// reduction applied, in dB (0 when the limiter never engaged).
+    fn process(&mut self, samples: &mut [f32], channels: usize, boost: f32) -> f32 {
+        if boost <= MIN_BOOST && self.gain >= 1.0 {
+            return 0.0;
+        }
+        let mut deepest = 1.0f32;
+        for frame in samples.chunks_mut(channels.max(1)) {
+            let peak = frame.iter().fold(0.0f32, |m, s| m.max(s.abs())) * boost;
+            let allowed = if peak > CEILING { CEILING / peak } else { 1.0 };
+            self.gain = (self.gain + (1.0 - self.gain) * self.release).min(allowed);
+            deepest = deepest.min(self.gain);
+            let g = boost * self.gain;
+            for s in frame.iter_mut() {
+                *s *= g;
+            }
+        }
+        if deepest < 1.0 { 20.0 * deepest.log10() } else { 0.0 }
     }
 }
 
@@ -119,6 +178,8 @@ struct Chunk {
     live: Arc<AtomicUsize>,
     /// This packet's band levels, published when its first sample plays.
     bands: Option<[u8; BANDS]>,
+    /// The limiter's deepest reduction in this packet, dB.
+    reduction: f32,
     levels: Arc<Levels>,
 }
 
@@ -129,6 +190,7 @@ impl Iterator for Chunk {
             return None;
         }
         if let Some(b) = self.bands.take() {
+            self.levels.publish_reduction(self.reduction);
             self.levels.publish(&b);
         }
         self.samples.next()
@@ -164,6 +226,7 @@ pub struct CuedSink {
     live: Arc<AtomicUsize>,
     volume: f32,
     analyser: Analyser,
+    limiter: Limiter,
 }
 
 impl CuedSink {
@@ -179,7 +242,15 @@ impl CuedSink {
         sink.pause();
         let volume = cue.volume();
         sink.set_volume(volume);
-        Ok(Self { sink, _stream: stream, cue, live: Arc::default(), volume, analyser: Analyser::new(SAMPLE_RATE) })
+        Ok(Self {
+            sink,
+            _stream: stream,
+            cue,
+            live: Arc::default(),
+            volume,
+            analyser: Analyser::new(SAMPLE_RATE),
+            limiter: Limiter::new(SAMPLE_RATE),
+        })
     }
 
     fn follow_volume(&mut self) {
@@ -211,8 +282,11 @@ impl Sink for CuedSink {
             return Ok(()); // audio from before a skip/seek: dropped
         }
         let samples = packet.samples().map_err(|e| SinkError::OnWrite(e.to_string()))?;
-        let samples = converter.f64_to_f32(samples);
+        let mut samples = converter.f64_to_f32(samples);
+        // The analyser sees the music before boost, so the visualizer
+        // doesn't jump when boost changes.
         let bands = self.analyser.feed(&samples, NUM_CHANNELS as usize);
+        let reduction = self.limiter.process(&mut samples, NUM_CHANNELS as usize, self.cue.boost());
         self.live.fetch_add(1, Ordering::Relaxed);
         self.sink.append(Chunk {
             samples: SamplesBuffer::new(NUM_CHANNELS as rodio::ChannelCount, SAMPLE_RATE, samples),
@@ -220,6 +294,7 @@ impl Sink for CuedSink {
             generation: self.cue.generation.clone(),
             live: self.live.clone(),
             bands: Some(bands),
+            reduction,
             levels: self.cue.levels.clone(),
         });
         // Pace the decoder. A paused device doesn't drain, but librespot
@@ -291,14 +366,36 @@ mod tests {
             generation: cue.generation.clone(),
             live: live.clone(),
             bands: Some([7; BANDS]),
+            reduction: -3.0,
             levels: cue.levels.clone(),
         };
         assert!(cue.levels.take().is_none(), "nothing published before it plays");
         assert_eq!(chunk.next(), Some(0.5));
         assert_eq!(cue.levels.take(), Some([7; BANDS]), "published as it starts playing");
+        assert_eq!(cue.levels.reduction(), -3.0);
         cue.clear(None);
         assert_eq!(chunk.next(), None);
         drop(chunk);
         assert_eq!(live.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn boost_is_limited_below_full_scale() {
+        let mut lim = Limiter::new(44100);
+        // Unity: untouched.
+        let mut quiet = vec![0.25f32; 8];
+        assert_eq!(lim.process(&mut quiet, 2, 1.0), 0.0);
+        assert_eq!(quiet, vec![0.25; 8]);
+        // A quiet passage gets the full boost.
+        let mut q = vec![0.1f32; 8];
+        assert_eq!(lim.process(&mut q, 2, 4.0), 0.0);
+        assert!((q[0] - 0.4).abs() < 1e-6);
+        // A loud one is held at the ceiling, and the reduction is reported.
+        let mut loud = vec![0.9f32, -0.9, 0.5, 0.5];
+        let gr = lim.process(&mut loud, 2, 4.0);
+        assert!(loud.iter().all(|s| s.abs() <= CEILING + 1e-6), "{loud:?}");
+        assert!(gr < -10.0, "{gr}");
+        assert_eq!(clamp_boost(99.0), MAX_BOOST);
+        assert_eq!(clamp_boost(f32::NAN), MIN_BOOST);
     }
 }

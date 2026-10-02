@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
+import VolumeControl from './VolumeControl.jsx';
 import { LyricsEditor, SyncedLyrics, PlainLyrics } from './Lyrics.jsx';
 /* The DOCK's editor. LyricsEditor stays where it is — the fullscreen stage it
    was designed for is unchanged — but a full-height textarea and two
@@ -207,6 +208,9 @@ export default function StudioHome({
   // Transport + volume, for the Now Playing panel's inline controls
   volume = 1,
   onSetVolume,
+  gainBoost = 1,         // gain past full volume, 1–16x (App's audio graph + the Spotify helper)
+  onSetGainBoost,
+  getGainReduction = null,
   onTogglePlay,
   onPrev,
   onNext,
@@ -2235,7 +2239,7 @@ export default function StudioHome({
   }, [libDetail, libAlbums, playlists, library, coverFor]);
 
   /* Page wash, sampled from the open record's cover. Same sampler the
-     fullscreen stage and miniplayer use, so there's no second colour system —
+     fullscreen stage use, so there's no second colour system —
      and it means a record page carries the record's identity instead of the
      flat black every other view uses. */
   const [detailTheme, setDetailTheme] = useState(null);
@@ -5902,6 +5906,9 @@ export default function StudioHome({
           onNext={onNext}
           volume={volume}
           onSetVolume={onSetVolume}
+          gainBoost={gainBoost}
+          onSetGainBoost={onSetGainBoost}
+          getGainReduction={getGainReduction}
           animatedBg={npAnimatedBg}
           /* Immerse off: the bar is its own colour, or the cover's, per the
              one setting that governs it. Immerse on: the animated artwork
@@ -5993,6 +6000,9 @@ export default function StudioHome({
           onToggleRepeat={onToggleRepeat}
           volume={volume}
           onSetVolume={onSetVolume}
+          gainBoost={gainBoost}
+          onSetGainBoost={onSetGainBoost}
+          getGainReduction={getGainReduction}
           onToggleFavorite={onToggleFavorite}
           onAddToPlaylist={onAddTracksToPlaylist ? (e, t) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -7356,7 +7366,7 @@ const NP_FULL_TABS = [
 function NowPlayingFullView({
   track, art, accent, isPlaying = false, currentTime = 0, onSeek,
   onTogglePlay, onPrev, onNext, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat,
-  volume = 1, onSetVolume, onToggleFavorite, onAddToPlaylist, onMore,
+  volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, onToggleFavorite, onAddToPlaylist, onMore,
   onCopyLink, copyBusy = false, onZoomCover,
   animatedBg = false, immersePalette = null,
   tab = null, onTab, onClose,
@@ -7403,9 +7413,6 @@ function NowPlayingFullView({
     return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
   };
 
-  const lastVol = useRef(volume > 0 ? volume : 0.6);
-  useEffect(() => { if (volume > 0) lastVol.current = volume; }, [volume]);
-  const muted = volume <= 0.001;
 
   const gradBase = immersePalette?.accent || accent;
   const gradMid = immersePalette?.mid || gradBase.split(',').map((n) => Math.round(Number(n) * 0.82)).join(', ');
@@ -7556,17 +7563,8 @@ function NowPlayingFullView({
             {onSetVolume ? (
               <>
                 <span aria-hidden className="sth-npbtn-rule" />
-                <button type="button" className="sth-npbtn" onClick={() => onSetVolume(muted ? (lastVol.current || 0.6) : 0)}
-                  title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'} aria-pressed={muted}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
-                    {muted ? <path d="M16 9.5l5 5M21 9.5l-5 5" /> : <><path d="M15.5 9a4 4 0 0 1 0 6" />{volume > 0.5 ? <path d="M18.5 6.5a8 8 0 0 1 0 11" /> : null}</>}
-                  </svg>
-                </button>
-                <input type="range" min={0} max={1} step={0.01} value={volume}
-                  onChange={(e) => onSetVolume(Number(e.target.value))}
-                  className="sth-vol" aria-label="Volume"
-                  style={{ width: 96, background: `linear-gradient(to right, #fff 0%, #fff ${volume * 100}%, rgba(255,255,255,0.16) ${volume * 100}%, rgba(255,255,255,0.16) 100%)` }} />
+                <VolumeControl volume={volume} onSetVolume={onSetVolume} width={96}
+                  boost={gainBoost} onSetBoost={onSetGainBoost} getGainReduction={getGainReduction} />
               </>
             ) : null}
           </div>
@@ -9875,7 +9873,7 @@ function NowPlayingBar(props) {
   return props.track ? <NowPlayingBarBody {...props} /> : null;
 }
 
-function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, animatedBg = false, solidWash = null, currentTime = 0, onSeek, onExpand, onToggleImmerse, immerseOn = false, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, currentTime = 0, onSeek, onExpand, onToggleImmerse, immerseOn = false, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
   const acc = readableAccent(accent);
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
@@ -9921,11 +9919,6 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
-  /* Mute remembers where it was, so unmuting returns to the same level. */
-  const lastVol = useRef(volume > 0 ? volume : 0.6);
-  useEffect(() => { if (volume > 0) lastVol.current = volume; }, [volume]);
-  const muted = volume <= 0.001;
-  const toggleMute = () => onSetVolume?.(muted ? (lastVol.current || 0.6) : 0);
   const shownTime = scrub != null ? scrub * dur : currentTime;
   const onSeekKey = (e) => {
     if (!onSeek || !dur) return;
@@ -10104,19 +10097,8 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
             <>
               <span aria-hidden className="sth-npbtn-rule sth-npbar-vol" />
               <div className="sth-npbar-cluster sth-npbar-vol">
-                <button type="button" className="sth-npbtn" onClick={toggleMute}
-                  title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'} aria-pressed={muted}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
-                    {muted ? <path d="M16 9.5l5 5M21 9.5l-5 5" /> : <><path d="M15.5 9a4 4 0 0 1 0 6" />{volume > 0.5 ? <path d="M18.5 6.5a8 8 0 0 1 0 11" /> : null}</>}
-                  </svg>
-                </button>
-                <input
-                  type="range" min={0} max={1} step={0.01} value={volume}
-                  onChange={(e) => onSetVolume(Number(e.target.value))}
-                  className="sth-vol" aria-label="Volume"
-                  style={{ width: 72, background: `linear-gradient(to right, #fff 0%, #fff ${volume * 100}%, rgba(255,255,255,0.16) ${volume * 100}%, rgba(255,255,255,0.16) 100%)` }}
-                />
+                <VolumeControl volume={volume} onSetVolume={onSetVolume} width={72}
+                  boost={gainBoost} onSetBoost={onSetGainBoost} getGainReduction={getGainReduction} />
               </div>
             </>
           ) : null}

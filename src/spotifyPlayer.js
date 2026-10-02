@@ -57,6 +57,9 @@ export function snapshot() {
   };
 }
 
+/** Gain past full volume (1–16), kept here so a restarted helper gets it. */
+let boost = 1;
+
 function write(cmd) {
   if (!proc?.stdin?.writable) return false;
   try { proc.stdin.write(`${JSON.stringify(cmd)}\n`); return true; } catch { return false; }
@@ -67,6 +70,8 @@ function onLine(line) {
   try { ev = JSON.parse(line); } catch { return; }
   switch (ev.event) {
     case 'ready':
+      // The helper starts at no boost; carry the setting into a restart.
+      if (boost !== 1) write({ cmd: 'boost', value: boost });
       signIn();
       return;
     case 'connected':
@@ -254,7 +259,7 @@ function command(cmd) {
     return { ok: false, error: lastError?.message || 'Spotify playback isn’t available.' };
   }
   // Only the latest load matters; transport commands before it are moot.
-  if (cmd.cmd === 'load') queue = queue.filter((c) => c.cmd === 'volume');
+  if (cmd.cmd === 'load') queue = queue.filter((c) => c.cmd === 'volume' || c.cmd === 'boost');
   queue.push(cmd);
   if (!proc) { restarts = 0; start(); }
   return { ok: true, queued: true };
@@ -369,6 +374,11 @@ export function registerSpotifyPlayerIpc(ipcMain) {
   ipcMain.handle('spotifyPlayer:pause', () => command({ cmd: 'pause' }));
   ipcMain.handle('spotifyPlayer:stop', () => command({ cmd: 'stop' }));
   ipcMain.handle('spotifyPlayer:seek', (_e, ms) => command({ cmd: 'seek', positionMs: Math.max(0, Math.round(ms || 0)) }));
+  ipcMain.handle('spotifyPlayer:boost', (_e, v) => {
+    boost = Math.min(16, Math.max(1, Number(v) || 1));
+    write({ cmd: 'boost', value: boost }); // any time; a helper not up yet gets it on 'ready'
+    return { ok: true };
+  });
   ipcMain.handle('spotifyPlayer:volume', (_e, v) => command({ cmd: 'volume', value: Math.min(1, Math.max(0, Number(v) || 0)) }));
 
   app.on('before-quit', stopHelper);

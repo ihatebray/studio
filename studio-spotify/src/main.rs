@@ -19,6 +19,7 @@
 //!   {"cmd":"play"} {"cmd":"pause"} {"cmd":"stop"}
 //!   {"cmd":"seek","positionMs":12345}
 //!   {"cmd":"volume","value":0.8}              0.0 – 1.0
+//!   {"cmd":"boost","value":2.0}               1.0 – 16.0, gain past full volume (limited)
 //!   {"cmd":"search","req":1,"q":"…"}          catalogue search (search.rs)
 //!   {"cmd":"album","req":2,"id":"…"}          an album's tracklist
 //!   {"cmd":"artist","req":3,"id":"…"}         an artist's releases and top songs
@@ -39,7 +40,9 @@
 //!   {"event":"ended","id":"…"}  {"event":"stopped","id":"…"}
 //!   {"event":"unavailable","id":"…","throttled":bool,"denied":bool,"transient":bool,"reason":"…"}
 //!   {"event":"track","id":"…","durationMs":n}   metadata loaded
-//!   {"event":"levels","v":[24 × 0–100]}         band levels of what's playing, ~30/s
+//!   {"event":"levels","v":[24 × 0–100],"gr":-1.5}
+//!                                             band levels of what's playing, ~30/s, and
+//!                                             the boost limiter's gain reduction in dB
 //!   {"event":"answer","req":1,"ok":true,"data":…}   reply to search / album / artist
 //!                                             or "ok":false,"error":"…"
 //!   {"event":"stale","why":"…"}               the session stopped working and was
@@ -106,6 +109,7 @@ enum Command {
     Stop,
     Seek { #[serde(rename = "positionMs")] position_ms: u32 },
     Volume { value: f64 },
+    Boost { value: f64 },
     /// Answered with a "search" event carrying the same `req`, from a task of
     /// its own so playback commands aren't held up behind it.
     Search { req: u64, q: String },
@@ -230,6 +234,7 @@ async fn main() {
     let mut engine: Option<Engine> = None;
     // Kept across re-sign-ins, so a new engine starts at the current volume.
     let mut volume: f32 = 1.0;
+    let mut boost: f32 = 1.0;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let (stale_tx, mut stale_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let _ = STALE.set(stale_tx);
@@ -276,7 +281,7 @@ async fn main() {
                 }
                 match connect(cache_dir.clone(), token, prefer_cached).await {
                     Ok((session, account)) => {
-                        let e = start_player(session.clone(), volume);
+                        let e = start_player(session.clone(), volume, boost);
                         send(json!({
                             "event": "connected",
                             "user": session.username(),
@@ -294,6 +299,12 @@ async fn main() {
                 volume = value.clamp(0.0, 1.0) as f32;
                 if let Some(e) = engine.as_ref() {
                     e.cue.set_volume(volume);
+                }
+            }
+            Command::Boost { value } => {
+                boost = output::clamp_boost(value as f32);
+                if let Some(e) = engine.as_ref() {
+                    e.cue.set_boost(boost);
                 }
             }
             other => {
@@ -348,7 +359,7 @@ async fn main() {
                         e.cue.clear(None);
                         e.player.seek(position_ms);
                     }
-                    Command::Auth { .. } | Command::Volume { .. } | Command::Quit => unreachable!(),
+                    Command::Auth { .. } | Command::Volume { .. } | Command::Boost { .. } | Command::Quit => unreachable!(),
                 }
             }
         }
@@ -472,7 +483,7 @@ async fn session_with(cache: Option<Cache>, credentials: Credentials) -> Result<
     Ok(session)
 }
 
-fn start_player(session: Session, volume: f32) -> Engine {
+fn start_player(session: Session, volume: f32, boost: f32) -> Engine {
     let config = PlayerConfig {
         bitrate: Bitrate::Bitrate320,
         gapless: true,
@@ -484,6 +495,7 @@ fn start_player(session: Session, volume: f32) -> Engine {
     // pause/skip/seek/volume take effect at once. Volume is applied there,
     // so librespot's own volume stage is a no-op.
     let cue = Cue::new(volume);
+    cue.set_boost(boost);
     let sink_cue = cue.clone();
     // librespot asks the metadata service up to ten times, back to back, when
     // it fails. When the failure is Spotify's servers being overloaded (503),
@@ -509,7 +521,7 @@ fn start_player(session: Session, volume: f32) -> Engine {
         std::thread::sleep(Duration::from_millis(33));
         let Some(levels) = weak.upgrade() else { break };
         if let Some(v) = levels.take() {
-            emit(json!({ "event": "levels", "v": v }));
+            emit(json!({ "event": "levels", "v": v, "gr": levels.reduction() }));
         }
     });
 

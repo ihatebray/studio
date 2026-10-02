@@ -192,6 +192,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyPlayerStop: () => ipcRenderer.invoke('spotifyPlayer:stop'),
   spotifyPlayerSeek: (ms) => ipcRenderer.invoke('spotifyPlayer:seek', ms),
   spotifyPlayerVolume: (v) => ipcRenderer.invoke('spotifyPlayer:volume', v),
+  spotifyPlayerBoost: (v) => ipcRenderer.invoke('spotifyPlayer:boost', v),
   onSpotifyPlayerEvent: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('spotifyPlayer:event', listener);
@@ -285,58 +286,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('window:fullscreenChanged', handler);
   },
   close: () => ipcRenderer.send('window:close'),
-
-  /* ---------------------------------------------------------------------
-   * Mini player.
-   *
-   * Grouped rather than flattened because BOTH renderers use this object:
-   * the main window (publish + onCommand + open/close) and the mini window
-   * itself (onState + setOptions + resizeTo). Same preload, same bundle,
-   * different halves — keeping them under one key makes it obvious which
-   * calls belong to which side when you're reading MiniPlayer.jsx.
-   * ------------------------------------------------------------------- */
-  mini: {
-    // --- main window side ---
-    open: () => ipcRenderer.invoke('mini:open'),
-    close: () => ipcRenderer.invoke('mini:close'),
-    toggle: () => ipcRenderer.invoke('mini:toggle'),
-    publish: (payload) => ipcRenderer.send('mini:publish', payload),
-    onCommand: (cb) => {
-      const l = (_e, payload) => cb(payload);
-      ipcRenderer.on('mini:command', l);
-      return () => ipcRenderer.removeListener('mini:command', l);
-    },
-    onOpenChanged: (cb) => {
-      const l = (_e, open) => cb(!!open);
-      ipcRenderer.on('mini:openChanged', l);
-      return () => ipcRenderer.removeListener('mini:openChanged', l);
-    },
-    onNeedState: (cb) => {
-      const l = () => cb();
-      ipcRenderer.on('mini:needState', l);
-      return () => ipcRenderer.removeListener('mini:needState', l);
-    },
-
-    // --- mini window side ---
-    command: (cmd) => ipcRenderer.send('mini:command', cmd),
-    requestState: () => ipcRenderer.send('mini:requestState'),
-    resizeTo: (size) => ipcRenderer.invoke('mini:resizeTo', size),
-    snap: (corner) => ipcRenderer.invoke('mini:snap', corner),
-    setPanelOpen: (open) => ipcRenderer.invoke('mini:setPanelOpen', !!open),
-    setClickThroughLive: (on) => ipcRenderer.send('mini:setClickThroughLive', !!on),
-    onState: (cb) => {
-      const l = (_e, payload) => cb(payload);
-      ipcRenderer.on('mini:state', l);
-      return () => ipcRenderer.removeListener('mini:state', l);
-    },
-
-    // --- both ---
-    getState: () => ipcRenderer.invoke('mini:getState'),
-    setOptions: (patch) => ipcRenderer.invoke('mini:setOptions', patch),
-    onOptions: (cb) => {
-      const l = (_e, payload) => cb(payload);
-      ipcRenderer.on('mini:options', l);
-      return () => ipcRenderer.removeListener('mini:options', l);
-    },
-  },
 });

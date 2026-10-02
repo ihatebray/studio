@@ -12,7 +12,7 @@
 //! and nowhere else.
 
 use std::f32::consts::PI;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 pub const BANDS: usize = 24;
 const N: usize = 2048;
@@ -28,6 +28,9 @@ const RANGE_DB: f32 = 60.0;
 pub struct Levels {
     bands: [AtomicU8; BANDS],
     dirty: AtomicBool,
+    /// The boost limiter's gain reduction for the same packet, dB (<= 0),
+    /// as f32 bits.
+    reduction: AtomicU32,
 }
 
 impl Levels {
@@ -36,6 +39,15 @@ impl Levels {
             slot.store(*x, Ordering::Relaxed);
         }
         self.dirty.store(true, Ordering::Release);
+    }
+
+    pub fn publish_reduction(&self, db: f32) {
+        self.reduction.store(db.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Gain reduction of the packet playing now, rounded to 0.1 dB.
+    pub fn reduction(&self) -> f32 {
+        (f32::from_bits(self.reduction.load(Ordering::Relaxed)) * 10.0).round() / 10.0
     }
 
     /// The latest levels, if any were published since the last take.

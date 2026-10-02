@@ -6,7 +6,7 @@
  *  play / pause / timeupdate / seeked / ended. This class speaks that same
  *  subset but forwards everything to the studio-spotify helper (through
  *  spotifyPlayer.js in main), so a Saved track plays from the same player
- *  bar, queue, keyboard shortcuts and mini player as a local file, without
+ *  bar, queue, and keyboard shortcuts as a local file, without
  *  a second code path through the app.
  *
  *  Audio never passes through here: the helper plays to the sound card. So

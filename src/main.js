@@ -148,7 +148,6 @@ import * as discordPresence from './discordPresence.js';
 import * as twitchOverlay from './twitchOverlay.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
-import { initMiniWindow } from './miniWindow.js';
 import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist, helperDiscography, helperPathfinder } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { registerFollowsIpc } from './follows.js';
@@ -635,16 +634,6 @@ app.whenReady().then(async () => {
   }
   createWindow();
 
-  // Mini player: registers its IPC handlers and the global shortcuts, but
-  // does NOT open a window — that only happens on demand. Must come after
-  // createWindow() so `mainWindow` exists by the time the mini attaches its
-  // "main window closed" teardown hook.
-  initMiniWindow({
-    getMainWindow: () => mainWindow,
-    preloadPath: resolvePreloadPath(),
-    devServerUrl: MAIN_WINDOW_VITE_DEV_SERVER_URL,
-    rendererIndexPath: path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-  });
   // Auto-updater: fire-and-forget. Failures here (no network, no
   // releases, bad cert) are non-fatal — the app should boot regardless.
   // Skipped entirely in dev (electron-forge start) since the updater
