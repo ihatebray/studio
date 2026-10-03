@@ -24,7 +24,7 @@ const TTL_MS = 6 * 60 * 60 * 1000;
 /* Nothing found is asked again sooner: it may have been a bad moment. */
 const EMPTY_TTL_MS = 30 * 60 * 1000;
 /* Bumped when what's stored changes meaning; an older file is dropped. */
-const VERSION = 3;
+const VERSION = 4;
 const file = () => path.join(app.getPath('userData'), 'studio-countdowns.json');
 
 let store = null;

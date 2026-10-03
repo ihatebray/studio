@@ -833,10 +833,12 @@ function upcomingFrom(a) {
         id: idOf(c.uri) || idOf(o.uri), name: c.name || '', type: String(c.type || 'album').toLowerCase(),
         coverUrl: img(c.coverArt?.sources, 640), ...when(o.releaseDate || c.releaseDate || c.date), countdown: true,
       });
-    } else if (o.name && /^spotify:album:/.test(String(o.uri || '')) && (o.date || o.releaseDate)) {
+    } else if (o.name && /^spotify:album:/.test(String(o.uri || '')) && (o.date || o.releaseDate || o.preReleaseEndDateTime)) {
+      /* preReleaseV2.data carries its release moment as preReleaseEndDateTime
+         (when the countdown ends), e.g. 2026-10-23T04:00:00Z. */
       add({
         id: o.id || idOf(o.uri), name: o.name, type: String(o.type || 'album').toLowerCase(),
-        coverUrl: img(o.coverArt?.sources, 640), ...when(o.releaseDate || o.date), countdown: pre,
+        coverUrl: img(o.coverArt?.sources, 640), ...when(o.preReleaseEndDateTime || o.releaseDate || o.date), countdown: pre || !!o.preReleaseEndDateTime,
       });
     }
     for (const [k, v] of Object.entries(o)) {
