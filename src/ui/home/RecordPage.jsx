@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
 import { hoverPreload } from '../../lib/spotifyMediaElement.js';
-import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
+import { ExplicitBadge, HiResImg, PlayIcon } from '../sharedUI.jsx';
 import { PlayingBars } from './common.jsx';
 import { RowPlayButton } from './Library.jsx';
 
@@ -18,9 +18,14 @@ import { RowPlayButton } from './Library.jsx';
    scrollbar strip included, and stays put as the list moves. Panels on top
    are tinted glass, never grey. */
 
+/** The saved layout, or Classic. Side by side was removed; it maps to Poster. */
+export function recordLayoutOf(v) {
+  if (v === 'side') return 'poster';
+  return RECORD_LAYOUTS.some(([id]) => id === v) ? v : 'classic';
+}
+
 export const RECORD_LAYOUTS = [
   ['classic', 'Classic'],
-  ['side', 'Side by side'],
   ['header', 'Big header'],
   ['centred', 'Centred'],
   ['sleeve', 'Record sleeve'],
@@ -80,25 +85,13 @@ const CSS = `
 .rp-tile small { font-size: 12.5px; color: rgba(255,255,255,0.6); margin-top: -4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rp-tile.is-round { align-items: center; text-align: center; }
 
-/* Side by side: the cover's colours glow across the whole page from the
-   left (painted on the page, so there's no seam between the columns), and
-   the songs sit in a frosted card. */
-.rp-side { display: grid; grid-template-columns: clamp(260px, 31%, 340px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; }
-.rp-col { position: relative; min-width: 0; overflow-y: auto; overflow-x: hidden; }
-.rp-side-l { padding: 26px 20px 26px 28px; }
-.rp-side-l .rp-cover { width: 100%; aspect-ratio: 1; border-radius: 22px; box-shadow: 0 26px 70px rgba(var(--rp-wash), 0.6), 0 8px 22px rgba(0,0,0,0.35); }
-.rp-side-l .rp-title { font-size: 30px; margin-top: 22px; }
-.rp-side-l .rp-by { margin-top: 6px; }
-.rp-side-l .rp-meta { margin-top: 6px; }
-.rp-side-l .rp-genres { margin-top: 14px; }
-.rp-side-l .rp-acts { margin-top: 20px; }
-.rp-coverwrap { position: relative; }
-.rp-coverwrap .rp-back { top: 12px; left: 12px; }
+/* The frosted song card (Poster). */
 .rp-glasscol { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 14px 14px 14px 6px; }
 .rp-glass { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; border-radius: 24px; padding: 10px 10px 0;
   background: rgba(12,12,14,0.34); border: 1px solid rgba(255,255,255,0.09);
   backdrop-filter: blur(28px) saturate(1.25); -webkit-backdrop-filter: blur(28px) saturate(1.25); }
 .rp-glass .rp-more { padding-left: 4px; }
+.rp-col { position: relative; min-width: 0; overflow-y: auto; overflow-x: hidden; }
 
 /* Big header */
 .rp-hero { position: relative; padding: 70px 36px 26px; display: flex; align-items: flex-end; gap: 30px; }
@@ -161,14 +154,21 @@ const CSS = `
 .rp-poster-l { position: relative; overflow: hidden; }
 .rp-poster-l .rp-cover { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; background: transparent;
   -webkit-mask-image: linear-gradient(90deg, #000 58%, transparent 100%); mask-image: linear-gradient(90deg, #000 58%, transparent 100%); }
-.rp-poster-fade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(0,0,0,0) 38%, rgba(0,0,0,0.42) 66%, rgba(0,0,0,0.78));
+.rp-poster-fade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(var(--rp-deep),0) 34%, rgba(var(--rp-deep),0.5) 62%, rgba(var(--rp-deep),0.92));
   -webkit-mask-image: linear-gradient(90deg, #000 58%, transparent 100%); mask-image: linear-gradient(90deg, #000 58%, transparent 100%); }
 .rp-poster-txt { position: absolute; left: 28px; right: 36px; bottom: 28px; }
-.rp-poster-txt .rp-title { font-size: clamp(30px, 3.4vw, 46px); margin: 8px 0 10px; text-shadow: 0 2px 24px rgba(0,0,0,0.35); }
+.rp-poster-txt .rp-title { font-size: clamp(30px, 3.4vw, 46px); margin: 8px 0 10px; text-shadow: 0 2px 24px rgba(0,0,0,0.35); text-wrap: balance; }
+/* A slow drift across the artwork, so the poster isn't a still. */
+.rp-poster-l .rp-cover img, .rp-poster-l .rp-mosaic { animation: rpDrift 32s ease-in-out infinite alternate; transform-origin: 40% 40%; }
+@keyframes rpDrift { from { transform: scale(1.02) translate(0, 0); } to { transform: scale(1.09) translate(-1.5%, -1%); } }
+@media (prefers-reduced-motion: reduce) { .rp-poster-l .rp-cover img, .rp-poster-l .rp-mosaic { animation: none; } }
+.rp-nowchip { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px 0 10px; margin-bottom: 14px; border-radius: 999px; max-width: 100%;
+  background: rgba(255,255,255,0.16); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font-size: 12.5px; font-weight: 700; }
+.rp-nowchip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rp-poster-txt .rp-acts { margin-top: 18px; }
 .rp-poster-txt .rp-ib { background: rgba(255,255,255,0.16); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 
-/* Soft rows (Side by side, Poster): rounder, numbers in circles, play
+/* Soft rows (Poster): rounder, numbers in circles, play
    counts, and a tag on your most played song. */
 .rp-list.is-soft { display: flex; flex-direction: column; gap: 2px; }
 .rp-list.is-soft .sth-lrow { height: 58px; border-radius: 16px; padding: 0 12px 0 8px; }
@@ -286,7 +286,7 @@ export default function RecordPage({
       onClick={!isAlbum && onChangeCover ? onChangeCover : undefined} title={!isAlbum && onChangeCover ? 'Change cover' : undefined}>
       {mosaic
         ? <div className="rp-mosaic">{mosaic.map((a) => <img key={a} src={a} alt="" draggable={false} />)}</div>
-        : data.art ? <img src={data.art} alt="" draggable={false} /> : null}
+        : data.art ? <HiResImg src={data.art} /> : null}
       {!isAlbum && onChangeCover && !opts.noVeil ? (
         <div className="sth-plcover-veil">
           <Icon name="edit" size={24} />
@@ -367,6 +367,9 @@ export default function RecordPage({
     </div>
   );
 
+  const nowHere = currentTrack ? data.tracks.find((t) => t.id === currentTrack.id) || null : null;
+  const totalPlays = useMemo(() => data.tracks.reduce((n, t) => n + playCountFor(t.id), 0), [data.tracks, playCountFor]);
+
   const renderList = (soft) => {
     const softCols = `44px minmax(0,1fr) auto 48px ${!isAlbum && onRemoveFromPlaylist ? '64px' : '36px'}`;
     return (
@@ -433,13 +436,6 @@ export default function RecordPage({
   const base = '12, 12, 13';
   const pal = [0, 1, 2, 3].map((i) => palette[i] || palette[0] || wash);
   const background = {
-    side: [
-      `radial-gradient(60% 70% at 8% 18%, rgba(${pal[0]},0.8), rgba(${pal[0]},0) 100%)`,
-      `radial-gradient(50% 60% at 18% 92%, rgba(${pal[1]},0.5), rgba(${pal[1]},0) 100%)`,
-      `radial-gradient(55% 55% at 78% 4%, rgba(${pal[2]},0.38), rgba(${pal[2]},0) 100%)`,
-      `radial-gradient(50% 60% at 96% 96%, rgba(${pal[3]},0.25), rgba(${pal[3]},0) 100%)`,
-      `rgb(${base})`,
-    ].join(', '),
     poster: `rgb(${base})`,
     colour: `linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%), rgb(${wash})`,
     header: `linear-gradient(180deg, rgba(${wash},0.3) 0%, rgba(${wash},0.14) 55%, rgba(${wash},0.08) 100%), rgb(${base})`,
@@ -457,21 +453,7 @@ export default function RecordPage({
   }[layout] || `rgb(${base})`;
 
   let body;
-  if (layout === 'side') {
-    body = (
-      <div className="rp-side">
-        <div className="rp-col rp-side-l sth-libscroll">
-          <div className="rp-coverwrap">{cover()}{back}</div>
-          {title}
-          <div className="rp-by">{artistLink}</div>
-          <div className="rp-meta">{meta}</div>
-          {genres.length ? <div className="rp-genres">{genres.map((g) => <span key={g} className="rp-pill">{g}</span>)}</div> : null}
-          {actions()}
-        </div>
-        <div className="rp-glasscol"><div className="rp-glass sth-libscroll">{renderList(true)}{more}</div></div>
-      </div>
-    );
-  } else if (layout === 'header') {
+  if (layout === 'header') {
     body = (
       <div className="rp-scroll sth-libscroll">
         <div className="rp-hero">
@@ -533,7 +515,9 @@ export default function RecordPage({
           <div className="rp-poster-fade" />
           {back}
           <div className="rp-poster-txt">
-            {kind}{title}{byLine}
+            {nowHere ? <div className="rp-nowchip"><PlayingBars acc="255, 255, 255" playing={isPlaying} /><span>{isPlaying ? 'Now playing' : 'Paused'} · {nowHere.title}</span></div> : null}
+            {kind}{title}
+            <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}{totalPlays ? ` · ${totalPlays} ${totalPlays === 1 ? 'play' : 'plays'}` : ''}</div>
             {actions()}
           </div>
         </div>
@@ -554,7 +538,6 @@ export default function RecordPage({
 /* Settings → Layout: a small drawing of each layout. */
 const SKETCH = {
   classic: <><rect x="8" y="8" width="18" height="18" rx="3" className="a" /><rect x="30" y="12" width="30" height="5" rx="2.5" className="t" /><rect x="30" y="20" width="18" height="3" rx="1.5" /><rect x="8" y="32" width="80" height="3" rx="1.5" /><rect x="8" y="39" width="80" height="3" rx="1.5" /><rect x="8" y="46" width="80" height="3" rx="1.5" /></>,
-  side: <><rect x="0" y="0" width="34" height="60" className="w" /><rect x="6" y="6" width="22" height="22" rx="3" className="a" /><rect x="6" y="32" width="18" height="4" rx="2" className="t" /><rect x="6" y="40" width="12" height="5" rx="2.5" className="p" /><rect x="40" y="8" width="50" height="3" rx="1.5" /><rect x="40" y="16" width="50" height="3" rx="1.5" /><rect x="40" y="24" width="50" height="3" rx="1.5" /><rect x="40" y="32" width="50" height="3" rx="1.5" /><rect x="40" y="40" width="50" height="3" rx="1.5" /></>,
   header: <><rect x="0" y="0" width="96" height="28" className="w" /><rect x="8" y="6" width="18" height="18" rx="3" className="a" /><rect x="30" y="14" width="34" height="7" rx="3" className="t" /><rect x="8" y="33" width="10" height="5" rx="2.5" className="p" /><rect x="8" y="43" width="80" height="3" rx="1.5" /><rect x="8" y="50" width="80" height="3" rx="1.5" /></>,
   centred: <><ellipse cx="48" cy="6" rx="40" ry="20" className="w" /><rect x="38" y="5" width="20" height="20" rx="4" className="a" /><rect x="33" y="29" width="30" height="4" rx="2" className="t" /><rect x="42" y="36" width="12" height="5" rx="2.5" className="p" /><rect x="22" y="45" width="52" height="15" rx="4" className="c" /></>,
   sleeve: <><circle cx="34" cy="18" r="12" className="d" /><rect x="8" y="7" width="22" height="22" rx="2" className="a" /><rect x="52" y="12" width="32" height="5" rx="2.5" className="t" /><rect x="52" y="20" width="14" height="5" rx="2.5" className="p" /><rect x="8" y="38" width="80" height="3" rx="1.5" /><rect x="8" y="45" width="80" height="3" rx="1.5" /><rect x="8" y="52" width="80" height="3" rx="1.5" /></>,

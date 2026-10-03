@@ -6,7 +6,7 @@ import { ToastPositionPicker } from '../Toasts.jsx';
 import { hexToRgb, rgbToHex } from './common.jsx';
 import { NP_BAR_DEFAULT, THEME_DEFAULTS } from './constants.js';
 import FontSettings from './FontSettings.jsx';
-import { RecordLayoutPicker } from './RecordPage.jsx';
+import { RecordLayoutPicker, recordLayoutOf } from './RecordPage.jsx';
 import { SetHowTo, SetLit, SetRow, SetSeg, SetToggle, SpotifyAccountPanel, StudioColorPicker } from './Settings.jsx';
 
 export default function SettingsPage({
@@ -169,7 +169,7 @@ export default function SettingsPage({
             <div className="sth-set-r" style={{ display: 'block' }}>
               <span className="txt"><b>Album and playlist layout</b><p>How album and playlist pages are arranged. Classic is the original page.</p></span>
               <div style={{ marginTop: 14 }}>
-                <RecordLayoutPicker value={theme.recordLayout || 'classic'} onPick={(v) => setThemeKey('recordLayout', v)} />
+                <RecordLayoutPicker value={recordLayoutOf(theme.recordLayout)} onPick={(v) => setThemeKey('recordLayout', v)} />
               </div>
             </div>
             <SetRow title="Album and playlist pages" note="Where these pages take their background. Cover Art follows each release; Fixed uses one shade for all of them.">
@@ -180,7 +180,7 @@ export default function SettingsPage({
                   onChange={(hex) => { const v = hexToRgb(hex); if (v) setThemeKey('detailColor', v); }} /></span>
               ) : null}
             </SetRow>
-            {(theme.recordLayout || 'classic') === 'classic' ? (
+            {recordLayoutOf(theme.recordLayout) === 'classic' ? (
               <SetRow title="Album header alignment" note="Where the title and artist sit relative to the cover art.">
                 <SetSeg label="Album header alignment" value={detailAlign} onPick={pickDetailAlign}
                   options={[['flex-start', 'Top'], ['center', 'Center'], ['flex-end', 'Bottom']]} />

@@ -7,7 +7,8 @@ import ArtistPage from '../ArtistPage.jsx';
 import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
 import { PlayingBars } from './common.jsx';
 import { DetailAction, LibHeader, LibRow, RowPlayButton } from './Library.jsx';
-import RecordPage from './RecordPage.jsx';
+import RecordPage, { recordLayoutOf } from './RecordPage.jsx';
+import { coverLayers } from '../../lib/coverUrl.js';
 
 export default function LibraryPage({
   LIB_OVERSCAN,
@@ -279,7 +280,7 @@ export default function LibraryPage({
           const deep = dt ? recordDeep(dt) : '10, 10, 14';
           const pageAcc = dt ? dt.accent : accent;
           const pageAccUI = readableAccent(pageAcc);
-          const recordLayout = theme.recordLayout || 'classic';
+          const recordLayout = recordLayoutOf(theme.recordLayout);
           if (recordLayout !== 'classic') {
             const isPl = detailData.kind === 'playlist';
             return (
@@ -412,7 +413,7 @@ export default function LibraryPage({
                       style={{
                         position: 'relative', width: 190, height: 190, borderRadius: 9, flexShrink: 0, overflow: 'hidden',
                         cursor: detailData.kind === 'playlist' ? 'pointer' : 'default',
-                        background: detailData.art ? `url("${detailData.art}") center/cover` : `linear-gradient(140deg, rgba(${wash},0.7), rgba(${wash},0.25))`,
+                        background: detailData.art ? coverLayers(detailData.art, ' center/cover') : `linear-gradient(140deg, rgba(${wash},0.7), rgba(${wash},0.25))`,
                         /* The fullscreen stage's artBoxShadow, exactly.
                            I'd used an OFFSET drop shadow last time —
                            the stage uses two centred halos with no

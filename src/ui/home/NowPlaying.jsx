@@ -9,6 +9,7 @@ import { PlainLyrics, SyncedLyrics } from '../Lyrics.jsx';
 import { NP_FULL_TABS, NP_PANEL_TABS, NP_PANEL_W } from './constants.js';
 import { PanelLabel } from './Library.jsx';
 import { PauseGlyph, PlayGlyph, PlayingBars, toolBtn } from './common.jsx';
+import { coverLayers } from '../../lib/coverUrl.js';
 
 export function NowPlayingFullView({
   track, art, accent, isPlaying = false, currentTime = 0, onSeek,
@@ -113,9 +114,9 @@ export function NowPlayingFullView({
           {art && onZoomCover ? (
             <button type="button" className="sth-full-cover" onClick={() => onZoomCover(art)}
               title="View cover art" aria-label="View cover art full size"
-              style={{ backgroundImage: `url("${art}")`, cursor: 'zoom-in' }} />
+              style={{ backgroundImage: coverLayers(art), cursor: 'zoom-in' }} />
           ) : (
-            <div className="sth-full-cover" style={{ backgroundImage: art ? `url("${art}")` : undefined }} />
+            <div className="sth-full-cover" style={{ backgroundImage: art ? coverLayers(art) : undefined }} />
           )}
 
           <div className="sth-full-meta">

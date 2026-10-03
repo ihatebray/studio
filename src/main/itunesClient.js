@@ -379,13 +379,12 @@ function mapExplicit(trackExplicitness) {
 /**
  * Upgrade an iTunes artwork URL to a higher resolution. iTunes returns
  * `artworkUrl100` (100×100) by default, but the URL pattern lets you
- * request any size by swapping the dimension token. We bump to 600×600
- * which is comparable to Spotify's max and looks good in the now-
- * playing canvas without being wastefully huge.
+ * request any size by swapping the dimension token. 1200×1200 stays sharp
+ * on the large covers (record pages, full view) on high-density screens.
  *
- * Pattern: ".../source/100x100bb.jpg" → ".../source/600x600bb.jpg"
+ * Pattern: ".../source/100x100bb.jpg" → ".../source/1200x1200bb.jpg"
  */
-function upgradeArtwork(url, size = 600) {
+function upgradeArtwork(url, size = 1200) {
   if (!url || typeof url !== 'string') return '';
   return url.replace(/\/\d+x\d+bb\.(jpg|png)/, `/${size}x${size}bb.$1`);
 }
@@ -1652,7 +1651,7 @@ async function hydrateArtist(row) {
     new Date(b.releaseDate || 0).getTime() - new Date(a.releaseDate || 0).getTime()
   ));
   const art = newest.find((c) => c.artworkUrl100)?.artworkUrl100 || '';
-  const sleeve = art ? upgradeArtwork(art, 600) : '';
+  const sleeve = art ? upgradeArtwork(art) : '';
 
   /* Sleeve NOW, portrait LATER — see resolvePortrait. The search returns with
      a usable image immediately rather than waiting on an HTML fetch for a
@@ -1847,7 +1846,7 @@ export async function itunesGetArtistAlbums(artistId, limit = 200) {
         itunesCollectionId: Number(cid),
         name: String(r.collectionName || ''),
         artists: String(r.artistName || ''),
-        albumArtUrl: upgradeArtwork(r.artworkUrl100 || '', 600),
+        albumArtUrl: upgradeArtwork(r.artworkUrl100 || ''),
         totalTracks: trackCount,
         trackCount,
         releaseDate: String(r.releaseDate || '').slice(0, 10), // YYYY-MM-DD

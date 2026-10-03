@@ -760,7 +760,7 @@ function shapeRelease(r, group) {
     group,
     releaseDate: iso.slice(0, 10),
     year: d.year || (iso ? Number(iso.slice(0, 4)) : null),
-    albumArtUrl: img(r.coverArt?.sources, 300),
+    albumArtUrl: img(r.coverArt?.sources, 2000),
     totalTracks: r.tracks?.totalCount || null,
     label: r.label || '',
   };
@@ -786,7 +786,7 @@ function shapeTrack(t) {
     artists: artistsOf(t.artists),
     album: album.name || '',
     albumId: idOf(album.uri),
-    albumArtUrl: img(album.coverArt?.sources, 300),
+    albumArtUrl: img(album.coverArt?.sources, 2000),
     durationMs: t.duration?.totalMilliseconds || null,
     explicit: t.contentRating?.label === 'EXPLICIT',
     playcount: num(t.playcount),
@@ -848,7 +848,7 @@ async function artistDiscography(artistId) {
         type: a.album_type || '',
         releaseDate: a.release_date || '',
         year: a.release_date ? Number(String(a.release_date).slice(0, 4)) : null,
-        albumArtUrl: a.images?.[1]?.url || a.images?.[0]?.url || null,
+        albumArtUrl: a.images?.[0]?.url || a.images?.[1]?.url || null, // [0] is the largest
         totalTracks: a.total_tracks || null,
         artists: (a.artists || []).map((x) => x.name).join(', '),
       });

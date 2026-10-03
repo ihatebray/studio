@@ -4887,7 +4887,7 @@ ipcMain.handle('releases:lookupAlbumTracks', async (event, collectionId) => {
           collectionName: String(r.collectionName || ''),
           trackNumber: Number(r.trackNumber) || 0,
           trackTimeMillis: Number(r.trackTimeMillis) || 0,
-          artworkUrl: String(r.artworkUrl100 || '').replace(/100x100bb\.jpg$/i, '600x600bb.jpg'),
+          artworkUrl: String(r.artworkUrl100 || '').replace(/100x100bb\.jpg$/i, '1200x1200bb.jpg'),
           previewUrl: String(r.previewUrl || ''), // 30s m4a clip from iTunes, for in-app preview
           // iTunes omits/false-flags isStreamable on tracks that aren't released
           // yet (e.g. unreleased songs on a pre-order album). Treat missing as

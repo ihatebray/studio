@@ -208,7 +208,7 @@ fn track_row(uri: &str, t: &TrackMessage, added_at: Option<i64>) -> Option<Value
         "artistIds": artists.iter().map(|(i, _)| i).collect::<Vec<_>>(),
         "album": album.map(|a| a.name().to_owned()).unwrap_or_default(),
         "albumId": album.and_then(|a| base62(a.gid())),
-        "albumArtUrl": album.and_then(|a| a.cover_group.as_ref()).and_then(|g| image_url(&g.image, ImageSize::LARGE)).unwrap_or_default(),
+        "albumArtUrl": album.and_then(|a| a.cover_group.as_ref()).and_then(|g| image_url(&g.image, ImageSize::XLARGE)).unwrap_or_default(),
         "durationMs": t.duration().max(0),
         "explicit": t.explicit(),
         "trackNumber": if t.number() > 0 { json!(t.number()) } else { Value::Null },
@@ -435,7 +435,7 @@ pub async fn discography(session: &Session, id: &str) -> Result<Value, String> {
                 "type": kind,
                 "releaseDate": date,
                 "year": date.get(..4).and_then(|y| y.parse::<u32>().ok()),
-                "albumArtUrl": cover.and_then(|g| image_url(&g.image, ImageSize::DEFAULT)).unwrap_or_default(),
+                "albumArtUrl": cover.and_then(|g| image_url(&g.image, ImageSize::XLARGE)).unwrap_or_default(),
                 "totalTracks": total,
                 "artists": al.artist.iter().map(|x| x.name().to_owned()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", "),
             }));

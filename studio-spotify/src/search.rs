@@ -77,7 +77,7 @@ pub async fn search(session: &Session, query: &str) -> Result<Value, String> {
         let album = t.album.as_ref();
         let album_id = album.and_then(|a| base62(a.gid())).unwrap_or_default();
         let album_name = album.map(|a| a.name().to_owned()).unwrap_or_default();
-        let cover = album.and_then(|a| a.cover_group.as_ref()).and_then(|g| image_url(&g.image, ImageSize::LARGE));
+        let cover = album.and_then(|a| a.cover_group.as_ref()).and_then(|g| image_url(&g.image, ImageSize::XLARGE));
 
         tracks.push(json!({
             "spotifyId": id,
@@ -179,7 +179,7 @@ pub async fn album(session: &Session, id: &str) -> Result<Value, String> {
     let a = AlbumMessage::parse_from_bytes(&bytes).map_err(|e| format!("album: {e}"))?;
     let name = a.name().to_owned();
     let artists = a.artist.iter().map(|x| x.name().to_owned()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", ");
-    let cover = a.cover_group.as_ref().and_then(|g| image_url(&g.image, ImageSize::LARGE)).unwrap_or_default();
+    let cover = a.cover_group.as_ref().and_then(|g| image_url(&g.image, ImageSize::XLARGE)).unwrap_or_default();
     // Disc and position come from the album's own listing.
     let mut order: Vec<(String, i32, i32)> = Vec::new();
     for (d, disc) in a.disc.iter().enumerate() {
@@ -264,7 +264,7 @@ pub async fn artist(session: &Session, id: &str, country: &str) -> Result<Value,
                 "albumId": aid,
                 "name": al.name(),
                 "artists": al.artist.iter().map(|x| x.name().to_owned()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", "),
-                "albumArtUrl": al.cover_group.as_ref().and_then(|g| image_url(&g.image, ImageSize::LARGE)).unwrap_or_default(),
+                "albumArtUrl": al.cover_group.as_ref().and_then(|g| image_url(&g.image, ImageSize::XLARGE)).unwrap_or_default(),
                 "totalTracks": al.disc.iter().map(|d| d.track.len()).sum::<usize>(),
                 "releaseDate": date_of(al),
                 "albumGroup": kind,
@@ -300,7 +300,7 @@ pub async fn artist(session: &Session, id: &str, country: &str) -> Result<Value,
                 "artists": t.artist.iter().map(|x| x.name().to_owned()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", "),
                 "album": album.map(|x| x.name().to_owned()).unwrap_or_default(),
                 "albumId": album.and_then(|x| base62(x.gid())),
-                "albumArtUrl": album.and_then(|x| x.cover_group.as_ref()).and_then(|g| image_url(&g.image, ImageSize::LARGE)).unwrap_or_default(),
+                "albumArtUrl": album.and_then(|x| x.cover_group.as_ref()).and_then(|g| image_url(&g.image, ImageSize::XLARGE)).unwrap_or_default(),
                 "durationMs": t.duration().max(0),
                 "spotifyUrl": format!("https://open.spotify.com/track/{tid}"),
                 "popularity": if t.popularity() > 0 { t.popularity() } else { 100 - (i as i32) * 4 },

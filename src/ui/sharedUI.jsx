@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { hiResCover } from '../lib/coverUrl.js';
 
 
 
@@ -428,4 +429,13 @@ export function PauseIcon({ size = 13 }) {
       <rect x="14" y="4" width="4" height="16" rx="1.4" />
     </svg>
   );
+}
+
+/** A cover <img> at the largest size its CDN offers, falling back to the
+ *  given URL if that size doesn't load (see lib/coverUrl.js). */
+export function HiResImg({ src, alt = '', ...rest }) {
+  const big = hiResCover(src);
+  const [failed, setFailed] = React.useState(null);
+  const use = failed === src || big === src ? src : big;
+  return <img src={use} alt={alt} decoding="async" draggable={false} onError={() => { if (use !== src) setFailed(src); }} {...rest} />;
 }
