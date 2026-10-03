@@ -7,6 +7,7 @@ import ArtistPage from '../ArtistPage.jsx';
 import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
 import { PlayingBars } from './common.jsx';
 import { DetailAction, LibHeader, LibRow, RowPlayButton } from './Library.jsx';
+import RecordPage from './RecordPage.jsx';
 
 export default function LibraryPage({
   LIB_OVERSCAN,
@@ -278,6 +279,52 @@ export default function LibraryPage({
           const deep = dt ? recordDeep(dt) : '10, 10, 14';
           const pageAcc = dt ? dt.accent : accent;
           const pageAccUI = readableAccent(pageAcc);
+          const recordLayout = theme.recordLayout || 'classic';
+          if (recordLayout !== 'classic') {
+            const isPl = detailData.kind === 'playlist';
+            return (
+              <RecordPage
+                layout={recordLayout}
+                data={detailData}
+                tracks={detailTracks}
+                wash={wash}
+                deep={deep}
+                accUI={pageAccUI}
+                genres={detailGenres}
+                filter={detailFilter}
+                onFilter={setDetailFilter}
+                libDetailKey={libDetail.key}
+                currentTrack={currentTrack}
+                isPlaying={isPlaying}
+                onPlayTrack={onPlayTrack}
+                onTogglePlay={onTogglePlay}
+                onToggleFavorite={onToggleFavorite}
+                onRemoveFromPlaylist={onRemoveFromPlaylist}
+                canManage={canManage}
+                openRowMenu={openRowMenu}
+                coverFor={coverFor}
+                playCountFor={playCountFor}
+                showPlayCounts={showPlayCounts}
+                libArtists={libArtists}
+                onOpenArtist={(key) => setLibDetail({ kind: 'artist', key })}
+                onBack={() => setLibDetail(null)}
+                onChangeCover={isPl ? () => setPlCoverFor(libDetail.key) : null}
+                onEditAlbum={!isPl && onUpdateAlbumMetadata ? () => setAlbumEditScope({
+                  key: libDetail.key,
+                  album: detailData.title,
+                  artist: detailData.by,
+                  coverArt: detailData.art,
+                  sampleTrack: detailData.tracks[0],
+                  trackIds: detailData.tracks.map((t) => t.id),
+                  discNumber: null,
+                }) : null}
+                onEditPlaylist={isPl ? () => setRenamePl({ id: libDetail.key, name: detailData.title }) : null}
+                onDeletePlaylist={isPl ? () => setDeletePl({ id: libDetail.key, name: detailData.title }) : null}
+                moreOpen={detailMore}
+                setMoreOpen={setDetailMore}
+              />
+            );
+          }
           /* Same columns for both kinds now. The album name earns a
              column once the artwork is stated once in the header
              instead of repeated on every row. */

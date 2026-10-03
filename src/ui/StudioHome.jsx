@@ -1844,7 +1844,7 @@ export default function StudioHome({
     // Playlist order is the stored order, not the library's — that's the point
     // of a playlist.
     const tracks = ids.map((id) => byId.get(id)).filter(Boolean);
-    return { kind: 'playlist', title: pl.name, by: 'You', art: pl.coverArt || tracks[0] ? (pl.coverArt || coverFor(tracks[0])) : null, tracks };
+    return { kind: 'playlist', title: pl.name, by: 'You', customArt: !!pl.coverArt, art: pl.coverArt || tracks[0] ? (pl.coverArt || coverFor(tracks[0])) : null, tracks };
   }, [libDetail, libAlbums, playlists, library, coverFor]);
 
   /* Page wash, sampled from the open record's cover. Same sampler the
