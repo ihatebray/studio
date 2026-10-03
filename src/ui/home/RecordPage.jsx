@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { api } from '../../lib/format.js';
+import { api, titleCase } from '../../lib/format.js';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
 import { hoverPreload, spotifyIdOf } from '../../lib/spotifyMediaElement.js';
 import { ExplicitBadge, HiResImg, PlayIcon } from '../sharedUI.jsx';
@@ -653,7 +653,7 @@ export function RecordLayoutPicker({ value, onPick, label = 'Album layout' }) {
       {RECORD_LAYOUTS.map(([id, label]) => (
         <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? 'on' : ''} onClick={() => onPick(id)}>
           <svg viewBox="0 0 96 60" aria-hidden>{SKETCH[id]}</svg>
-          {label}
+          {titleCase(label)}
         </button>
       ))}
     </div>

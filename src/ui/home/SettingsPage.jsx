@@ -167,13 +167,13 @@ export default function SettingsPage({
           <div className="sth-set-list">
             {/* Full width: the drawings don't fit the settings' control column. */}
             <div className="sth-set-r" style={{ display: 'block' }}>
-              <span className="txt"><b>Album layout</b><p>How album pages are arranged. Classic is the original page.</p></span>
+              <span className="txt"><b>Album Layout</b><p>How album pages are arranged. Classic is the original page.</p></span>
               <div style={{ marginTop: 14 }}>
                 <RecordLayoutPicker label="Album layout" value={recordLayoutOf(theme.recordLayout)} onPick={(v) => setThemeKey('recordLayout', v)} />
               </div>
             </div>
             <div className="sth-set-r" style={{ display: 'block' }}>
-              <span className="txt"><b>Playlist layout</b><p>How playlist pages are arranged. Until you pick one, playlists use the album layout.</p></span>
+              <span className="txt"><b>Playlist Layout</b><p>How playlist pages are arranged. Until you pick one, playlists use the album layout.</p></span>
               <div style={{ marginTop: 14 }}>
                 <RecordLayoutPicker label="Playlist layout" value={recordLayoutOf(theme.playlistLayout ?? theme.recordLayout)} onPick={(v) => setThemeKey('playlistLayout', v)} />
               </div>
@@ -228,26 +228,26 @@ export default function SettingsPage({
             </div>
             {onClearLibrary || onClearEverything ? (
               <>
-                <h2 className="st-section-title" style={{ fontSize: 16, margin: '36px 0 12px' }}>Danger zone</h2>
+                <h2 className="st-section-title" style={{ fontSize: 16, margin: '36px 0 12px' }}>Danger Zone</h2>
                 {onClearLibrary ? (
                   <div className="sth-danger">
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <b>Clear library</b>
+                      <b>Clear Library</b>
                       <p>Removes every track, playlist and album note from studio. Your listening history is kept, so re-importing a song brings its play count back.</p>
                     </div>
                     <button type="button" className="st-btn st-btn-danger" disabled={clearing} onClick={() => setClearConfirm({ deleteFiles: false })}>
-                      {clearing ? 'Clearing…' : 'Clear library'}
+                      {clearing ? 'Clearing…' : 'Clear Library'}
                     </button>
                   </div>
                 ) : null}
                 {onClearEverything ? (
                   <div className="sth-danger">
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <b>Delete everything</b>
+                      <b>Delete Everything</b>
                       <p>Wipes the library, playlists, album notes and all listening history, then returns studio to its first-run setup screen.</p>
                     </div>
                     <button type="button" className="st-btn st-btn-danger" disabled={clearingAll} onClick={() => setClearAllConfirm({ deleteFiles: false })}>
-                      {clearingAll ? 'Deleting…' : 'Delete everything'}
+                      {clearingAll ? 'Deleting…' : 'Delete Everything'}
                     </button>
                   </div>
                 ) : null}
@@ -329,7 +329,7 @@ export default function SettingsPage({
             <section className="sth-conn">
               <div className="sth-conn-head">
                 <div>
-                  <h2>Spotify developer keys <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· optional</span></h2>
+                  <h2>Spotify Developer Keys <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
                   <p>A backup for search and song details when your Spotify sign-in is busy or rate-limited. Any free developer app works.</p>
                 </div>
                 {connState.spotify != null ? (
@@ -354,10 +354,10 @@ export default function SettingsPage({
             {onReplayOnboarding ? (
               <section className="sth-conn" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <h2>Run setup again</h2>
+                  <h2>Run Setup Again</h2>
                   <p style={{ marginBottom: 0 }}>Replays the first-launch walkthrough. Your credentials and library are not touched.</p>
                 </div>
-                <button type="button" className="st-btn st-btn-outline" onClick={onReplayOnboarding}>Replay setup</button>
+                <button type="button" className="st-btn st-btn-outline" onClick={onReplayOnboarding}>Replay Setup</button>
               </section>
             ) : null}
           </div>

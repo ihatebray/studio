@@ -133,7 +133,7 @@ export default function FontSettings({ uiFontId, onSetUiFontId }) {
               {list.map(card)}
               {mine ? (
                 <button type="button" className="stf-card stf-add" disabled={busy} onClick={() => fileRef.current?.click()}>
-                  {busy ? 'Adding…' : '+ Add font files'}
+                  {busy ? 'Adding…' : '+ Add Font Files'}
                 </button>
               ) : null}
             </div>

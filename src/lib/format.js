@@ -31,3 +31,18 @@ export function ago(at, now = Date.now()) {
   if (d < 7) return `${d} days ago`;
   return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
+
+/* Title Case for labels: "Album and playlist pages" → "Album and Playlist
+ * Pages". Small words stay lower case after the first word; words that
+ * already have capitals ("API", "Spotify") and names written lower case on
+ * purpose ("studio", "imgbb") are left alone. */
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'from', 'in', 'into', 'nor', 'of', 'on', 'or', 'per', 'the', 'to', 'vs', 'via', 'with']);
+const KEEP_LOWER = new Set(['studio', 'imgbb']);
+export function titleCase(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/[A-Za-z][A-Za-z'’]*/g, (w, at) => {
+    if (KEEP_LOWER.has(w) || w !== w.toLowerCase()) return w;
+    if (at > 0 && SMALL_WORDS.has(w)) return w;
+    return w[0].toUpperCase() + w.slice(1);
+  });
+}

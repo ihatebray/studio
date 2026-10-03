@@ -2975,7 +2975,7 @@ export default function StudioHome({
                   opacity: (clearing || clearPhrase.trim().toLowerCase() !== 'clear') ? 0.45 : 1,
                 }}
               >
-                {clearing ? 'Clearing…' : 'Clear library'}
+                {clearing ? 'Clearing…' : 'Clear Library'}
               </button>
             </div>
           </div>
@@ -3104,7 +3104,7 @@ export default function StudioHome({
                   opacity: (clearingAll || clearAllPhrase.trim().toLowerCase() !== 'delete everything') ? 0.45 : 1,
                 }}
               >
-                {clearingAll ? 'Deleting…' : 'Delete everything'}
+                {clearingAll ? 'Deleting…' : 'Delete Everything'}
               </button>
             </div>
           </div>

@@ -168,12 +168,12 @@ export function useToastBus() {
 const POS_KEY = 'studio:toastPosition';
 
 const TOAST_POSITIONS = [
-  { id: 'lane', name: 'Own lane', note: 'The page makes room above the player; covers nothing' },
-  { id: 'player', name: 'In the player bar', note: 'Over the song info for a moment' },
-  { id: 'right', name: 'Bottom right', note: 'Above the player, right corner' },
-  { id: 'left', name: 'Bottom left', note: 'Over the foot of the sidebar' },
-  { id: 'top-right', name: 'Top right', note: 'Top corner of the page' },
-  { id: 'top-center', name: 'Top centre', note: 'Top middle of the page' },
+  { id: 'lane', name: 'Own Lane', note: 'The page makes room above the player; covers nothing' },
+  { id: 'player', name: 'In the Player Bar', note: 'Over the song info for a moment' },
+  { id: 'right', name: 'Bottom Right', note: 'Above the player, right corner' },
+  { id: 'left', name: 'Bottom Left', note: 'Over the foot of the sidebar' },
+  { id: 'top-right', name: 'Top Right', note: 'Top corner of the page' },
+  { id: 'top-center', name: 'Top Centre', note: 'Top middle of the page' },
 ];
 
 const DEFAULT_LAYOUT = {

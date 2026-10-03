@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PICKER_PRESETS, SIDEBAR_W } from './constants.js';
 import { hexToRgb, rgbToHex } from './common.jsx';
+import { titleCase } from '../../lib/format.js';
 
 /* Category titles for the settings body heading. Kept beside the rail's own
    labels so the two can't drift — the rail says "Colour", the heading says
@@ -725,7 +726,7 @@ export function SpotifyAccountPanel() {
     <section className="sth-conn">
       <div className="sth-conn-head">
         <div>
-          <h2>Spotify account</h2>
+          <h2>Spotify Account</h2>
           <p>
             Plays Spotify songs right in Studio (Premium), and powers My Spotify, search and artist
             pages (play counts, listeners, bios, discography) on any account. Save also hearts a song
@@ -746,14 +747,14 @@ export function SpotifyAccountPanel() {
             </span>
             <span style={{ flex: 1 }} />
             <button type="button" className="st-btn st-btn-outline" onClick={test} disabled={testing}>
-              {testing ? 'Testing…' : 'Test connection'}
+              {testing ? 'Testing…' : 'Test Connection'}
             </button>
             <button type="button" className="st-btn st-btn-outline" onClick={signOut}>Sign out</button>
           </>
         ) : (
           <>
             <button type="button" className="st-btn st-btn-primary" onClick={signIn} disabled={busy}>
-              {busy ? 'Waiting for your browser…' : 'Sign in with Spotify'}
+              {busy ? 'Waiting for your browser…' : 'Sign In with Spotify'}
             </button>
             {busy ? <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Finish in the browser tab that opened.</span> : null}
           </>
@@ -929,7 +930,7 @@ export function ReloadButton() {
 export function SetRow({ title, note, children, wide = true }) {
   return (
     <div className="sth-set-r">
-      <span className="txt"><b>{title}</b>{note ? <p>{note}</p> : null}</span>
+      <span className="txt"><b>{titleCase(title)}</b>{note ? <p>{note}</p> : null}</span>
       <span className={`ctl${wide ? ' is-col' : ''}`}>{children}</span>
     </div>
   );
@@ -942,7 +943,7 @@ export function SetSeg({ value, options, onPick, label }) {
       {options.map(([id, lbl]) => (
         <button key={String(id)} type="button" role="radio" aria-checked={value === id}
           className={value === id ? 'on' : ''} onClick={() => onPick(id)}>
-          {lbl}
+          {titleCase(lbl)}
         </button>
       ))}
     </span>

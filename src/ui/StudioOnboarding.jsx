@@ -421,7 +421,7 @@ export function SpotifyCredsPanel({ onSaved, onStatus, compact = false, onValidC
       <div style={{ marginTop: 16 }}>
         <button type="button" className={`st-btn st-btn-primary${compact ? '' : ' st-btn-block'}`} disabled={!clientId.trim() || !clientSecret.trim() || busy} onClick={save}>
           {busy ? <Spinner /> : null}
-          {compact ? 'Save credentials' : 'Save and continue'}
+          {compact ? 'Save Credentials' : 'Save and Continue'}
         </button>
       </div>
     </div>
@@ -483,7 +483,7 @@ export function SoulseekCredsPanel({ compact = false, onStatus, onSaved }) {
       <HowTo open={false} label={compact ? 'Where do I find these?' : 'What username should I use?'}>
         <Steps>
           <li>Soulseek has no signup page. Pick any username and password here and the account is created the first time you log in.</li>
-          <li>If the name is already taken the login fails — try another. <Lit>Test connection</Lit> below tells you either way.</li>
+          <li>If the name is already taken the login fails — try another. <Lit>Test Connection</Lit> below tells you either way.</li>
           <li>Nothing is shared from your machine unless you set up sharing in the official Soulseek client.</li>
         </Steps>
         <div style={{ marginTop: 10, fontSize: 11.5, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6 }}>
@@ -509,11 +509,11 @@ export function SoulseekCredsPanel({ compact = false, onStatus, onSaved }) {
       <div style={{ marginTop: 16, display: 'flex', gap: 10 }}>
         <button type="button" className="st-btn st-btn-primary" disabled={!username.trim() || !password || busy} onClick={save}>
           {busy ? <Spinner /> : null}
-          Save login
+          Save Login
         </button>
         <button type="button" className="st-btn st-btn-outline" disabled={testing || (!configured && (!username.trim() || !password))} onClick={test}>
           {testing ? <Spinner /> : null}
-          Test connection
+          Test Connection
         </button>
       </div>
     </div>
@@ -591,7 +591,7 @@ function SpotifySignInPanel({ onSignedIn }) {
             {busy ? <Spinner /> : (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm4.6 14.4a.62.62 0 0 1-.86.2c-2.35-1.44-5.3-1.76-8.79-.96a.62.62 0 1 1-.28-1.22c3.81-.87 7.09-.5 9.72 1.12.3.18.39.57.2.86zm1.22-2.73a.78.78 0 0 1-1.07.26c-2.69-1.65-6.8-2.13-9.98-1.17a.78.78 0 0 1-.45-1.5c3.64-1.1 8.16-.57 11.25 1.33.37.22.48.7.25 1.08zm.1-2.84C14.7 8.92 9.4 8.74 6.34 9.67a.94.94 0 1 1-.54-1.8c3.51-1.07 9.35-.86 13.04 1.33a.94.94 0 0 1-.96 1.62z" /></svg>
             )}
-            {busy ? 'Waiting for your browser…' : 'Sign in with Spotify'}
+            {busy ? 'Waiting for your browser…' : 'Sign In with Spotify'}
           </button>
           {busy ? <div style={{ width: '100%', textAlign: 'center', fontSize: 12, color: 'var(--text-faint, #6F6F78)' }}>Finish in the browser tab that opened, then come back here.</div> : null}
         </div>
