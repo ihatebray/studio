@@ -208,6 +208,34 @@ const CSS = `
 .msp-bars i:nth-child(2) { animation-delay: -0.3s; } .msp-bars i:nth-child(3) { animation-delay: -0.6s; }
 @keyframes mspBar { 0%, 100% { height: 3px; } 50% { height: 12px; } }
 
+/* countdowns: albums on the way from artists followed in Studio */
+.msp-cds { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 12px; }
+.msp-cd { position: relative; display: flex; align-items: center; gap: 18px; padding: 16px; border-radius: 16px; overflow: hidden; isolation: isolate;
+  border: 1px solid rgba(255,255,255,0.08); background: #121214; color: #fff; cursor: pointer; text-align: left; font: inherit; min-width: 0; }
+.msp-cd-bg { position: absolute; inset: -60px; z-index: -2; background-size: cover; background-position: center;
+  filter: blur(44px) saturate(1.5) brightness(0.55); transition: transform 0.6s ease; }
+.msp-cd:hover .msp-cd-bg { transform: scale(1.06); }
+.msp-cd-dim { position: absolute; inset: 0; z-index: -1; background: linear-gradient(100deg, rgba(0,0,0,0.05), rgba(0,0,0,0.38)); }
+.msp-cd-art { width: 124px; height: 124px; border-radius: 10px; flex-shrink: 0; object-fit: cover; display: block;
+  background: rgba(255,255,255,0.08); box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+.msp-cd-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.msp-cd-k { font-size: 10.5px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; color: rgba(255,255,255,0.68); }
+.msp-cd-t { margin-top: 3px; font-size: 21px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msp-cd-a { margin-top: 1px; font-size: 13.5px; font-weight: 600; color: rgba(255,255,255,0.78); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msp-cd-clock { display: flex; gap: 6px; margin-top: 12px; }
+.msp-cd-clock span { min-width: 50px; padding: 6px 6px 5px; border-radius: 10px; display: flex; flex-direction: column; align-items: center;
+  background: rgba(0,0,0,0.3); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
+.msp-cd-clock b { font-size: 20px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.msp-cd-clock small { margin-top: 1px; font-size: 9px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.58); }
+.msp-cd-date { margin-top: 9px; font-size: 12px; color: rgba(255,255,255,0.66); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msp-cd-out { align-self: flex-start; margin-top: 12px; height: 30px; padding: 0 14px; border-radius: 999px; display: inline-flex; align-items: center; gap: 7px;
+  background: #fff; color: #000; font-size: 13px; font-weight: 800; }
+.msp-cd-x { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); color: rgba(255,255,255,0.85);
+  opacity: 0; transition: opacity 0.14s ease, background 0.14s ease; }
+.msp-cd:hover .msp-cd-x, .msp-cd-x:focus-visible { opacity: 1; }
+.msp-cd-x:hover { background: rgba(0,0,0,0.6); color: #fff; }
+
 /* jump back in */
 .msp-jump { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 .msp-jumptile { position: relative; display: flex; align-items: center; gap: 12px; height: 64px; padding-right: 12px; border-radius: 12px;
@@ -733,20 +761,104 @@ function MixTile({ item, onOpen, onPlay }) {
   );
 }
 
+/* ------------------------------------------------------------ countdowns */
+
+/** Albums on the way from artists followed in Studio (main: countdowns.js).
+ *  Asked again whenever the follows change; `reload(true)` skips the cache. */
+function useCountdowns() {
+  const follows = useStudioFollows();
+  const key = follows.map((f) => f.id).join(',');
+  const [items, setItems] = useState([]);
+  const reload = useCallback(async (force = false) => {
+    const r = await window.electronAPI?.countdownsList?.(force).catch(() => null);
+    if (r?.ok) setItems(r.items || []);
+  }, []);
+  useEffect(() => { reload(false); }, [key, reload]);
+  return { items, reload };
+}
+
+/** When it comes out: the exact moment Spotify gave, or local midnight. */
+const releaseTime = (x) => (x.releaseAt ? Date.parse(x.releaseAt) : new Date(`${x.releaseDate}T00:00:00`).getTime());
+const cdKey = (artistId) => `cd:${artistId}`;
+
+function useNow(on) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!on) return undefined;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on]);
+  return now;
+}
+
+function CountdownCard({ item, now, onOpen, onHide }) {
+  const at = releaseTime(item);
+  const left = Math.max(0, at - now);
+  const out = left === 0;
+  const s = Math.floor(left / 1000);
+  const parts = [[Math.floor(s / 86400), 'Days'], [Math.floor(s / 3600) % 24, 'Hrs'], [Math.floor(s / 60) % 60, 'Min'], [s % 60, 'Sec']];
+  const when = new Date(at).toLocaleString(undefined, {
+    weekday: 'long', day: 'numeric', month: 'long',
+    ...(new Date(at).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}),
+    ...(item.releaseAt ? { hour: 'numeric', minute: '2-digit' } : {}),
+  });
+  const kind = item.type === 'single' ? 'Single' : item.type === 'ep' ? 'EP' : 'Album';
+  return (
+    <div className="msp-cd" role="button" tabIndex={0} onClick={() => onOpen(item, out)}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item, out); }}
+      title={out ? `Open ${item.name}` : `Go to ${item.artistName}`}>
+      {item.coverUrl ? <div className="msp-cd-bg" style={{ backgroundImage: `url("${item.coverUrl}")` }} /> : null}
+      <div className="msp-cd-dim" />
+      {item.coverUrl ? <img className="msp-cd-art" src={item.coverUrl} alt="" draggable={false} /> : <span className="msp-cd-art" />}
+      <div className="msp-cd-txt">
+        <span className="msp-cd-k">{out ? `New ${kind}` : `${kind} · Countdown`}</span>
+        <span className="msp-cd-t">{item.name}</span>
+        <span className="msp-cd-a">{item.artistName}</span>
+        {out ? (
+          <span className="msp-cd-out">{Icon.play(11)} Out now</span>
+        ) : (
+          <>
+            <div className="msp-cd-clock" aria-label={`${parts[0][0]} days, ${parts[1][0]} hours, ${parts[2][0]} minutes left`}>
+              {parts.map(([n, l]) => <span key={l}><b>{String(n).padStart(2, '0')}</b><small>{l}</small></span>)}
+            </div>
+            <span className="msp-cd-date">Out {when}</span>
+          </>
+        )}
+      </div>
+      <button type="button" className="msp-cd-x" aria-label={`Hide ${item.artistName}’s countdown`} title="Hide (turn it back on in Customize)"
+        onClick={(e) => { e.stopPropagation(); onHide(item); }}>{Icon.close(12)}</button>
+    </div>
+  );
+}
+
+function Countdowns({ items, prefs, onOpen }) {
+  const shown = items.filter((x) => prefs.shown(cdKey(x.artistId)));
+  const now = useNow(shown.length > 0);
+  if (!shown.length) return null;
+  return (
+    <section className="msp-sec">
+      <SectionHead title="Countdowns" meta="Coming soon from artists you follow" />
+      <div className="msp-cds">
+        {shown.map((x) => <CountdownCard key={x.key} item={x} now={now} onOpen={onOpen} onHide={(it) => prefs.set(cdKey(it.artistId), false)} />)}
+      </div>
+    </section>
+  );
+}
+
 /** Customize Home: every section, on or off. Inline under the header, like
  *  New Releases' Following. */
-function ShelfCustomizer({ shelves, prefs, onClose }) {
+function ShelfCustomizer({ shelves, countdowns = [], prefs, onClose }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  const Row = ({ k, title, sub }) => {
+  const Row = ({ k, title, sub, asIs = false }) => {
     const on = prefs.shown(k, title);
     return (
       <button type="button" className={cx('msp-tog', on && 'is-on')} role="switch" aria-checked={on} onClick={() => prefs.set(k, !on)}>
         <span style={{ minWidth: 0 }}>
-          <span className="nm">{titleCase(title)}</span>
+          <span className="nm">{asIs ? title : titleCase(title)}</span>
           {sub ? <span className="sb">{sub}</span> : null}
         </span>
         <span className="sw" aria-hidden><i /></span>
@@ -769,6 +881,13 @@ function ShelfCustomizer({ shelves, prefs, onClose }) {
         </div>
       </div>
       <div className="msp-fm-group">
+        <div className="msp-fm-h">Countdowns<span>{countdowns.length}</span></div>
+        <div className="msp-togs">
+          {countdowns.map((x) => <Row key={x.key} k={cdKey(x.artistId)} title={x.artistName} sub={x.name} asIs />)}
+          {!countdowns.length ? <div className="msp-fm-empty">When an artist you follow in Studio has an album on the way, it shows here, ready to turn on or off.</div> : null}
+        </div>
+      </div>
+      <div className="msp-fm-group">
         <div className="msp-fm-h">From Spotify<span>{shelves.length}</span></div>
         <div className="msp-togs">
           {shelves.map((sh) => <Row key={sh.key} k={sh.key} title={sh.title} sub={`${sh.items.length} ${sh.items.length === 1 ? 'item' : 'items'}`} />)}
@@ -786,6 +905,7 @@ export function SpotifyHome({ bridge }) {
   const [panel, openPanel, closePanel] = usePanel();
   const prefs = useShelfPrefs();
   const [customizing, setCustomizing] = useState(false);
+  const countdowns = useCountdowns();
 
   /* Plays land while the page is open: read Studio's history again every
      minute (it's a local file; nothing goes to Spotify). */
@@ -899,11 +1019,16 @@ export function SpotifyHome({ bridge }) {
   }, [core, mine]);
 
   const name = data?.user?.name ? data.user.name.split(' ')[0] : '';
-  const refreshAll = () => { refresh(); refreshMine(); };
+  const refreshAll = () => { refresh(); refreshMine(); countdowns.reload(true); };
 
   const openItem = (it) => {
     if (it.kind === 'artist' && bridge.onOpenArtist) { bridge.onOpenArtist({ name: it.name, spotifyId: it.id, image: it.image }); return; }
     openPanel(it);
+  };
+  /* A countdown opens the artist; once it's out, the album itself. */
+  const openCountdown = (x, out) => {
+    if (out && x.albumId) openPanel({ kind: 'album', id: x.albumId, name: x.name, image: x.coverUrl, sub: x.artistName });
+    else bridge.onOpenArtist?.({ name: x.artistName, spotifyId: x.artistId, image: x.artistImage });
   };
   const playItem = async (it, opts = {}) => {
     try {
@@ -942,7 +1067,9 @@ export function SpotifyHome({ bridge }) {
             </div>
           </header>
 
-          {customizing && data ? <ShelfCustomizer shelves={data.shelves} prefs={prefs} onClose={() => setCustomizing(false)} /> : null}
+          {customizing ? <ShelfCustomizer shelves={data?.shelves || []} countdowns={countdowns.items} prefs={prefs} onClose={() => setCustomizing(false)} /> : null}
+
+          <Countdowns items={countdowns.items} prefs={prefs} onOpen={openCountdown} />
 
           {data && limitedUntil ? <LimitBanner until={limitedUntil} /> : null}
           {error && data && error.step !== 'ratelimit' && core ? <div className="msp-banner">Showing what Studio saw last time. {error.error || ''}</div> : null}

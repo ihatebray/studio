@@ -169,6 +169,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   recordListen: (track) => ipcRenderer.invoke('listening:record', track),
   /* Artists followed in Studio (follows.js), not on Spotify. */
   followsList: () => ipcRenderer.invoke('follows:list'),
+  // Albums on the way from artists followed in Studio (countdowns.js).
+  countdownsList: (force = false) => ipcRenderer.invoke('countdowns:list', { force }),
   followsAdd: (artist) => ipcRenderer.invoke('follows:add', artist),
   followsRemove: (id) => ipcRenderer.invoke('follows:remove', id),
   onFollowsChanged: (cb) => {

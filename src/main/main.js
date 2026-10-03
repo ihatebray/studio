@@ -67,6 +67,7 @@ import { fetchGeniusCredits } from './geniusCredits.js';
 import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist, helperDiscography, helperPathfinder } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { registerFollowsIpc } from './follows.js';
+import { registerCountdownsIpc } from './countdowns.js';
 import { registerListeningIpc } from './listening.js';
 import { notice } from './notices.js';
 import { saveSpotifyTrack, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
@@ -176,6 +177,7 @@ registerSpotifyPartnerIpc(ipcMain);
 registerSpotifyPlayerIpc(ipcMain);
 registerSpotifyFeedIpc(ipcMain);
 registerFollowsIpc(ipcMain);
+registerCountdownsIpc(ipcMain);
 registerListeningIpc(ipcMain);
 
 /* Save: Get's replacement. Adds the track to the library as a streamed row

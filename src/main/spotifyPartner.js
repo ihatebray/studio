@@ -793,6 +793,51 @@ function shapeTrack(t) {
   };
 }
 
+/* An artist's album on the way: Spotify's pre-release (the album page that
+   counts down to release day), and anything in the discography dated after
+   today. Read defensively: the pre-release has moved between field names
+   (preRelease, preReleaseV2, a list of them), so any key that says
+   pre-release is looked at. `releaseAt` is an exact moment when Spotify
+   gives one; a date alone (or midnight UTC, which is how a date-only release
+   is written) is left as `releaseDate`, so the countdown can aim at local
+   midnight, which is when the album appears. */
+const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function upcomingFrom(a) {
+  const today = new Date().toISOString().slice(0, 10);
+  const out = [];
+  const add = (x) => {
+    if (!x?.name || !(x.releaseAt || x.releaseDate)) return;
+    const day = (x.releaseDate || x.releaseAt).slice(0, 10);
+    if (day < today) return;
+    if (out.some((o) => (x.id && o.id === x.id) || normName(o.name) === normName(x.name))) return;
+    out.push(x);
+  };
+  const when = (d) => {
+    const iso = String(d?.isoString || '');
+    if (iso && d?.precision !== 'DAY' && !/T00:00:00(\.0+)?Z$/.test(iso)) return { releaseAt: iso, releaseDate: '' };
+    if (iso) return { releaseAt: '', releaseDate: iso.slice(0, 10) };
+    if (d?.year && d?.month && d?.day) return { releaseAt: '', releaseDate: `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}` };
+    return { releaseAt: '', releaseDate: '' };
+  };
+  for (const [k, v] of Object.entries(a || {})) {
+    if (!/pre.?release/i.test(k) || !v || typeof v !== 'object') continue;
+    for (const pr of Array.isArray(v.items) ? v.items : [v]) {
+      const c = pr?.preReleaseContent || pr?.content || pr?.release || pr || {};
+      add({
+        id: idOf(c.uri) || idOf(pr?.uri), name: c.name || '', type: String(c.type || 'album').toLowerCase(),
+        coverUrl: img(c.coverArt?.sources, 640), ...when(pr?.releaseDate || c.releaseDate || c.date), countdown: true,
+      });
+    }
+  }
+  const disc = a?.discography || {};
+  const dated = [disc.latest, ...['albums', 'singles'].flatMap((g) => (disc[g]?.items || []).flatMap((x) => x?.releases?.items || []))];
+  for (const r of dated) {
+    if (!r) continue;
+    add({ id: r.id || idOf(r.uri), name: r.name || '', type: String(r.type || 'album').toLowerCase(), coverUrl: img(r.coverArt?.sources, 640), ...when(r.date) });
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------ public API */
 
 async function artistOverview(artistId) {
@@ -820,6 +865,7 @@ async function artistOverview(artistId) {
     })).filter((c) => c.city).slice(0, 5),
     topTracks: (disc.topTracks?.items || []).map((i) => shapeTrack(i?.track)).filter(Boolean),
     latest: shapeRelease(disc.latest, 'latest'),
+    upcoming: upcomingFrom(a),
     albums: releasesFrom(disc.albums, 'album'),
     singles: releasesFrom(disc.singles, 'single'),
     compilations: releasesFrom(disc.compilations, 'compilation'),
@@ -1315,6 +1361,11 @@ async function cachedOverview(id) {
   const data = await artistOverview(id);
   overviewCache.set(id, { at: Date.now(), data });
   return data;
+}
+
+/** Albums on the way for an artist (see upcomingFrom). */
+export async function artistUpcoming(id) {
+  return (await cachedOverview(id)).upcoming || [];
 }
 
 /* Where artist discographies come from first. main.js points this at the
