@@ -819,22 +819,32 @@ function upcomingFrom(a) {
     if (d?.year && d?.month && d?.day) return { releaseAt: '', releaseDate: `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}` };
     return { releaseAt: '', releaseDate: '' };
   };
-  for (const [k, v] of Object.entries(a || {})) {
-    if (!/pre.?release/i.test(k) || !v || typeof v !== 'object') continue;
-    for (const pr of Array.isArray(v.items) ? v.items : [v]) {
-      const c = pr?.preReleaseContent || pr?.content || pr?.release || pr || {};
+  /* The whole overview, walked: a pre-release (preReleaseContent) or any
+     album dated today or later, wherever this version of the response puts
+     it. Other artists' records (appears on, related) are skipped. */
+  const seen = new Set();
+  const walk = (o, depth, pre) => {
+    if (!o || typeof o !== 'object' || depth > 8 || seen.has(o)) return;
+    seen.add(o);
+    if (Array.isArray(o)) { for (const x of o) walk(x, depth + 1, pre); return; }
+    const c = o.preReleaseContent && typeof o.preReleaseContent === 'object' ? o.preReleaseContent : null;
+    if (c) {
       add({
-        id: idOf(c.uri) || idOf(pr?.uri), name: c.name || '', type: String(c.type || 'album').toLowerCase(),
-        coverUrl: img(c.coverArt?.sources, 640), ...when(pr?.releaseDate || c.releaseDate || c.date), countdown: true,
+        id: idOf(c.uri) || idOf(o.uri), name: c.name || '', type: String(c.type || 'album').toLowerCase(),
+        coverUrl: img(c.coverArt?.sources, 640), ...when(o.releaseDate || c.releaseDate || c.date), countdown: true,
+      });
+    } else if (o.name && /^spotify:album:/.test(String(o.uri || '')) && (o.date || o.releaseDate)) {
+      add({
+        id: o.id || idOf(o.uri), name: o.name, type: String(o.type || 'album').toLowerCase(),
+        coverUrl: img(o.coverArt?.sources, 640), ...when(o.releaseDate || o.date), countdown: pre,
       });
     }
-  }
-  const disc = a?.discography || {};
-  const dated = [disc.latest, ...['albums', 'singles'].flatMap((g) => (disc[g]?.items || []).flatMap((x) => x?.releases?.items || []))];
-  for (const r of dated) {
-    if (!r) continue;
-    add({ id: r.id || idOf(r.uri), name: r.name || '', type: String(r.type || 'album').toLowerCase(), coverUrl: img(r.coverArt?.sources, 640), ...when(r.date) });
-  }
+    for (const [k, v] of Object.entries(o)) {
+      if (/^(relatedContent|appearsOn|relatedArtists|related)$/.test(k)) continue;
+      walk(v, depth + 1, pre || /pre.?release/i.test(k));
+    }
+  };
+  walk(a, 0, false);
   return out;
 }
 

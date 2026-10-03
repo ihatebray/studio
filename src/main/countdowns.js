@@ -20,12 +20,17 @@ import { artistUpcoming, partnerState } from './spotifyPartner.js';
 import { loadCachedReleases } from './libraryDb.js';
 
 const TTL_MS = 6 * 60 * 60 * 1000;
+/* Nothing found is asked again sooner: it may have been a bad moment. */
+const EMPTY_TTL_MS = 30 * 60 * 1000;
+/* Bumped when what's stored changes meaning; an older file is dropped. */
+const VERSION = 2;
 const file = () => path.join(app.getPath('userData'), 'studio-countdowns.json');
 
 let store = null;
 function load() {
   if (store) return store;
   try { store = JSON.parse(fs.readFileSync(file(), 'utf8')) || {}; } catch { store = {}; }
+  if (store.__v !== VERSION) store = { __v: VERSION };
   return store;
 }
 function save() {
@@ -44,7 +49,8 @@ async function refresh(force) {
   if (!st.connected) return;
   const cache = load();
   const now = Date.now();
-  const todo = listFollows().filter((f) => force || !cache[f.id] || now - cache[f.id].at > TTL_MS);
+  const todo = listFollows().filter((f) => force || !cache[f.id]
+    || now - cache[f.id].at > (cache[f.id].items?.length ? TTL_MS : EMPTY_TTL_MS));
   let i = 0;
   const worker = async () => {
     while (i < todo.length) {
@@ -55,7 +61,11 @@ async function refresh(force) {
     }
   };
   await Promise.all([worker(), worker()]);
-  if (todo.length) save();
+  if (todo.length) {
+    save();
+    const found = todo.reduce((n, f) => n + (cache[f.id]?.items?.length || 0), 0);
+    console.log(`[countdowns] checked ${todo.length} followed artists, ${found} releases on the way`);
+  }
 }
 
 /**
