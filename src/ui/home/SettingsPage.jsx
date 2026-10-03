@@ -178,6 +178,10 @@ export default function SettingsPage({
                 <RecordLayoutPicker label="Playlist layout" value={recordLayoutOf(theme.playlistLayout ?? theme.recordLayout)} onPick={(v) => setThemeKey('playlistLayout', v)} />
               </div>
             </div>
+            <SetRow title="Album songs" note="Album pages show the songs you own, or the whole album from Spotify with the ones you don't have dimmed, ready to play or save.">
+              <SetSeg label="Album songs" value={theme.albumSongs === 'full' ? 'full' : 'owned'} onPick={(v) => setThemeKey('albumSongs', v)}
+                options={[['owned', 'Songs you own'], ['full', 'Whole album']]} />
+            </SetRow>
             <SetRow title="Album and playlist pages" note="Where these pages take their background. Cover Art follows each release; Fixed uses one shade for all of them.">
               <SetSeg label="Album and playlist pages" value={theme.detailMode} onPick={(v) => setThemeKey('detailMode', v)}
                 options={[['cover', 'Cover art'], ['fixed', 'Fixed']]} />

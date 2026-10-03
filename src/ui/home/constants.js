@@ -87,6 +87,7 @@ export const THEME_DEFAULTS = {
   detailColor: '70, 84, 190',
   recordLayout: 'classic',  // album page layout; see RECORD_LAYOUTS in RecordPage.jsx
   playlistLayout: null,     // playlist page layout; null = the same as albums
+  albumSongs: 'owned',      // album pages: 'owned' (your songs) or 'full' (the whole album, from Spotify)
   /* How the now-playing wash reads colour out of the cover, and how far it
      reaches. See coverTheme.js for what each extraction actually does. */
   /* ---- Surfaces -------------------------------------------------------

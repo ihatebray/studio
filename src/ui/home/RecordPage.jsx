@@ -278,6 +278,7 @@ export default function RecordPage({
   onChangeCover, onEditAlbum, onEditPlaylist, onDeletePlaylist,
   moreOpen, setMoreOpen,
   bridge = null,  // saveRow / saveState for Spotify rows (StudioHome's mySpotifyBridge)
+  fullAlbum = false, // Settings → Layout → Album Songs: the whole album, not just your songs
 }) {
   const isAlbum = data.kind === 'album';
   const kindLabel = isAlbum ? 'Album' : 'Playlist';
@@ -322,7 +323,7 @@ export default function RecordPage({
     });
   }, [isAlbum, data.tracks, coverFor, libArtists]);
 
-  const fullRows = useFullAlbum(isAlbum && !!bridge, libDetailKey, data.title, data.by);
+  const fullRows = useFullAlbum(isAlbum && !!bridge && fullAlbum, libDetailKey, data.title, data.by);
   /* The album in Spotify's order: each song paired with your copy when you
      have it. Songs of yours Spotify doesn't list stay, at the end. Only
      used when something is actually missing. */

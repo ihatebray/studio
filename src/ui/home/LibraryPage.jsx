@@ -325,6 +325,7 @@ export default function LibraryPage({
                 moreOpen={detailMore}
                 setMoreOpen={setDetailMore}
                 bridge={mySpotifyBridge}
+                fullAlbum={theme.albumSongs === 'full'}
               />
             );
           }
