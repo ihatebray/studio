@@ -305,7 +305,9 @@ export default function LibraryPage({
                 coverFor={coverFor}
                 playCountFor={playCountFor}
                 showPlayCounts={showPlayCounts}
+                libAlbums={libAlbums}
                 libArtists={libArtists}
+                onOpenAlbum={(key) => setLibDetail({ kind: 'album', key })}
                 onOpenArtist={(key) => setLibDetail({ kind: 'artist', key })}
                 onBack={() => setLibDetail(null)}
                 onChangeCover={isPl ? () => setPlCoverFor(libDetail.key) : null}

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
 import { hoverPreload } from '../../lib/spotifyMediaElement.js';
 import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
@@ -7,8 +7,14 @@ import { RowPlayButton } from './Library.jsx';
 
 /* Album and playlist pages, in the layouts picked under Settings → Layout.
    (Classic is the original page and still lives in LibraryPage.) Every
-   layout uses the same pieces: the cover, the title block, the buttons and
-   the song list. They only differ in where those go and what's behind them. */
+   layout uses the same pieces: the cover, the title block, the buttons, the
+   song list and, under it, more by the artist (albums) or the artists in it
+   (playlists). They differ only in where those go.
+
+   Colour: the page's colour field is painted on the page itself, which
+   doesn't scroll, so it reaches every edge (the scrollbar strip included)
+   and stays the same however far down you are. Nothing inside paints an
+   opaque background over it; panels are tinted glass on top. */
 
 export const RECORD_LAYOUTS = [
   ['classic', 'Classic'],
@@ -23,119 +29,138 @@ export const RECORD_LAYOUTS = [
 const CSS = `
 .rp { position: relative; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow: hidden; color: #fff; }
 .rp-scroll { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; }
-.rp-back { position: absolute; top: 16px; left: 16px; z-index: 6; width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.34); color: rgba(255,255,255,0.88);
+.rp-scroll, .rp-col { scrollbar-gutter: auto; }
+.rp-back { position: absolute; top: 14px; left: 14px; z-index: 6; width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.32); color: rgba(255,255,255,0.9);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: background .15s ease; }
 .rp-back:hover { background: rgba(0,0,0,0.55); }
 .rp-cover { position: relative; flex-shrink: 0; overflow: hidden; background: rgba(255,255,255,0.06); }
 .rp-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.rp-cover.is-shadow { box-shadow: 0 18px 50px rgba(0,0,0,0.42), 0 2px 8px rgba(0,0,0,0.3); }
+.rp-cover.is-shadow { box-shadow: 0 18px 50px rgba(0,0,0,0.38), 0 2px 8px rgba(0,0,0,0.28); }
 .rp-mosaic { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; width: 100%; height: 100%; }
 .rp-cover.is-edit { cursor: pointer; }
-.rp-kind { font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.7); }
-.rp-title { font-weight: 900; letter-spacing: -0.025em; line-height: 1.04; margin: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.rp-kind { font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.72); }
+.rp-title { font-weight: 900; letter-spacing: -0.02em; line-height: 1.06; margin: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
 .rp-by { font-size: 16px; font-weight: 700; color: #fff; }
 .rp-by button { border: none; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; text-underline-offset: 3px; }
 .rp-by button:hover { text-decoration: underline; }
-.rp-meta { font-size: 14px; color: rgba(255,255,255,0.68); }
-.rp-line { font-size: 15px; color: rgba(255,255,255,0.72); }
+.rp-meta { font-size: 14px; color: rgba(255,255,255,0.7); }
+.rp-line { font-size: 15px; color: rgba(255,255,255,0.74); }
 .rp-line .rp-by { font-size: inherit; display: inline; }
 .rp-genres { display: flex; flex-wrap: wrap; gap: 6px; }
-.rp-pill { display: inline-flex; align-items: center; height: 28px; padding: 0 13px; border-radius: 999px; background: rgba(255,255,255,0.1); font-size: 12.5px; font-weight: 600; color: rgba(255,255,255,0.85); }
+.rp-pill { display: inline-flex; align-items: center; height: 28px; padding: 0 13px; border-radius: 999px; background: rgba(255,255,255,0.12); font-size: 12.5px; font-weight: 600; color: rgba(255,255,255,0.88); }
 .rp-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rp-acts .rp-gap { flex: 1; min-width: 0; }
 .rp-play { height: 46px; padding: 0 24px 0 20px; border-radius: 999px; border: none; cursor: pointer; background: #fff; color: #000;
-  display: inline-flex; align-items: center; gap: 9px; font: inherit; font-weight: 800; font-size: 15px; transition: transform .12s ease; }
+  display: inline-flex; align-items: center; gap: 9px; font: inherit; font-weight: 800; font-size: 15px; transition: transform .12s ease; flex-shrink: 0; }
 .rp-play:hover { transform: scale(1.03); }
-.rp-ib { position: relative; width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
-  color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.09); transition: background .15s ease, color .15s ease; }
-.rp-ib:hover { background: rgba(255,255,255,0.16); color: #fff; }
+.rp-ib { position: relative; width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.12); transition: background .15s ease, color .15s ease; }
+.rp-ib:hover { background: rgba(255,255,255,0.2); color: #fff; }
 .rp-menu { position: absolute; top: 48px; left: 0; z-index: 20; width: 200px; padding: 5px; border-radius: 12px; background: #0d0d0e; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
-.rp-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.rp-tools .sth-findfield { margin-left: auto; }
-.rp-list { padding-bottom: 18px; }
+.rp-find { display: inline-flex; align-items: center; gap: 8px; height: 42px; width: 220px; max-width: 100%; padding: 0 14px; border-radius: 999px;
+  background: rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.14); color: rgba(255,255,255,0.7); animation: rpGrow .16s ease-out; }
+.rp-find:focus-within { border-color: rgba(255,255,255,0.4); }
+.rp-find input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: #fff; font: inherit; font-size: 14px; }
+.rp-find input::placeholder { color: rgba(255,255,255,0.5); }
+@keyframes rpGrow { from { width: 42px; opacity: .6; } to { width: 220px; opacity: 1; } }
+
 .rp-list .sth-lrow { padding: 0 10px; }
+.rp-list .sth-lrow:not(.sth-lrow-head):hover { background: rgba(255,255,255,0.07); }
+.rp-list .sth-lrow.is-playing { background: rgba(255,255,255,0.1); }
+.rp-list .sth-lrow-num, .rp-list .sth-lrow-dim { color: rgba(255,255,255,0.62); }
 .rp-art { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: rgba(255,255,255,0.08); }
-.rp-empty { padding: 30px 10px; color: rgba(255,255,255,0.55); font-size: 14px; }
+.rp-empty { padding: 30px 10px; color: rgba(255,255,255,0.6); font-size: 14px; }
+
+/* Under the list */
+.rp-more { margin-top: 30px; padding-bottom: 30px; }
+.rp-more h3 { margin: 0 0 14px 10px; font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+.rp-shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 168px)); gap: 12px; }
+.rp-tile { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 14px; border: none; background: transparent; color: #fff; cursor: pointer; text-align: left; font: inherit; transition: background .15s ease; min-width: 0; }
+.rp-tile:hover { background: rgba(255,255,255,0.08); }
+.rp-tile img, .rp-tile .ph { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; background: rgba(255,255,255,0.08); display: block; }
+.rp-tile.is-round img, .rp-tile.is-round .ph { border-radius: 50%; }
+.rp-tile b { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-tile small { font-size: 12.5px; color: rgba(255,255,255,0.6); margin-top: -4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-tile.is-round { align-items: center; text-align: center; }
 
 /* Side by side */
-.rp-side { display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); height: 100%; }
-.rp-side-l { position: relative; padding: 28px 30px; display: flex; flex-direction: column; gap: 0; overflow-y: auto;
-  background: linear-gradient(180deg, rgba(var(--rp-wash), 0.78), rgba(var(--rp-wash), 0.34) 70%, rgba(var(--rp-wash), 0.2)), rgba(var(--rp-deep), 0.6); }
+.rp-side { display: grid; grid-template-columns: clamp(270px, 32%, 360px) minmax(0, 1fr); height: 100%; }
+.rp-col { position: relative; min-width: 0; overflow-y: auto; overflow-x: hidden; }
+.rp-side-l { padding: 24px 26px; background: rgba(var(--rp-wash), 0.22); box-shadow: inset -1px 0 0 rgba(255,255,255,0.06); }
 .rp-side-l .rp-cover { width: 100%; aspect-ratio: 1; border-radius: 16px; }
-.rp-side-l .rp-title { font-size: 30px; margin-top: 22px; }
+.rp-side-l .rp-title { font-size: 30px; margin-top: 20px; }
 .rp-side-l .rp-by { margin-top: 6px; }
 .rp-side-l .rp-meta { margin-top: 6px; }
 .rp-side-l .rp-genres { margin-top: 14px; }
-.rp-side-l .rp-acts { margin-top: 22px; }
-.rp-side-r { position: relative; min-width: 0; overflow-y: auto; padding: 18px 22px 0 18px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.16), rgba(var(--rp-wash), 0) 40%); }
-.rp-side-r .rp-tools { margin-bottom: 8px; }
-.rp-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 0.1em; color: rgba(255,255,255,0.5); }
+.rp-side-l .rp-acts { margin-top: 20px; }
+.rp-side-r { padding: 14px 18px 0 14px; }
+.rp-coverwrap { position: relative; }
+.rp-coverwrap .rp-back { top: 10px; left: 10px; }
 
 /* Big header */
-.rp-hero { position: relative; height: 330px; overflow: hidden; }
-.rp-hero-bg { position: absolute; inset: -60px; background-size: cover; background-position: center; filter: blur(60px) saturate(1.3); opacity: 0.85; }
-.rp-hero-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0.05), rgba(var(--rp-base), 0.65) 75%, rgb(var(--rp-base))); }
-.rp-hero-in { position: absolute; left: 36px; right: 36px; bottom: 30px; display: flex; align-items: flex-end; gap: 30px; }
-.rp-hero-in .rp-cover { width: 230px; height: 230px; border-radius: 18px; }
-.rp-hero-in .rp-title { font-size: clamp(36px, 5.2vw, 66px); margin: 8px 0 12px; }
-.rp-bar { display: flex; align-items: center; gap: 10px; padding: 4px 36px 14px; flex-wrap: wrap; }
-.rp-bar .sth-findfield { margin-left: auto; }
+.rp-hero { position: relative; padding: 70px 36px 26px; display: flex; align-items: flex-end; gap: 30px; }
+.rp-hero-bg { position: absolute; inset: -40px -40px 0; background-size: cover; background-position: center; filter: blur(56px) saturate(1.25); opacity: 0.8;
+  -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent); mask-image: linear-gradient(180deg, #000 45%, transparent); pointer-events: none; }
+.rp-hero-dim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.3)); -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent); mask-image: linear-gradient(180deg, #000 45%, transparent); pointer-events: none; }
+.rp-hero .rp-cover { position: relative; width: clamp(170px, 20vw, 230px); aspect-ratio: 1; border-radius: 18px; }
+.rp-hero .rp-title { font-size: clamp(34px, 4.6vw, 64px); margin: 8px 0 12px; }
+.rp-hero > div { position: relative; min-width: 0; }
+.rp-bar { padding: 0 36px 14px; }
 .rp-pad { padding: 0 24px; }
 
 /* Centred */
-.rp-glow { position: absolute; left: 50%; top: -180px; width: 1100px; height: 720px; transform: translateX(-50%); pointer-events: none;
-  background: radial-gradient(closest-side, rgba(var(--rp-wash), 0.75), rgba(var(--rp-wash), 0.25) 55%, rgba(var(--rp-wash), 0)); }
-.rp-centre { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 34px 24px 0; }
-.rp-centre .rp-cover { width: 232px; height: 232px; border-radius: 22px; }
-.rp-centre .rp-title { font-size: 38px; margin-top: 22px; max-width: 760px; }
+.rp-glow { position: absolute; left: 50%; top: -220px; width: 1000px; height: 700px; transform: translateX(-50%); pointer-events: none;
+  background: radial-gradient(closest-side, rgba(var(--rp-wash), 0.6), rgba(var(--rp-wash), 0)); }
+.rp-centre { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 30px 24px 0; }
+.rp-centre .rp-cover { width: clamp(170px, 19vw, 230px); aspect-ratio: 1; border-radius: 22px; }
+.rp-centre .rp-title { font-size: clamp(28px, 3vw, 38px); margin-top: 20px; max-width: 760px; }
 .rp-centre .rp-by { margin-top: 6px; }
 .rp-centre .rp-meta { margin-top: 5px; }
+.rp-centre .rp-genres { margin-top: 12px; justify-content: center; }
 .rp-centre .rp-acts { margin-top: 18px; justify-content: center; }
-.rp-card { position: relative; width: min(820px, calc(100% - 48px)); margin: 26px auto 0; padding: 10px 10px 0; border-radius: 18px 18px 0 0;
-  background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.06); border-bottom: none; }
-.rp-card .rp-tools { padding: 2px 4px 8px; }
+.rp-card { position: relative; width: min(860px, calc(100% - 40px)); margin: 24px auto 0; padding: 8px; border-radius: 20px;
+  background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.08); }
+.rp-centre-more { width: min(860px, calc(100% - 40px)); margin: 0 auto; }
 
 /* Record sleeve */
-.rp-topwash { position: absolute; left: 0; right: 0; top: 0; height: 520px; pointer-events: none;
-  background: linear-gradient(180deg, rgba(var(--rp-wash), 0.6), rgba(var(--rp-wash), 0.14) 50%, rgba(var(--rp-wash), 0)); }
-.rp-sleeve-head { position: relative; display: flex; align-items: center; padding: 56px 40px 28px 56px; }
-.rp-sleeve { position: relative; width: 240px; height: 240px; flex-shrink: 0; margin-right: 40px; }
-.rp-sleeve.has-disc { margin-right: 150px; }
-.rp-sleeve .rp-cover { position: relative; z-index: 2; width: 240px; height: 240px; border-radius: 10px; }
-.rp-disc { position: absolute; top: 8px; left: 106px; width: 224px; height: 224px; border-radius: 50%; z-index: 1;
+.rp-sleeve-head { position: relative; display: flex; align-items: center; padding: 48px 36px 26px 48px; }
+.rp-sleeve { position: relative; width: clamp(180px, 19vw, 236px); aspect-ratio: 1; flex-shrink: 0; margin-right: 36px; }
+.rp-sleeve.has-disc { margin-right: clamp(110px, 12vw, 146px); }
+.rp-sleeve .rp-cover { position: relative; z-index: 2; width: 100%; height: 100%; border-radius: 10px; }
+.rp-disc { position: absolute; top: 3%; left: 45%; width: 94%; height: 94%; border-radius: 50%; z-index: 1;
   background: repeating-radial-gradient(circle, #111 0 2px, #1c1c1c 2px 4px); box-shadow: 0 10px 40px rgba(0,0,0,0.5);
   display: flex; align-items: center; justify-content: center; transition: transform .5s cubic-bezier(.2,.7,.2,1); }
-.rp-sleeve:hover .rp-disc { transform: translateX(26px) rotate(40deg); }
-.rp-disc-label { width: 82px; height: 82px; border-radius: 50%; background-size: cover; background-position: center; box-shadow: 0 0 0 3px #0b0b0b; position: relative; }
+.rp-sleeve:hover .rp-disc { transform: translateX(12%) rotate(40deg); }
+.rp-disc-label { width: 36%; height: 36%; border-radius: 50%; background-size: cover; background-position: center; box-shadow: 0 0 0 3px #0b0b0b; position: relative; }
 .rp-disc-label::after { content: ''; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #0b0b0b; }
-.rp-sleeve-head .rp-title { font-size: clamp(34px, 4.2vw, 54px); margin: 8px 0 12px; }
-.rp-sleeve-head .rp-acts { margin-top: 20px; }
+.rp-info { min-width: 0; flex: 1; }
+.rp-sleeve-head .rp-title, .rp-colour-head .rp-title { font-size: clamp(32px, 4.2vw, 56px); margin: 8px 0 12px; }
+.rp-sleeve-head .rp-acts, .rp-colour-head .rp-acts { margin-top: 20px; }
 
 /* Full colour */
-.rp.is-colour { background: rgb(var(--rp-wash)); }
-.rp-colour-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.28)); }
-.rp-colour-head { position: relative; display: flex; align-items: flex-end; gap: 34px; padding: 60px 40px 30px 56px; }
-.rp-colour-head .rp-cover { width: 232px; height: 232px; border-radius: 14px; }
-.rp-colour-head .rp-title { font-size: clamp(36px, 4.6vw, 60px); margin: 8px 0 12px; }
-.rp-colour-head .rp-acts { margin-top: 20px; }
-.rp.is-colour .rp-ib, .rp.is-colour .rp-pill, .rp.is-colour .sth-findfield { background: rgba(0,0,0,0.18); }
-.rp.is-colour .rp-list .sth-lrow:not(.sth-lrow-head) { border-bottom: 1px solid rgba(255,255,255,0.1); border-radius: 0; }
-.rp.is-colour .rp-list .sth-lrow.is-playing { background: rgba(0,0,0,0.16); border-radius: 12px; border-color: transparent; }
+.rp-colour-head { position: relative; display: flex; align-items: flex-end; gap: 32px; padding: 56px 36px 28px 48px; }
+.rp-colour-head .rp-cover { width: clamp(170px, 19vw, 230px); aspect-ratio: 1; border-radius: 14px; }
+.rp.is-colour .rp-ib, .rp.is-colour .rp-pill, .rp.is-colour .rp-find { background: rgba(0,0,0,0.2); }
+.rp.is-colour .rp-list .sth-lrow { border-radius: 12px; position: relative; }
+.rp.is-colour .rp-list .sth-lrow + .sth-lrow::before { content: ''; position: absolute; left: 10px; right: 10px; top: 0; height: 1px; background: rgba(255,255,255,0.1); }
+.rp.is-colour .rp-list .sth-lrow:hover::before, .rp.is-colour .rp-list .sth-lrow:hover + .sth-lrow::before,
+.rp.is-colour .rp-list .sth-lrow.is-playing::before, .rp.is-colour .rp-list .sth-lrow.is-playing + .sth-lrow::before { opacity: 0; }
 .rp.is-colour .rp-list .sth-lrow:not(.sth-lrow-head):hover { background: rgba(0,0,0,0.12); }
-.rp.is-colour .sth-lrow-num, .rp.is-colour .sth-lrow-dim { color: rgba(255,255,255,0.68); }
-.rp-colour-pad { position: relative; padding: 0 40px; }
+.rp.is-colour .rp-list .sth-lrow.is-playing { background: rgba(0,0,0,0.18); }
+.rp.is-colour .rp-list .sth-lrow-num, .rp.is-colour .rp-list .sth-lrow-dim { color: rgba(255,255,255,0.72); }
+.rp.is-colour .rp-tile:hover { background: rgba(0,0,0,0.12); }
 
 /* Poster */
-.rp-poster { display: grid; grid-template-columns: minmax(340px, 40%) minmax(0, 1fr); height: 100%; }
+.rp-poster { display: grid; grid-template-columns: clamp(300px, 38%, 470px) minmax(0, 1fr); height: 100%; }
 .rp-poster-l { position: relative; overflow: hidden; }
 .rp-poster-l .rp-cover { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; }
-.rp-poster-fade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(0,0,0,0) 35%, rgba(0,0,0,0.55) 68%, rgba(0,0,0,0.88)); }
-.rp-poster-txt { position: absolute; left: 30px; right: 30px; bottom: 30px; }
-.rp-poster-txt .rp-title { font-size: clamp(32px, 3.6vw, 48px); margin: 8px 0 10px; }
+.rp-poster-fade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(0,0,0,0) 32%, rgba(0,0,0,0.5) 64%, rgba(0,0,0,0.86)); }
+.rp-poster-txt { position: absolute; left: 28px; right: 28px; bottom: 28px; }
+.rp-poster-txt .rp-title { font-size: clamp(30px, 3.4vw, 46px); margin: 8px 0 10px; }
 .rp-poster-txt .rp-acts { margin-top: 18px; }
-.rp-poster-txt .rp-ib { background: rgba(255,255,255,0.16); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.rp-poster-r { position: relative; min-width: 0; overflow-y: auto; padding: 18px 22px 0 18px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.2), rgba(var(--rp-wash), 0) 45%); }
-.rp-poster-r .rp-tools { margin-bottom: 8px; }
+.rp-poster-txt .rp-ib, .rp-poster-txt .rp-find { background: rgba(255,255,255,0.16); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.rp-poster-r { padding: 14px 18px 0 14px; }
 `;
 
 const ICONS = {
@@ -158,6 +183,29 @@ function yearOf(tracks) {
   return best;
 }
 
+const primaryArtist = (s) => String(s || '').split(/,|feat\.|ft\.|&|\bx\b/i)[0].trim();
+
+/** A search button that opens into a field, so search doesn't need a row. */
+function FindToggle({ filter, onFilter, kind }) {
+  const [open, setOpen] = useState(false);
+  if (!open && !filter) {
+    return (
+      <button type="button" className="rp-ib" title={`Find in ${kind}`} aria-label={`Find in ${kind}`} onClick={() => setOpen(true)}>
+        <Icon name="search" size={17} />
+      </button>
+    );
+  }
+  return (
+    <label className="rp-find">
+      <Icon name="search" size={15} />
+      <input autoFocus value={filter} placeholder={`Find in ${kind}`} aria-label={`Find in ${kind}`}
+        onChange={(e) => onFilter(e.target.value)}
+        onBlur={() => { if (!filter) setOpen(false); }}
+        onKeyDown={(e) => { if (e.key === 'Escape') { onFilter(''); setOpen(false); e.currentTarget.blur(); } }} />
+    </label>
+  );
+}
+
 export default function RecordPage({
   layout,
   data,          // detailData: { kind, title, by, art, customArt, tracks }
@@ -170,15 +218,15 @@ export default function RecordPage({
   onPlayTrack, onTogglePlay, onToggleFavorite, onRemoveFromPlaylist,
   canManage, openRowMenu,
   coverFor, playCountFor, showPlayCounts,
-  libArtists, onOpenArtist, onBack,
+  libAlbums = [], libArtists = [], onOpenAlbum, onOpenArtist, onBack,
   onChangeCover, onEditAlbum, onEditPlaylist, onDeletePlaylist,
   moreOpen, setMoreOpen,
 }) {
   const isAlbum = data.kind === 'album';
   const kindLabel = isAlbum ? 'Album' : 'Playlist';
 
-  /* A playlist without a cover of its own shows up to four of the albums
-     inside it, so it looks like what's in it rather than like its first song. */
+  /* A playlist without a cover of its own shows four of the albums inside
+     it, so it looks like what's in it rather than like its first song. */
   const mosaic = useMemo(() => {
     if (isAlbum || data.customArt) return null;
     const seen = [];
@@ -190,14 +238,42 @@ export default function RecordPage({
     return seen.length === 4 ? seen : null;
   }, [isAlbum, data.customArt, data.tracks, coverFor]);
 
+  /* Under the list: the artist's other albums, or who's in the playlist. */
+  const [moreTitle, moreAlbums] = useMemo(() => {
+    if (!isAlbum) return ['', []];
+    const who = primaryArtist(data.by).toLowerCase();
+    const others = libAlbums.filter((a) => a.key !== libDetailKey);
+    const mine = others.filter((a) => primaryArtist(a.artist).toLowerCase() === who);
+    if (mine.length) return [`More by ${primaryArtist(data.by)}`, mine.slice(0, 12)];
+    // Nothing else by them: the newest records in the library instead.
+    return ['More in your library', [...others].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)).slice(0, 8)];
+  }, [isAlbum, data.by, libAlbums, libDetailKey]);
+  const plArtists = useMemo(() => {
+    if (isAlbum) return [];
+    const m = new Map();
+    for (const t of data.tracks) {
+      const name = primaryArtist(t.artist);
+      if (!name) continue;
+      const k = name.toLowerCase();
+      const cur = m.get(k) || { key: k, name, n: 0, art: null };
+      cur.n += 1;
+      if (!cur.art) cur.art = coverFor(t);
+      m.set(k, cur);
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n).slice(0, 12).map((a) => {
+      const lib = libArtists.find((x) => x.key === a.key);
+      return { ...a, art: lib?.art || a.art, inLibrary: !!lib };
+    });
+  }, [isAlbum, data.tracks, coverFor, libArtists]);
+
   const totalMs = data.tracks.reduce((n, t) => n + (Number(t.duration) || 0) * 1000, 0);
   const year = isAlbum ? yearOf(data.tracks) : null;
   const meta = [year, `${data.tracks.length} ${data.tracks.length === 1 ? 'song' : 'songs'}`, formatTotalMs(totalMs)].filter(Boolean).join(' · ');
   const oneArtist = isAlbum && new Set(data.tracks.map((t) => (t.artist || '').toLowerCase())).size <= 1;
   const showAlbumCol = !isAlbum;
   const showPlaysCol = showPlayCounts && isAlbum;
-  const cols = ['44px', 'minmax(180px,2.4fr)', showAlbumCol ? 'minmax(120px,1.4fr)' : null, showPlaysCol ? '64px' : null, '64px', '52px'].filter(Boolean).join(' ');
-  const rowH = isAlbum ? 50 : 58;
+  const cols = ['44px', 'minmax(160px,2.4fr)', showAlbumCol ? 'minmax(110px,1.3fr)' : null, showPlaysCol ? '60px' : null, '60px', '52px'].filter(Boolean).join(' ');
+  const rowH = isAlbum && oneArtist ? 50 : 58;
 
   const artistLink = (() => {
     const who = isAlbum ? String(data.by || '') : '';
@@ -207,13 +283,13 @@ export default function RecordPage({
       : <span>{data.by}</span>;
   })();
 
-  const cover = (extra = '', opts = {}) => (
-    <div className={`rp-cover${opts.shadow === false ? '' : ' is-shadow'}${!isAlbum && onChangeCover ? ' is-edit sth-plcover' : ''} ${extra}`}
+  const cover = (opts = {}) => (
+    <div className={`rp-cover${opts.shadow === false ? '' : ' is-shadow'}${!isAlbum && onChangeCover ? ' is-edit sth-plcover' : ''}`}
       onClick={!isAlbum && onChangeCover ? onChangeCover : undefined} title={!isAlbum && onChangeCover ? 'Change cover' : undefined}>
       {mosaic
         ? <div className="rp-mosaic">{mosaic.map((a) => <img key={a} src={a} alt="" draggable={false} />)}</div>
         : data.art ? <img src={data.art} alt="" draggable={false} /> : null}
-      {!isAlbum && onChangeCover ? (
+      {!isAlbum && onChangeCover && !opts.noVeil ? (
         <div className="sth-plcover-veil">
           <Icon name="edit" size={24} />
           <span style={{ fontSize: 11.5, fontWeight: 650, marginTop: 7 }}>Change cover</span>
@@ -224,33 +300,31 @@ export default function RecordPage({
 
   const playAll = () => onPlayTrack?.(data.tracks[0], data.tracks);
   const shuffle = () => { const sh = [...data.tracks].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); };
+  const find = <FindToggle filter={filter} onFilter={onFilter} kind={data.kind} />;
+  /* opts.find: 'end' pushes search to the far right of a wide row; 'inline'
+     keeps it with the other buttons (narrow or centred rows). */
   const actions = (opts = {}) => (
     <div className="rp-acts">
       {opts.shuffleFirst ? <button type="button" className="rp-ib" title="Shuffle" aria-label="Shuffle" onClick={shuffle}><Icon name="shuffle" /></button> : null}
       <button type="button" className="rp-play" onClick={playAll} aria-label={`Play ${data.title}`}><PlayIcon size={15} />Play</button>
       {opts.shuffleFirst ? null : <button type="button" className="rp-ib" title="Shuffle" aria-label="Shuffle" onClick={shuffle}><Icon name="shuffle" /></button>}
       {isAlbum && onEditAlbum ? <button type="button" className="rp-ib" title="Edit album details" aria-label="Edit album details" onClick={onEditAlbum}><Icon name="edit" size={16} /></button> : null}
-      {!isAlbum && onEditPlaylist ? <button type="button" className="rp-ib" title="Edit playlist" aria-label="Edit playlist" onClick={onEditPlaylist}><Icon name="edit" size={16} /></button> : null}
-      {!isAlbum && onDeletePlaylist ? (
+      {!isAlbum && (onEditPlaylist || onDeletePlaylist) ? (
         <span style={{ position: 'relative' }}>
           <button type="button" className="rp-ib" title="More" aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen((v) => !v)}><Icon name="more" /></button>
           {moreOpen ? (
             <span className="rp-menu">
-              <button type="button" className="sth-mi" style={{ color: 'var(--danger)' }} onClick={() => { setMoreOpen(false); onDeletePlaylist(); }}>Delete playlist</button>
+              {onEditPlaylist ? <button type="button" className="sth-mi" onClick={() => { setMoreOpen(false); onEditPlaylist(); }}>Rename playlist</button> : null}
+              {onChangeCover ? <button type="button" className="sth-mi" onClick={() => { setMoreOpen(false); onChangeCover(); }}>Change cover</button> : null}
+              {onDeletePlaylist ? <button type="button" className="sth-mi" style={{ color: 'var(--danger)' }} onClick={() => { setMoreOpen(false); onDeletePlaylist(); }}>Delete playlist</button> : null}
             </span>
           ) : null}
         </span>
       ) : null}
       {opts.genres && genres.length ? genres.map((g) => <span key={g} className="rp-pill">{g}</span>) : null}
+      {opts.find === 'end' ? <span className="rp-gap" /> : null}
+      {find}
     </div>
-  );
-
-  const find = (
-    <label className="sth-findfield">
-      <Icon name="search" size={15} />
-      <input value={filter} onChange={(e) => onFilter(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') onFilter(''); }}
-        placeholder={`Find in ${data.kind}`} aria-label={`Find in ${data.kind}`} />
-    </label>
   );
 
   const list = (
@@ -276,7 +350,7 @@ export default function RecordPage({
                   {t.explicit ? <ExplicitBadge /> : null}
                 </div>
                 {oneArtist ? null : (
-                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.artist}</div>
+                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.62)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.artist}</div>
                 )}
               </div>
             </div>
@@ -305,48 +379,73 @@ export default function RecordPage({
     </div>
   );
 
-  const back = (
-    <button type="button" className="rp-back" onClick={onBack} title="Back" aria-label="Back"
-      style={layout === 'side' ? { position: 'static', flexShrink: 0, width: 30, height: 30 } : undefined}>
-      <Icon name="back" size={16} />
-    </button>
-  );
+  const more = filter ? null : (moreAlbums.length ? (
+    <section className="rp-more">
+      <h3>{moreTitle}</h3>
+      <div className="rp-shelf">
+        {moreAlbums.map((a) => (
+          <button key={a.key} type="button" className="rp-tile" onClick={() => onOpenAlbum(a.key)} title={a.name}>
+            {a.art ? <img src={a.art} alt="" draggable={false} /> : <span className="ph" />}
+            <b>{a.name}</b>
+            <small>{[yearOf(a.tracks), `${a.tracks.length} songs`].filter(Boolean).join(' · ')}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  ) : plArtists.length ? (
+    <section className="rp-more">
+      <h3>Artists in this playlist</h3>
+      <div className="rp-shelf">
+        {plArtists.map((a) => (
+          <button key={a.key} type="button" className="rp-tile is-round" disabled={!a.inLibrary}
+            onClick={a.inLibrary ? () => onOpenArtist(a.key) : undefined} style={a.inLibrary ? undefined : { cursor: 'default' }}>
+            {a.art ? <img src={a.art} alt="" draggable={false} /> : <span className="ph" />}
+            <b>{a.name}</b>
+            <small>{a.n} {a.n === 1 ? 'song' : 'songs'}</small>
+          </button>
+        ))}
+      </div>
+    </section>
+  ) : null);
+
+  const back = <button type="button" className="rp-back" onClick={onBack} title="Back" aria-label="Back"><Icon name="back" size={16} /></button>;
   const kind = <div className="rp-kind">{kindLabel}</div>;
   const title = <h1 className="rp-title">{data.title}</h1>;
-  const vars = { '--rp-wash': wash, '--rp-deep': deep, '--rp-base': '12, 12, 13' };
+  const byLine = <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}</div>;
   const blurArt = mosaic ? mosaic[0] : data.art;
+
+  /* The colour field, on the page itself (see the note at the top). The
+     same strength as the Classic page, so switching layouts keeps the colour. */
+  const background = layout === 'colour'
+    ? `linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%), rgb(${wash})`
+    : `linear-gradient(180deg, rgba(${wash},0.85) 0%, rgba(${wash},0.55) 26%, rgba(${wash},0.34) 58%, rgba(${wash},0.28) 100%), rgba(${deep},0.72)`;
 
   let body;
   if (layout === 'side') {
     body = (
       <div className="rp-side">
-        <div className="rp-side-l">
-          {cover()}
+        <div className="rp-col rp-side-l sth-libscroll">
+          <div className="rp-coverwrap">{cover()}{back}</div>
           {title}
           <div className="rp-by">{artistLink}</div>
           <div className="rp-meta">{meta}</div>
           {genres.length ? <div className="rp-genres">{genres.map((g) => <span key={g} className="rp-pill">{g}</span>)}</div> : null}
           {actions()}
         </div>
-        <div className="rp-side-r sth-libscroll">
-          <div className="rp-tools"><span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>{back}<span className="rp-eyebrow">{isAlbum ? 'TRACKS' : 'SONGS'}</span></span>{find}</div>
-          {list}
-        </div>
+        <div className="rp-col rp-side-r sth-libscroll">{list}{more}</div>
       </div>
     );
   } else if (layout === 'header') {
     body = (
       <div className="rp-scroll sth-libscroll">
         <div className="rp-hero">
-          {blurArt ? <div className="rp-hero-bg" style={{ backgroundImage: `url("${blurArt}")` }} /> : <div className="rp-hero-bg" style={{ background: `rgb(${wash})` }} />}
-          <div className="rp-hero-shade" />
-          <div className="rp-hero-in">
-            {cover()}
-            <div style={{ minWidth: 0 }}>{kind}{title}<div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}</div></div>
-          </div>
+          {blurArt ? <div className="rp-hero-bg" style={{ backgroundImage: `url("${blurArt}")` }} /> : null}
+          <div className="rp-hero-dim" />
+          {cover()}
+          <div>{kind}{title}{byLine}</div>
         </div>
-        <div className="rp-bar">{actions({ genres: true })}{find}</div>
-        <div className="rp-pad">{list}</div>
+        <div className="rp-bar">{actions({ genres: true, find: 'end' })}</div>
+        <div className="rp-pad">{list}{more}</div>
       </div>
     );
   } else if (layout === 'centred') {
@@ -358,73 +457,59 @@ export default function RecordPage({
           {title}
           <div className="rp-by">{artistLink}</div>
           <div className="rp-meta">{meta}</div>
+          {genres.length ? <div className="rp-genres">{genres.map((g) => <span key={g} className="rp-pill">{g}</span>)}</div> : null}
           {actions({ shuffleFirst: true })}
         </div>
-        <div className="rp-card">
-          <div className="rp-tools">{genres.length ? <div className="rp-genres">{genres.map((g) => <span key={g} className="rp-pill">{g}</span>)}</div> : <span />}{find}</div>
-          {list}
-        </div>
+        <div className="rp-card">{list}</div>
+        <div className="rp-centre-more">{more || <div style={{ height: 30 }} />}</div>
       </div>
     );
   } else if (layout === 'sleeve') {
     const disc = isAlbum && data.art;
     body = (
       <div className="rp-scroll sth-libscroll">
-        <div className="rp-topwash" />
         <div className="rp-sleeve-head">
           <div className={`rp-sleeve${disc ? ' has-disc' : ''}`}>
             {cover()}
             {disc ? <div className="rp-disc"><div className="rp-disc-label" style={{ backgroundImage: `url("${data.art}")` }} /></div> : null}
           </div>
-          <div style={{ minWidth: 0 }}>
-            {kind}{title}
-            <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}</div>
-            {actions({ genres: true })}
-          </div>
+          <div className="rp-info">{kind}{title}{byLine}{actions({ genres: true, find: 'end' })}</div>
         </div>
-        <div className="rp-pad"><div className="rp-tools" style={{ marginBottom: 6 }}><span />{find}</div>{list}</div>
+        <div className="rp-pad">{list}{more}</div>
       </div>
     );
   } else if (layout === 'colour') {
     body = (
       <div className="rp-scroll sth-libscroll">
-        <div className="rp-colour-shade" />
         <div className="rp-colour-head">
           {cover()}
-          <div style={{ minWidth: 0 }}>
-            {kind}{title}
-            <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}</div>
-            {actions({ genres: true })}
-          </div>
+          <div className="rp-info">{kind}{title}{byLine}{actions({ genres: true, find: 'end' })}</div>
         </div>
-        <div className="rp-colour-pad"><div className="rp-tools" style={{ marginBottom: 6 }}><span />{find}</div>{list}</div>
+        <div className="rp-pad" style={{ padding: '0 34px' }}>{list}{more}</div>
       </div>
     );
   } else {
     body = (
       <div className="rp-poster">
         <div className="rp-poster-l">
-          {cover('', { shadow: false })}
+          {cover({ shadow: false, noVeil: true })}
           <div className="rp-poster-fade" />
+          {back}
           <div className="rp-poster-txt">
-            {kind}{title}
-            <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}</div>
+            {kind}{title}{byLine}
             {actions()}
           </div>
         </div>
-        <div className="rp-poster-r sth-libscroll">
-          <div className="rp-tools">{genres.length ? <div className="rp-genres">{genres.map((g) => <span key={g} className="rp-pill">{g}</span>)}</div> : <span />}{find}</div>
-          {list}
-        </div>
+        <div className="rp-col rp-poster-r sth-libscroll">{list}{more}</div>
       </div>
     );
   }
 
   return (
-    <div className={`rp${layout === 'colour' ? ' is-colour' : ''}`} style={{ ...vars, background: layout === 'colour' ? undefined : 'rgb(12, 12, 13)' }}>
+    <div className={`rp${layout === 'colour' ? ' is-colour' : ''}`} style={{ '--rp-wash': wash, background }}>
       <style>{CSS}</style>
-      {layout === 'side' ? null : back}
       {body}
+      {layout === 'header' || layout === 'centred' || layout === 'sleeve' || layout === 'colour' ? back : null}
     </div>
   );
 }
