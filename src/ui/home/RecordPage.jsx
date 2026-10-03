@@ -11,10 +11,12 @@ import { RowPlayButton } from './Library.jsx';
    song list and, under it, more by the artist (albums) or the artists in it
    (playlists). They differ only in where those go.
 
-   Colour: the page's colour field is painted on the page itself, which
-   doesn't scroll, so it reaches every edge (the scrollbar strip included)
-   and stays the same however far down you are. Nothing inside paints an
-   opaque background over it; panels are tinted glass on top. */
+   Colour: each layout takes its colour from the cover in its own way (a
+   tinted column, blurred artwork, a glow of the cover's colours, a full
+   colour page). Whatever doesn't scroll is painted on an element that
+   doesn't scroll (the page, or a column), so it reaches every edge, the
+   scrollbar strip included, and stays put as the list moves. Panels on top
+   are tinted glass, never grey. */
 
 export const RECORD_LAYOUTS = [
   ['classic', 'Classic'],
@@ -87,31 +89,29 @@ const CSS = `
 /* Side by side */
 .rp-side { display: grid; grid-template-columns: clamp(270px, 32%, 360px) minmax(0, 1fr); height: 100%; }
 .rp-col { position: relative; min-width: 0; overflow-y: auto; overflow-x: hidden; }
-.rp-side-l { padding: 24px 26px; background: rgba(var(--rp-wash), 0.22); box-shadow: inset -1px 0 0 rgba(255,255,255,0.06); }
+.rp-side-l { padding: 24px 26px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.8), rgba(var(--rp-wash), 0.38) 70%, rgba(var(--rp-wash), 0.24)), rgb(var(--rp-deep)); }
 .rp-side-l .rp-cover { width: 100%; aspect-ratio: 1; border-radius: 16px; }
 .rp-side-l .rp-title { font-size: 30px; margin-top: 20px; }
 .rp-side-l .rp-by { margin-top: 6px; }
 .rp-side-l .rp-meta { margin-top: 6px; }
 .rp-side-l .rp-genres { margin-top: 14px; }
 .rp-side-l .rp-acts { margin-top: 20px; }
-.rp-side-r { padding: 14px 18px 0 14px; }
+.rp-side-r { padding: 14px 18px 0 14px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.2), rgba(var(--rp-wash), 0.04) 45%, rgba(var(--rp-wash), 0)); }
 .rp-coverwrap { position: relative; }
 .rp-coverwrap .rp-back { top: 10px; left: 10px; }
 
 /* Big header */
 .rp-hero { position: relative; padding: 70px 36px 26px; display: flex; align-items: flex-end; gap: 30px; }
-.rp-hero-bg { position: absolute; inset: -40px -40px 0; background-size: cover; background-position: center; filter: blur(56px) saturate(1.25); opacity: 0.8;
+.rp-hero-bg { position: absolute; inset: -40px -40px 0; background-size: cover; background-position: center; filter: blur(56px) saturate(1.35); opacity: 0.95;
   -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent); mask-image: linear-gradient(180deg, #000 45%, transparent); pointer-events: none; }
 .rp-hero-dim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.3)); -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent); mask-image: linear-gradient(180deg, #000 45%, transparent); pointer-events: none; }
 .rp-hero .rp-cover { position: relative; width: clamp(170px, 20vw, 230px); aspect-ratio: 1; border-radius: 18px; }
 .rp-hero .rp-title { font-size: clamp(34px, 4.6vw, 64px); margin: 8px 0 12px; }
-.rp-hero > div { position: relative; min-width: 0; }
+.rp-hero-txt { position: relative; min-width: 0; }
 .rp-bar { padding: 0 36px 14px; }
 .rp-pad { padding: 0 24px; }
 
 /* Centred */
-.rp-glow { position: absolute; left: 50%; top: -220px; width: 1000px; height: 700px; transform: translateX(-50%); pointer-events: none;
-  background: radial-gradient(closest-side, rgba(var(--rp-wash), 0.6), rgba(var(--rp-wash), 0)); }
 .rp-centre { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 30px 24px 0; }
 .rp-centre .rp-cover { width: clamp(170px, 19vw, 230px); aspect-ratio: 1; border-radius: 22px; }
 .rp-centre .rp-title { font-size: clamp(28px, 3vw, 38px); margin-top: 20px; max-width: 760px; }
@@ -120,7 +120,8 @@ const CSS = `
 .rp-centre .rp-genres { margin-top: 12px; justify-content: center; }
 .rp-centre .rp-acts { margin-top: 18px; justify-content: center; }
 .rp-card { position: relative; width: min(860px, calc(100% - 40px)); margin: 24px auto 0; padding: 8px; border-radius: 20px;
-  background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.08); }
+  background: rgba(10,10,12,0.32); border: 1px solid rgba(255,255,255,0.09);
+  backdrop-filter: blur(24px) saturate(1.2); -webkit-backdrop-filter: blur(24px) saturate(1.2); }
 .rp-centre-more { width: min(860px, calc(100% - 40px)); margin: 0 auto; }
 
 /* Record sleeve */
@@ -160,7 +161,7 @@ const CSS = `
 .rp-poster-txt .rp-title { font-size: clamp(30px, 3.4vw, 46px); margin: 8px 0 10px; }
 .rp-poster-txt .rp-acts { margin-top: 18px; }
 .rp-poster-txt .rp-ib, .rp-poster-txt .rp-find { background: rgba(255,255,255,0.16); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.rp-poster-r { padding: 14px 18px 0 14px; }
+.rp-poster-r { padding: 14px 18px 0 14px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.24), rgba(var(--rp-wash), 0.05) 45%, rgba(var(--rp-wash), 0)); }
 `;
 
 const ICONS = {
@@ -210,7 +211,7 @@ export default function RecordPage({
   layout,
   data,          // detailData: { kind, title, by, art, customArt, tracks }
   tracks,        // after the in-page filter
-  wash, deep, accUI,
+  wash, deep, accUI, palette = [],
   genres = [],
   filter, onFilter,
   libDetailKey,
@@ -414,11 +415,26 @@ export default function RecordPage({
   const byLine = <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}</div>;
   const blurArt = mosaic ? mosaic[0] : data.art;
 
-  /* The colour field, on the page itself (see the note at the top). The
-     same strength as the Classic page, so switching layouts keeps the colour. */
-  const background = layout === 'colour'
-    ? `linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%), rgb(${wash})`
-    : `linear-gradient(180deg, rgba(${wash},0.85) 0%, rgba(${wash},0.55) 26%, rgba(${wash},0.34) 58%, rgba(${wash},0.28) 100%), rgba(${deep},0.72)`;
+  /* Each layout's colour, painted on the page (which doesn't scroll). */
+  const base = '12, 12, 13';
+  const pal = [0, 1, 2, 3].map((i) => palette[i] || palette[0] || wash);
+  const background = {
+    side: `rgb(${base})`,
+    poster: `rgb(${base})`,
+    colour: `linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%), rgb(${wash})`,
+    header: `linear-gradient(180deg, rgba(${wash},0.3) 0%, rgba(${wash},0.14) 55%, rgba(${wash},0.08) 100%), rgb(${base})`,
+    sleeve: `linear-gradient(180deg, rgba(${wash},0.62) 0%, rgba(${wash},0.24) 42%, rgba(${wash},0.1) 75%, rgba(${wash},0.06) 100%), rgb(${base})`,
+    /* The cover's own colours, glowing behind it: the main one above the
+       cover, two more to either side, and a faint one at the bottom so the
+       page doesn't end in flat black. */
+    centred: [
+      `radial-gradient(58% 46% at 50% 4%, rgba(${pal[0]},0.85), rgba(${pal[0]},0) 100%)`,
+      `radial-gradient(42% 40% at 12% 22%, rgba(${pal[1]},0.55), rgba(${pal[1]},0) 100%)`,
+      `radial-gradient(42% 40% at 88% 26%, rgba(${pal[2]},0.55), rgba(${pal[2]},0) 100%)`,
+      `radial-gradient(70% 50% at 50% 100%, rgba(${pal[3]},0.3), rgba(${pal[3]},0) 100%)`,
+      `rgb(${base})`,
+    ].join(', '),
+  }[layout] || `rgb(${base})`;
 
   let body;
   if (layout === 'side') {
@@ -442,7 +458,7 @@ export default function RecordPage({
           {blurArt ? <div className="rp-hero-bg" style={{ backgroundImage: `url("${blurArt}")` }} /> : null}
           <div className="rp-hero-dim" />
           {cover()}
-          <div>{kind}{title}{byLine}</div>
+          <div className="rp-hero-txt">{kind}{title}{byLine}</div>
         </div>
         <div className="rp-bar">{actions({ genres: true, find: 'end' })}</div>
         <div className="rp-pad">{list}{more}</div>
@@ -451,7 +467,6 @@ export default function RecordPage({
   } else if (layout === 'centred') {
     body = (
       <div className="rp-scroll sth-libscroll">
-        <div className="rp-glow" />
         <div className="rp-centre">
           {cover()}
           {title}
@@ -506,7 +521,7 @@ export default function RecordPage({
   }
 
   return (
-    <div className={`rp${layout === 'colour' ? ' is-colour' : ''}`} style={{ '--rp-wash': wash, background }}>
+    <div className={`rp${layout === 'colour' ? ' is-colour' : ''}`} style={{ '--rp-wash': wash, '--rp-deep': deep, background }}>
       <style>{CSS}</style>
       {body}
       {layout === 'header' || layout === 'centred' || layout === 'sleeve' || layout === 'colour' ? back : null}

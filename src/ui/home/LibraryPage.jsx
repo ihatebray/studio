@@ -290,6 +290,7 @@ export default function LibraryPage({
                 wash={wash}
                 deep={deep}
                 accUI={pageAccUI}
+                palette={theme.detailMode === 'fixed' ? [] : (dt?.palette || []).slice(0, 4).map((c) => pageWash(c))}
                 genres={detailGenres}
                 filter={detailFilter}
                 onFilter={setDetailFilter}
