@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
 import { hoverPreload } from '../../lib/spotifyMediaElement.js';
 import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
@@ -60,12 +60,6 @@ const CSS = `
   color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.12); transition: background .15s ease, color .15s ease; }
 .rp-ib:hover { background: rgba(255,255,255,0.2); color: #fff; }
 .rp-menu { position: absolute; top: 48px; left: 0; z-index: 20; width: 200px; padding: 5px; border-radius: 12px; background: #0d0d0e; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
-.rp-find { display: inline-flex; align-items: center; gap: 8px; height: 42px; width: 220px; max-width: 100%; padding: 0 14px; border-radius: 999px;
-  background: rgba(0,0,0,0.22); border: 1px solid rgba(255,255,255,0.14); color: rgba(255,255,255,0.7); animation: rpGrow .16s ease-out; }
-.rp-find:focus-within { border-color: rgba(255,255,255,0.4); }
-.rp-find input { flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: #fff; font: inherit; font-size: 14px; }
-.rp-find input::placeholder { color: rgba(255,255,255,0.5); }
-@keyframes rpGrow { from { width: 42px; opacity: .6; } to { width: 220px; opacity: 1; } }
 
 .rp-list .sth-lrow { padding: 0 10px; }
 .rp-list .sth-lrow:not(.sth-lrow-head):hover { background: rgba(255,255,255,0.07); }
@@ -86,19 +80,25 @@ const CSS = `
 .rp-tile small { font-size: 12.5px; color: rgba(255,255,255,0.6); margin-top: -4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rp-tile.is-round { align-items: center; text-align: center; }
 
-/* Side by side */
-.rp-side { display: grid; grid-template-columns: clamp(270px, 32%, 360px) minmax(0, 1fr); height: 100%; }
+/* Side by side: the cover's colours glow across the whole page from the
+   left (painted on the page, so there's no seam between the columns), and
+   the songs sit in a frosted card. */
+.rp-side { display: grid; grid-template-columns: clamp(260px, 31%, 340px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; }
 .rp-col { position: relative; min-width: 0; overflow-y: auto; overflow-x: hidden; }
-.rp-side-l { padding: 24px 26px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.8), rgba(var(--rp-wash), 0.38) 70%, rgba(var(--rp-wash), 0.24)), rgb(var(--rp-deep)); }
-.rp-side-l .rp-cover { width: 100%; aspect-ratio: 1; border-radius: 16px; }
-.rp-side-l .rp-title { font-size: 30px; margin-top: 20px; }
+.rp-side-l { padding: 26px 20px 26px 28px; }
+.rp-side-l .rp-cover { width: 100%; aspect-ratio: 1; border-radius: 22px; box-shadow: 0 26px 70px rgba(var(--rp-wash), 0.6), 0 8px 22px rgba(0,0,0,0.35); }
+.rp-side-l .rp-title { font-size: 30px; margin-top: 22px; }
 .rp-side-l .rp-by { margin-top: 6px; }
 .rp-side-l .rp-meta { margin-top: 6px; }
 .rp-side-l .rp-genres { margin-top: 14px; }
 .rp-side-l .rp-acts { margin-top: 20px; }
-.rp-side-r { padding: 14px 18px 0 14px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.2), rgba(var(--rp-wash), 0.04) 45%, rgba(var(--rp-wash), 0)); }
 .rp-coverwrap { position: relative; }
-.rp-coverwrap .rp-back { top: 10px; left: 10px; }
+.rp-coverwrap .rp-back { top: 12px; left: 12px; }
+.rp-glasscol { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 14px 14px 14px 6px; }
+.rp-glass { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; border-radius: 24px; padding: 10px 10px 0;
+  background: rgba(12,12,14,0.34); border: 1px solid rgba(255,255,255,0.09);
+  backdrop-filter: blur(28px) saturate(1.25); -webkit-backdrop-filter: blur(28px) saturate(1.25); }
+.rp-glass .rp-more { padding-left: 4px; }
 
 /* Big header */
 .rp-hero { position: relative; padding: 70px 36px 26px; display: flex; align-items: flex-end; gap: 30px; }
@@ -142,7 +142,7 @@ const CSS = `
 /* Full colour */
 .rp-colour-head { position: relative; display: flex; align-items: flex-end; gap: 32px; padding: 56px 36px 28px 48px; }
 .rp-colour-head .rp-cover { width: clamp(170px, 19vw, 230px); aspect-ratio: 1; border-radius: 14px; }
-.rp.is-colour .rp-ib, .rp.is-colour .rp-pill, .rp.is-colour .rp-find { background: rgba(0,0,0,0.2); }
+.rp.is-colour .rp-ib, .rp.is-colour .rp-pill { background: rgba(0,0,0,0.2); }
 .rp.is-colour .rp-list .sth-lrow { border-radius: 12px; position: relative; }
 .rp.is-colour .rp-list .sth-lrow + .sth-lrow::before { content: ''; position: absolute; left: 10px; right: 10px; top: 0; height: 1px; background: rgba(255,255,255,0.1); }
 .rp.is-colour .rp-list .sth-lrow:hover::before, .rp.is-colour .rp-list .sth-lrow:hover + .sth-lrow::before,
@@ -152,16 +152,35 @@ const CSS = `
 .rp.is-colour .rp-list .sth-lrow-num, .rp.is-colour .rp-list .sth-lrow-dim { color: rgba(255,255,255,0.72); }
 .rp.is-colour .rp-tile:hover { background: rgba(0,0,0,0.12); }
 
-/* Poster */
-.rp-poster { display: grid; grid-template-columns: clamp(300px, 38%, 470px) minmax(0, 1fr); height: 100%; }
+/* Poster: the cover, blurred and darkened, is the whole page; the sharp
+   poster fades into it on the right rather than stopping at an edge. */
+.rp-poster { position: relative; display: grid; grid-template-columns: clamp(300px, 40%, 480px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: 100%; }
+.rp-backdrop { position: absolute; inset: -90px; background-size: cover; background-position: center; pointer-events: none;
+  filter: blur(80px) saturate(1.45) brightness(0.55); }
+.rp-backdrop-dim { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3)); }
 .rp-poster-l { position: relative; overflow: hidden; }
-.rp-poster-l .rp-cover { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; }
-.rp-poster-fade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(0,0,0,0) 32%, rgba(0,0,0,0.5) 64%, rgba(0,0,0,0.86)); }
-.rp-poster-txt { position: absolute; left: 28px; right: 28px; bottom: 28px; }
-.rp-poster-txt .rp-title { font-size: clamp(30px, 3.4vw, 46px); margin: 8px 0 10px; }
+.rp-poster-l .rp-cover { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; background: transparent;
+  -webkit-mask-image: linear-gradient(90deg, #000 58%, transparent 100%); mask-image: linear-gradient(90deg, #000 58%, transparent 100%); }
+.rp-poster-fade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(0,0,0,0) 38%, rgba(0,0,0,0.42) 66%, rgba(0,0,0,0.78));
+  -webkit-mask-image: linear-gradient(90deg, #000 58%, transparent 100%); mask-image: linear-gradient(90deg, #000 58%, transparent 100%); }
+.rp-poster-txt { position: absolute; left: 28px; right: 36px; bottom: 28px; }
+.rp-poster-txt .rp-title { font-size: clamp(30px, 3.4vw, 46px); margin: 8px 0 10px; text-shadow: 0 2px 24px rgba(0,0,0,0.35); }
 .rp-poster-txt .rp-acts { margin-top: 18px; }
-.rp-poster-txt .rp-ib, .rp-poster-txt .rp-find { background: rgba(255,255,255,0.16); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.rp-poster-r { padding: 14px 18px 0 14px; background: linear-gradient(180deg, rgba(var(--rp-wash), 0.24), rgba(var(--rp-wash), 0.05) 45%, rgba(var(--rp-wash), 0)); }
+.rp-poster-txt .rp-ib { background: rgba(255,255,255,0.16); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+
+/* Soft rows (Side by side, Poster): rounder, numbers in circles, play
+   counts, and a tag on your most played song. */
+.rp-list.is-soft { display: flex; flex-direction: column; gap: 2px; }
+.rp-list.is-soft .sth-lrow { height: 58px; border-radius: 16px; padding: 0 12px 0 8px; }
+.rp-list.is-soft .sth-lrow-n { height: 34px; }
+.rp-list.is-soft .sth-lrow-num { width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.08); font-size: 12.5px; font-weight: 700; color: rgba(255,255,255,0.78); }
+.rp-list.is-soft .sth-lrow-play { left: 0; width: 32px; height: 32px; background: #fff; color: #000; border-radius: 50% !important; }
+.rp-list.is-soft .rp-art { width: 44px; height: 44px; border-radius: 12px; }
+.rp-sub { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-plays { font-size: 12px; color: rgba(255,255,255,0.55); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.rp-top { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; flex-shrink: 0;
+  background: rgba(var(--rp-wash), 0.55); color: #fff; font-size: 10.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
 `;
 
 const ICONS = {
@@ -186,34 +205,12 @@ function yearOf(tracks) {
 
 const primaryArtist = (s) => String(s || '').split(/,|feat\.|ft\.|&|\bx\b/i)[0].trim();
 
-/** A search button that opens into a field, so search doesn't need a row. */
-function FindToggle({ filter, onFilter, kind }) {
-  const [open, setOpen] = useState(false);
-  if (!open && !filter) {
-    return (
-      <button type="button" className="rp-ib" title={`Find in ${kind}`} aria-label={`Find in ${kind}`} onClick={() => setOpen(true)}>
-        <Icon name="search" size={17} />
-      </button>
-    );
-  }
-  return (
-    <label className="rp-find">
-      <Icon name="search" size={15} />
-      <input autoFocus value={filter} placeholder={`Find in ${kind}`} aria-label={`Find in ${kind}`}
-        onChange={(e) => onFilter(e.target.value)}
-        onBlur={() => { if (!filter) setOpen(false); }}
-        onKeyDown={(e) => { if (e.key === 'Escape') { onFilter(''); setOpen(false); e.currentTarget.blur(); } }} />
-    </label>
-  );
-}
-
 export default function RecordPage({
   layout,
   data,          // detailData: { kind, title, by, art, customArt, tracks }
   tracks,        // after the in-page filter
   wash, deep, accUI, palette = [],
   genres = [],
-  filter, onFilter,
   libDetailKey,
   currentTrack, isPlaying,
   onPlayTrack, onTogglePlay, onToggleFavorite, onRemoveFromPlaylist,
@@ -301,9 +298,6 @@ export default function RecordPage({
 
   const playAll = () => onPlayTrack?.(data.tracks[0], data.tracks);
   const shuffle = () => { const sh = [...data.tracks].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); };
-  const find = <FindToggle filter={filter} onFilter={onFilter} kind={data.kind} />;
-  /* opts.find: 'end' pushes search to the far right of a wide row; 'inline'
-     keeps it with the other buttons (narrow or centred rows). */
   const actions = (opts = {}) => (
     <div className="rp-acts">
       {opts.shuffleFirst ? <button type="button" className="rp-ib" title="Shuffle" aria-label="Shuffle" onClick={shuffle}><Icon name="shuffle" /></button> : null}
@@ -323,64 +317,84 @@ export default function RecordPage({
         </span>
       ) : null}
       {opts.genres && genres.length ? genres.map((g) => <span key={g} className="rp-pill">{g}</span>) : null}
-      {opts.find === 'end' ? <span className="rp-gap" /> : null}
-      {find}
     </div>
   );
 
-  const list = (
-    <div className="rp-list">
-      {tracks.length ? tracks.map((t, i) => {
-        const playing = currentTrack?.id === t.id;
-        return (
-          <div key={t.id} className={`sth-lrow${playing ? ' is-playing' : ''}`} style={{ gridTemplateColumns: cols, height: rowH }}
-            onDoubleClick={() => onPlayTrack?.(t, tracks)}
-            onContextMenu={canManage ? (e) => openRowMenu(e, t) : undefined}>
-            <div className="sth-lrow-n" {...hoverPreload(t)}>
-              {playing
-                ? <PlayingBars acc={accUI} playing={isPlaying} />
-                : <span className="sth-lrow-num">{isAlbum ? (t.trackNumber || i + 1) : i + 1}</span>}
-              <RowPlayButton playing={playing} isPlaying={isPlaying} title={t.title}
-                onPlay={() => onPlayTrack?.(t, tracks)} onTogglePlay={onTogglePlay} />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-              {!isAlbum ? (coverFor(t) ? <img className="rp-art" src={coverFor(t)} alt="" draggable={false} /> : <span className="rp-art" />) : null}
-              <div style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                  <span style={{ fontSize: 15, fontWeight: 650, color: playing ? `rgb(${accUI})` : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
-                  {t.explicit ? <ExplicitBadge /> : null}
-                </div>
-                {oneArtist ? null : (
-                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.62)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.artist}</div>
-                )}
-              </div>
-            </div>
-            {showAlbumCol ? <div className="sth-lrow-dim sth-lcol-album">{t.album}</div> : null}
-            {showPlaysCol ? <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{playCountFor(t.id)}</div> : null}
-            <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{formatTime(t.duration)}</div>
-            <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-              {onToggleFavorite ? (
-                <button type="button" className="sth-lrow-more" onClick={() => onToggleFavorite(t.id)}
-                  title={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-                  style={{ opacity: t.isFavorite ? 1 : undefined, color: t.isFavorite ? `rgb(${accUI})` : undefined }}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
-                  </svg>
-                </button>
-              ) : null}
-              {!isAlbum && onRemoveFromPlaylist ? (
-                <button type="button" className="sth-lrow-more" onClick={() => onRemoveFromPlaylist(libDetailKey, t.id)} title="Remove from playlist">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                </button>
-              ) : null}
-            </div>
-          </div>
-        );
-      }) : <div className="rp-empty">{filter ? `Nothing here matches “${filter}”.` : 'No songs yet.'}</div>}
+  /* Your most played song here, when you've played any of them. */
+  const topId = useMemo(() => {
+    if (data.tracks.length < 2) return null;
+    let best = null; let n = 0;
+    for (const t of data.tracks) { const c = playCountFor(t.id); if (c > n) { n = c; best = t.id; } }
+    return best;
+  }, [data.tracks, playCountFor]);
+
+  const heart = (t) => (onToggleFavorite ? (
+    <button type="button" className="sth-lrow-more" onClick={() => onToggleFavorite(t.id)}
+      title={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+      style={{ opacity: t.isFavorite ? 1 : undefined, color: t.isFavorite ? `rgb(${accUI})` : undefined }}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
+      </svg>
+    </button>
+  ) : null);
+  const removeBtn = (t) => (!isAlbum && onRemoveFromPlaylist ? (
+    <button type="button" className="sth-lrow-more" onClick={() => onRemoveFromPlaylist(libDetailKey, t.id)} title="Remove from playlist">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+    </button>
+  ) : null);
+  const numCell = (t, i, playing) => (
+    <div className="sth-lrow-n" {...hoverPreload(t)}>
+      {playing
+        ? <span style={{ display: 'inline-flex', width: 32, justifyContent: 'center' }}><PlayingBars acc={accUI} playing={isPlaying} /></span>
+        : <span className="sth-lrow-num">{isAlbum ? (t.trackNumber || i + 1) : i + 1}</span>}
+      <RowPlayButton playing={playing} isPlaying={isPlaying} title={t.title}
+        onPlay={() => onPlayTrack?.(t, tracks)} onTogglePlay={onTogglePlay} />
+    </div>
+  );
+  const titleCell = (t, playing, sub) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+      {!isAlbum ? (coverFor(t) ? <img className="rp-art" src={coverFor(t)} alt="" draggable={false} /> : <span className="rp-art" />) : null}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+          <span style={{ fontSize: 15, fontWeight: 650, color: playing ? `rgb(${accUI})` : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
+          {t.explicit ? <ExplicitBadge /> : null}
+          {sub === 'soft' && t.id === topId ? <span className="rp-top">Most played</span> : null}
+        </div>
+        {sub === 'soft'
+          ? ((!isAlbum || !oneArtist) ? <div className="rp-sub">{isAlbum ? t.artist : [t.artist, t.album].filter(Boolean).join(' · ')}</div> : null)
+          : (oneArtist ? null : <div className="rp-sub">{t.artist}</div>)}
+      </div>
     </div>
   );
 
-  const more = filter ? null : (moreAlbums.length ? (
+  const renderList = (soft) => {
+    const softCols = `44px minmax(0,1fr) auto 48px ${!isAlbum && onRemoveFromPlaylist ? '64px' : '36px'}`;
+    return (
+      <div className={`rp-list${soft ? ' is-soft' : ''}`}>
+        {tracks.length ? tracks.map((t, i) => {
+          const playing = currentTrack?.id === t.id;
+          const plays = playCountFor(t.id);
+          return (
+            <div key={t.id} className={`sth-lrow${playing ? ' is-playing' : ''}`}
+              style={soft ? { gridTemplateColumns: softCols } : { gridTemplateColumns: cols, height: rowH }}
+              onDoubleClick={() => onPlayTrack?.(t, tracks)}
+              onContextMenu={canManage ? (e) => openRowMenu(e, t) : undefined}>
+              {numCell(t, i, playing)}
+              {titleCell(t, playing, soft ? 'soft' : 'plain')}
+              {soft ? <div className="rp-plays">{plays ? `${plays} ${plays === 1 ? 'play' : 'plays'}` : ''}</div> : null}
+              {!soft && showAlbumCol ? <div className="sth-lrow-dim sth-lcol-album">{t.album}</div> : null}
+              {!soft && showPlaysCol ? <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{plays}</div> : null}
+              <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{formatTime(t.duration)}</div>
+              <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>{heart(t)}{removeBtn(t)}</div>
+            </div>
+          );
+        }) : <div className="rp-empty">No songs yet.</div>}
+      </div>
+    );
+  };
+  const list = renderList(false);
+
+  const more = moreAlbums.length ? (
     <section className="rp-more">
       <h3>{moreTitle}</h3>
       <div className="rp-shelf">
@@ -407,7 +421,7 @@ export default function RecordPage({
         ))}
       </div>
     </section>
-  ) : null);
+  ) : null;
 
   const back = <button type="button" className="rp-back" onClick={onBack} title="Back" aria-label="Back"><Icon name="back" size={16} /></button>;
   const kind = <div className="rp-kind">{kindLabel}</div>;
@@ -419,7 +433,13 @@ export default function RecordPage({
   const base = '12, 12, 13';
   const pal = [0, 1, 2, 3].map((i) => palette[i] || palette[0] || wash);
   const background = {
-    side: `rgb(${base})`,
+    side: [
+      `radial-gradient(60% 70% at 8% 18%, rgba(${pal[0]},0.8), rgba(${pal[0]},0) 100%)`,
+      `radial-gradient(50% 60% at 18% 92%, rgba(${pal[1]},0.5), rgba(${pal[1]},0) 100%)`,
+      `radial-gradient(55% 55% at 78% 4%, rgba(${pal[2]},0.38), rgba(${pal[2]},0) 100%)`,
+      `radial-gradient(50% 60% at 96% 96%, rgba(${pal[3]},0.25), rgba(${pal[3]},0) 100%)`,
+      `rgb(${base})`,
+    ].join(', '),
     poster: `rgb(${base})`,
     colour: `linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%), rgb(${wash})`,
     header: `linear-gradient(180deg, rgba(${wash},0.3) 0%, rgba(${wash},0.14) 55%, rgba(${wash},0.08) 100%), rgb(${base})`,
@@ -448,7 +468,7 @@ export default function RecordPage({
           {genres.length ? <div className="rp-genres">{genres.map((g) => <span key={g} className="rp-pill">{g}</span>)}</div> : null}
           {actions()}
         </div>
-        <div className="rp-col rp-side-r sth-libscroll">{list}{more}</div>
+        <div className="rp-glasscol"><div className="rp-glass sth-libscroll">{renderList(true)}{more}</div></div>
       </div>
     );
   } else if (layout === 'header') {
@@ -460,7 +480,7 @@ export default function RecordPage({
           {cover()}
           <div className="rp-hero-txt">{kind}{title}{byLine}</div>
         </div>
-        <div className="rp-bar">{actions({ genres: true, find: 'end' })}</div>
+        <div className="rp-bar">{actions({ genres: true })}</div>
         <div className="rp-pad">{list}{more}</div>
       </div>
     );
@@ -488,7 +508,7 @@ export default function RecordPage({
             {cover()}
             {disc ? <div className="rp-disc"><div className="rp-disc-label" style={{ backgroundImage: `url("${data.art}")` }} /></div> : null}
           </div>
-          <div className="rp-info">{kind}{title}{byLine}{actions({ genres: true, find: 'end' })}</div>
+          <div className="rp-info">{kind}{title}{byLine}{actions({ genres: true })}</div>
         </div>
         <div className="rp-pad">{list}{more}</div>
       </div>
@@ -498,7 +518,7 @@ export default function RecordPage({
       <div className="rp-scroll sth-libscroll">
         <div className="rp-colour-head">
           {cover()}
-          <div className="rp-info">{kind}{title}{byLine}{actions({ genres: true, find: 'end' })}</div>
+          <div className="rp-info">{kind}{title}{byLine}{actions({ genres: true })}</div>
         </div>
         <div className="rp-pad" style={{ padding: '0 34px' }}>{list}{more}</div>
       </div>
@@ -506,6 +526,8 @@ export default function RecordPage({
   } else {
     body = (
       <div className="rp-poster">
+        {blurArt ? <div className="rp-backdrop" style={{ backgroundImage: `url("${blurArt}")` }} /> : null}
+        <div className="rp-backdrop-dim" />
         <div className="rp-poster-l">
           {cover({ shadow: false, noVeil: true })}
           <div className="rp-poster-fade" />
@@ -515,7 +537,7 @@ export default function RecordPage({
             {actions()}
           </div>
         </div>
-        <div className="rp-col rp-poster-r sth-libscroll">{list}{more}</div>
+        <div className="rp-glasscol"><div className="rp-glass sth-libscroll">{renderList(true)}{more}</div></div>
       </div>
     );
   }

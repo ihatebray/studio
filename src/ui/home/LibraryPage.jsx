@@ -292,8 +292,6 @@ export default function LibraryPage({
                 accUI={pageAccUI}
                 palette={theme.detailMode === 'fixed' ? [] : (dt?.palette || []).slice(0, 4).map((c) => pageWash(c))}
                 genres={detailGenres}
-                filter={detailFilter}
-                onFilter={setDetailFilter}
                 libDetailKey={libDetail.key}
                 currentTrack={currentTrack}
                 isPlaying={isPlaying}
@@ -551,22 +549,6 @@ export default function LibraryPage({
                         ) : null}
                       </>
                     ) : null}
-                    <div style={{ flex: 1 }} />
-                    {/* An icon, not a permanent field. The reference
-                        keeps a bare magnifier here; a bordered input
-                        made filtering look like the loudest control on
-                        a page whose job is the tracklist. Expands on
-                        click, collapses when emptied and blurred. */}
-                    {/* A labelled field, not a bare magnifier floating
-                        at the right of the row (brief). */}
-                    <label className="sth-findfield">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
-                      <input value={detailFilter}
-                        onChange={(e) => setDetailFilter(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Escape') setDetailFilter(''); }}
-                        placeholder={`Find in ${detailData.kind === 'album' ? 'album' : 'playlist'}`}
-                        aria-label={`Find in ${detailData.kind === 'album' ? 'album' : 'playlist'}`} />
-                    </label>
                   </div>
 
                   <div className="sth-ltable" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
