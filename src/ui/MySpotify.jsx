@@ -116,7 +116,12 @@ async function loadCollection(item) {
   };
   switch (item.kind) {
     case 'album': {
-      const r = await api.spotifyGetAlbumTracks(item.id);
+      /* An album still counting down may have no tracklist yet (or none
+         Spotify will give out): that's an empty album, not an error. */
+      if (!item.id) return [];
+      const r = item.soon
+        ? await api.spotifyGetAlbumTracks(item.id).catch(() => null)
+        : await api.spotifyGetAlbumTracks(item.id);
       return (r?.tracks || []).map((t) => ({ ...t, albumId: item.id }));
     }
     case 'playlist': return unwrap(await api.spotifyFeedPlaylist(item.id));
@@ -635,7 +640,7 @@ function CollectionPanel({ item, bridge, onClose }) {
             <TrackRow key={`${r.spotifyId}:${i}`} row={r} n={i + 1} list={rows} index={i} bridge={bridge}
               showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item} />
           ))}
-          {rows && !rows.length ? <div className="st-meta" style={{ padding: 20, textAlign: 'center' }}>Nothing to play here.</div> : null}
+          {rows && !rows.length ? <div className="st-meta" style={{ padding: 20, textAlign: 'center' }}>{item.empty || 'Nothing to play here.'}</div> : null}
         </div>
       </aside>
     </>
@@ -804,9 +809,9 @@ function CountdownCard({ item, now, onOpen, onHide }) {
   });
   const kind = item.type === 'single' ? 'Single' : item.type === 'ep' ? 'EP' : 'Album';
   return (
-    <div className="msp-cd" role="button" tabIndex={0} onClick={() => onOpen(item, out)}
-      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item, out); }}
-      title={out ? `Open ${item.name}` : `Go to ${item.artistName}`}>
+    <div className="msp-cd" role="button" tabIndex={0} onClick={() => onOpen(item, out, when)}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item, out, when); }}
+      title={`Open ${item.name}`}>
       {item.coverUrl ? <div className="msp-cd-bg" style={{ backgroundImage: `url("${item.coverUrl}")` }} /> : null}
       <div className="msp-cd-dim" />
       {item.coverUrl ? <img className="msp-cd-art" src={item.coverUrl} alt="" draggable={false} /> : <span className="msp-cd-art" />}
@@ -1025,10 +1030,24 @@ export function SpotifyHome({ bridge }) {
     if (it.kind === 'artist' && bridge.onOpenArtist) { bridge.onOpenArtist({ name: it.name, spotifyId: it.id, image: it.image }); return; }
     openPanel(it);
   };
-  /* A countdown opens the artist; once it's out, the album itself. */
-  const openCountdown = (x, out) => {
-    if (out && x.albumId) openPanel({ kind: 'album', id: x.albumId, name: x.name, image: x.coverUrl, sub: x.artistName });
-    else bridge.onOpenArtist?.({ name: x.artistName, spotifyId: x.artistId, image: x.artistImage });
+  /* A countdown opens its album: whatever of the tracklist Spotify has
+     revealed so far, or once it's out, all of it. One found only on Apple
+     Music is looked up on Spotify by name first. */
+  const openCountdown = async (x, out, when) => {
+    let id = x.albumId;
+    if (!id) {
+      const want = String(x.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const hits = await window.electronAPI?.spotifySearchAlbums?.(`${x.name} ${x.artistName}`).catch(() => []);
+      const hit = (Array.isArray(hits) ? hits : []).find((h) => String(h.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === want
+        && String(h.artists || '').toLowerCase().includes(String(x.artistName || '').toLowerCase()));
+      id = hit ? (hit.albumId || hit.id) : null;
+    }
+    openPanel({
+      kind: 'album', id, name: x.name, image: x.coverUrl, soon: !out,
+      label: out ? (x.type === 'single' ? 'Single' : 'Album') : 'Countdown',
+      sub: out ? x.artistName : `${x.artistName} · Out ${when}`,
+      empty: out ? 'Nothing to play here yet.' : 'The tracklist shows here as songs are revealed.',
+    });
   };
   const playItem = async (it, opts = {}) => {
     try {
