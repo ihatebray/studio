@@ -2649,25 +2649,36 @@ ipcMain.handle('spotify:albumTracks', async (event, albumId) => {
   }
   const cached = getAlbumTracksCache(id);
   if (cached) return cached;
+  /* An album with no songs yet (one still counting down) is remembered for
+     a while too, or every open walks all three routes again to learn the
+     same nothing. */
+  const empty = emptyAlbums.get(id);
+  if (empty && Date.now() - empty.at < EMPTY_ALBUM_TTL_MS) return empty.data;
   /* With the full Spotify account connected, its token goes first — it isn't
      held to Developer Mode's quota — and the Client ID route is the fallback.
      Either way a failure in one doesn't blank the tracklist. */
   let data = null;
+  let helperAnswered = false;
   if (partnerState().connected) {
     // The helper's session first (no Web API quota), then the account's Web API.
-    try { data = await helperAlbum(id); } catch (e) { console.warn('[spotify:albumTracks] helper route failed:', e?.message || e); }
-    if (!data?.tracks?.length) {
+    try { data = await helperAlbum(id); helperAnswered = !!(data && (data.album || data.name)); } catch (e) { console.warn('[spotify:albumTracks] helper route failed:', e?.message || e); }
+    /* The helper found the album and it has no songs: that's the answer
+       (an album not out yet), not a failure for the other routes to retry. */
+    if (!data?.tracks?.length && !helperAnswered) {
       try { data = await partnerAlbumTracks(id); } catch (e) { console.warn('[spotify:albumTracks] account route failed:', e?.message || e); }
     }
   }
-  if (!data?.tracks?.length) {
+  if (!data?.tracks?.length && !helperAnswered) {
     try { data = await spotifyGetAlbumTracks(id); } catch (e) {
       if (!data) throw e;
     }
   }
   if (data?.tracks?.length) setAlbumTracksCache(id, data);
+  else if (data) emptyAlbums.set(id, { at: Date.now(), data });
   return data;
 });
+const EMPTY_ALBUM_TTL_MS = 10 * 60 * 1000;
+const emptyAlbums = new Map();
 
 
 

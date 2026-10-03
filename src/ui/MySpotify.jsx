@@ -116,12 +116,8 @@ async function loadCollection(item) {
   };
   switch (item.kind) {
     case 'album': {
-      /* An album still counting down may have no tracklist yet (or none
-         Spotify will give out): that's an empty album, not an error. */
-      if (!item.id) return [];
-      const r = item.soon
-        ? await api.spotifyGetAlbumTracks(item.id).catch(() => null)
-        : await api.spotifyGetAlbumTracks(item.id);
+      if (item.countdown) return countdownAlbum(item.countdown);
+      const r = await api.spotifyGetAlbumTracks(item.id);
       return (r?.tracks || []).map((t) => ({ ...t, albumId: item.id }));
     }
     case 'playlist': return unwrap(await api.spotifyFeedPlaylist(item.id));
@@ -768,6 +764,34 @@ function MixTile({ item, onOpen, onPlay }) {
 
 /* ------------------------------------------------------------ countdowns */
 
+/* A countdown's songs, fetched as soon as Home shows the card so opening it
+   is instant, and kept ten minutes. An album still counting down may have no
+   tracklist yet, or none Spotify will give out: that's an empty album, not
+   an error, and it's never waited on for more than ten seconds. One found
+   only on Apple Music is looked up on Spotify by name first. */
+const countdownAlbums = new Map();
+const foldName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function countdownAlbum(x) {
+  const hit = countdownAlbums.get(x.key);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.promise;
+  const api = window.electronAPI;
+  const work = (async () => {
+    let id = x.albumId;
+    if (!id) {
+      const found = await api?.spotifySearchAlbums?.(`${x.name} ${x.artistName}`).catch(() => []);
+      const m = (Array.isArray(found) ? found : []).find((h) => foldName(h.name) === foldName(x.name)
+        && String(h.artists || '').toLowerCase().includes(String(x.artistName || '').toLowerCase()));
+      id = m ? (m.albumId || m.id) : null;
+    }
+    if (!id) return [];
+    const r = await api?.spotifyGetAlbumTracks?.(id).catch(() => null);
+    return (r?.tracks || []).map((t) => ({ ...t, albumId: id }));
+  })();
+  const promise = Promise.race([work, new Promise((res) => { setTimeout(() => res([]), 10_000); })]);
+  countdownAlbums.set(x.key, { at: Date.now(), promise });
+  return promise;
+}
+
 /** Albums on the way from artists followed in Studio (main: countdowns.js).
  *  Asked again whenever the follows change; `reload(true)` skips the cache. */
 function useCountdowns() {
@@ -839,6 +863,9 @@ function CountdownCard({ item, now, onOpen, onHide }) {
 function Countdowns({ items, prefs, onOpen }) {
   const shown = items.filter((x) => prefs.shown(cdKey(x.artistId)));
   const now = useNow(shown.length > 0);
+  const shownKey = shown.map((x) => x.key).join('|');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { shown.forEach((x) => countdownAlbum(x)); }, [shownKey]);
   if (!shown.length) return null;
   return (
     <section className="msp-sec">
@@ -1030,20 +1057,11 @@ export function SpotifyHome({ bridge }) {
     if (it.kind === 'artist' && bridge.onOpenArtist) { bridge.onOpenArtist({ name: it.name, spotifyId: it.id, image: it.image }); return; }
     openPanel(it);
   };
-  /* A countdown opens its album: whatever of the tracklist Spotify has
-     revealed so far, or once it's out, all of it. One found only on Apple
-     Music is looked up on Spotify by name first. */
-  const openCountdown = async (x, out, when) => {
-    let id = x.albumId;
-    if (!id) {
-      const want = String(x.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-      const hits = await window.electronAPI?.spotifySearchAlbums?.(`${x.name} ${x.artistName}`).catch(() => []);
-      const hit = (Array.isArray(hits) ? hits : []).find((h) => String(h.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === want
-        && String(h.artists || '').toLowerCase().includes(String(x.artistName || '').toLowerCase()));
-      id = hit ? (hit.albumId || hit.id) : null;
-    }
+  /* A countdown opens its album at once: whatever of the tracklist Spotify
+     has revealed so far, or once it's out, all of it (see countdownAlbum). */
+  const openCountdown = (x, out, when) => {
     openPanel({
-      kind: 'album', id, name: x.name, image: x.coverUrl, soon: !out,
+      kind: 'album', id: x.albumId, countdown: x, name: x.name, image: x.coverUrl,
       label: out ? (x.type === 'single' ? 'Single' : 'Album') : 'Countdown',
       sub: out ? x.artistName : `${x.artistName} · Out ${when}`,
       empty: out ? 'Nothing to play here yet.' : 'The tracklist shows here as songs are revealed.',
