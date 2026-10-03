@@ -280,7 +280,7 @@ export default function LibraryPage({
           const deep = dt ? recordDeep(dt) : '10, 10, 14';
           const pageAcc = dt ? dt.accent : accent;
           const pageAccUI = readableAccent(pageAcc);
-          const recordLayout = recordLayoutOf(theme.recordLayout);
+          const recordLayout = recordLayoutOf(detailData.kind === 'playlist' ? (theme.playlistLayout ?? theme.recordLayout) : theme.recordLayout);
           if (recordLayout !== 'classic') {
             const isPl = detailData.kind === 'playlist';
             return (

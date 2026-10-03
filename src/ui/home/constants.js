@@ -85,7 +85,8 @@ export const THEME_DEFAULTS = {
   accent: null,             // unused; the accent is white — see `const accent`
   detailMode: 'cover',      // 'cover' | 'fixed' — album/playlist page wash
   detailColor: '70, 84, 190',
-  recordLayout: 'classic',  // album/playlist page layout; see RECORD_LAYOUTS in RecordPage.jsx
+  recordLayout: 'classic',  // album page layout; see RECORD_LAYOUTS in RecordPage.jsx
+  playlistLayout: null,     // playlist page layout; null = the same as albums
   /* How the now-playing wash reads colour out of the cover, and how far it
      reaches. See coverTheme.js for what each extraction actually does. */
   /* ---- Surfaces -------------------------------------------------------

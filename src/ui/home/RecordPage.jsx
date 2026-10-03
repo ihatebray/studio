@@ -646,9 +646,9 @@ const PICKER_CSS = `
 .rlp svg .d { fill: #050505; stroke: rgba(255,255,255,0.25); stroke-width: 1; }
 `;
 
-export function RecordLayoutPicker({ value, onPick }) {
+export function RecordLayoutPicker({ value, onPick, label = 'Album layout' }) {
   return (
-    <div className="rlp" role="radiogroup" aria-label="Album and playlist layout">
+    <div className="rlp" role="radiogroup" aria-label={label}>
       <style>{PICKER_CSS}</style>
       {RECORD_LAYOUTS.map(([id, label]) => (
         <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? 'on' : ''} onClick={() => onPick(id)}>
