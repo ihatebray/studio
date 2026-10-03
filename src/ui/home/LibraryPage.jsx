@@ -349,6 +349,9 @@ export default function LibraryPage({
             '52px',
           ].filter(Boolean).join(' ');
           const totalMs = detailData.tracks.reduce((n, t) => n + (Number(t.duration) || 0) * 1000, 0);
+          const tilePal = detailData.mosaic && theme.detailMode !== 'fixed' && (dt?.palette || []).length > 1
+            ? [0, 1, 2, 3].map((i) => pageWash(dt.palette[i] || dt.palette[0]))
+            : null;
           return (
             <div style={{
               position: 'relative', flex: 1, minWidth: 0, minHeight: 0, height: '100%',
@@ -372,6 +375,18 @@ export default function LibraryPage({
                    entire tracklist, only settling slightly. */
                 background: `linear-gradient(180deg, rgba(${wash},0.85) 0%, rgba(${wash},0.55) 26%, rgba(${wash},0.34) 58%, rgba(${wash},0.28) 100%), rgba(${deep},0.72)`,
               }} />
+              {/* A four-cover playlist: each cover's colour from its own
+                  corner, over the first cover's wash (it's top left). */}
+              {tilePal ? (
+                <div aria-hidden style={{
+                  position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+                  background: [
+                    `radial-gradient(60% 60% at 100% 0%, rgba(${tilePal[1]},0.6), rgba(${tilePal[1]},0) 100%)`,
+                    `radial-gradient(55% 55% at 0% 100%, rgba(${tilePal[2]},0.45), rgba(${tilePal[2]},0) 100%)`,
+                    `radial-gradient(55% 55% at 100% 100%, rgba(${tilePal[3]},0.45), rgba(${tilePal[3]},0) 100%)`,
+                  ].join(', '),
+                }} />
+              ) : null}
 
               {/* Back floats in the top-RIGHT corner. Out of flow
                   either way — in the column it pushed the artwork and
@@ -414,7 +429,9 @@ export default function LibraryPage({
                       style={{
                         position: 'relative', width: 190, height: 190, borderRadius: 9, flexShrink: 0, overflow: 'hidden',
                         cursor: detailData.kind === 'playlist' ? 'pointer' : 'default',
-                        background: detailData.art ? coverLayers(detailData.art, ' center/cover') : `linear-gradient(140deg, rgba(${wash},0.7), rgba(${wash},0.25))`,
+                        background: detailData.mosaic
+                          ? detailData.mosaic.map((a, i) => `url("${a}") ${['0 0', '100% 0', '0 100%', '100% 100%'][i]}/50% 50% no-repeat`).join(', ')
+                          : detailData.art ? coverLayers(detailData.art, ' center/cover') : `linear-gradient(140deg, rgba(${wash},0.7), rgba(${wash},0.25))`,
                         /* The fullscreen stage's artBoxShadow, exactly.
                            I'd used an OFFSET drop shadow last time —
                            the stage uses two centred halos with no

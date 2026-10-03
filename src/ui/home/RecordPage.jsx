@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, titleCase } from '../../lib/format.js';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
 import { hoverPreload, spotifyIdOf } from '../../lib/spotifyMediaElement.js';
@@ -96,6 +96,7 @@ const CSS = `
 
 /* Big header */
 .rp-hero { position: relative; padding: 70px 36px 26px; display: flex; align-items: flex-end; gap: 30px; }
+.rp-hero-paint { position: absolute; top: 0; left: 0; right: 0; height: 0; pointer-events: none; will-change: transform; }
 .rp-hero-bg { position: absolute; inset: -40px -40px 0; background-size: cover; background-position: center; filter: blur(56px) saturate(1.35); opacity: 0.95;
   -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent); mask-image: linear-gradient(180deg, #000 45%, transparent); pointer-events: none; }
 .rp-hero-dim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.3)); -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent); mask-image: linear-gradient(180deg, #000 45%, transparent); pointer-events: none; }
@@ -285,6 +286,7 @@ export default function RecordPage({
      it, so it looks like what's in it rather than like its first song. */
   const mosaic = useMemo(() => {
     if (isAlbum || data.customArt) return null;
+    if (data.mosaic) return data.mosaic;
     const seen = [];
     for (const t of data.tracks) {
       const a = coverFor(t);
@@ -292,7 +294,7 @@ export default function RecordPage({
       if (seen.length === 4) break;
     }
     return seen.length === 4 ? seen : null;
-  }, [isAlbum, data.customArt, data.tracks, coverFor]);
+  }, [isAlbum, data.customArt, data.mosaic, data.tracks, coverFor]);
 
   /* Under the list: the artist's other albums, or who's in the playlist. */
   const [moreTitle, moreAlbums] = useMemo(() => {
@@ -515,16 +517,55 @@ export default function RecordPage({
   const kind = <div className="rp-kind">{kindLabel}</div>;
   const title = <h1 className="rp-title">{data.title}</h1>;
   const byLine = <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}</div>;
-  const blurArt = mosaic ? mosaic[0] : data.art;
+  /* What the blurred layers are made of: the cover, or for a four-cover
+     playlist all four in their places, so the glow has every colour the
+     cover does rather than only the first album's. */
+  const blurStyle = mosaic ? {
+    backgroundImage: mosaic.map((a) => `url("${a}")`).join(', '),
+    backgroundSize: '50% 50%',
+    backgroundPosition: '0 0, 100% 0, 0 100%, 100% 100%',
+    backgroundRepeat: 'no-repeat',
+  } : data.art ? { backgroundImage: `url("${data.art}")` } : null;
+
+  /* Big header: the glow layer is as tall as the hero and moves with the
+     scroll, set straight on the element so scrolling doesn't re-render. */
+  const scrollRef = useRef(null);
+  const heroRef = useRef(null);
+  const heroPaintRef = useRef(null);
+  useLayoutEffect(() => {
+    const sc = scrollRef.current; const hero = heroRef.current; const paint = heroPaintRef.current;
+    if (layout !== 'header' || !sc || !hero || !paint) return undefined;
+    const sync = () => {
+      paint.style.height = `${hero.offsetHeight}px`;
+      paint.style.transform = `translate3d(0, ${-sc.scrollTop}px, 0)`;
+    };
+    sync();
+    sc.addEventListener('scroll', sync, { passive: true });
+    const ro = new ResizeObserver(sync);
+    ro.observe(hero);
+    return () => { sc.removeEventListener('scroll', sync); ro.disconnect(); };
+  }, [layout]);
 
   /* Each layout's colour, painted on the page (which doesn't scroll). */
   const base = '12, 12, 13';
   const pal = [0, 1, 2, 3].map((i) => palette[i] || palette[0] || wash);
+  /* A four-cover playlist's palette is one colour per cover, so the page can
+     carry each where its cover sits: the first is the wash itself (top
+     left), the others glow from the other three corners. */
+  const tileGlows = (a) => (mosaic && palette.length > 1 ? [
+    `radial-gradient(65% 60% at 100% 0%, rgba(${pal[1]},${a}), rgba(${pal[1]},0) 100%)`,
+    `radial-gradient(60% 55% at 0% 100%, rgba(${pal[2]},${a * 0.8}), rgba(${pal[2]},0) 100%)`,
+    `radial-gradient(60% 55% at 100% 100%, rgba(${pal[3]},${a * 0.8}), rgba(${pal[3]},0) 100%)`,
+  ] : []);
   const background = {
     poster: `rgb(${base})`,
-    colour: `linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%), rgb(${wash})`,
-    header: `linear-gradient(180deg, rgba(${wash},0.3) 0%, rgba(${wash},0.14) 55%, rgba(${wash},0.08) 100%), rgb(${base})`,
-    sleeve: `linear-gradient(180deg, rgba(${wash},0.62) 0%, rgba(${wash},0.24) 42%, rgba(${wash},0.1) 75%, rgba(${wash},0.06) 100%), rgb(${base})`,
+    colour: [
+      'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%)',
+      ...tileGlows(0.75),
+      `rgb(${wash})`,
+    ].join(', '),
+    header: [...tileGlows(0.3), `linear-gradient(180deg, rgba(${wash},0.3) 0%, rgba(${wash},0.14) 55%, rgba(${wash},0.08) 100%)`, `rgb(${base})`].join(', '),
+    sleeve: [...tileGlows(0.45), `linear-gradient(180deg, rgba(${wash},0.62) 0%, rgba(${wash},0.24) 42%, rgba(${wash},0.1) 75%, rgba(${wash},0.06) 100%)`, `rgb(${base})`].join(', '),
     /* The cover's own colours, glowing behind it: the main one above the
        cover, two more to either side, and a faint one at the bottom so the
        page doesn't end in flat black. */
@@ -540,16 +581,22 @@ export default function RecordPage({
   let body;
   if (layout === 'header') {
     body = (
-      <div className="rp-scroll sth-libscroll">
-        <div className="rp-hero">
-          {blurArt ? <div className="rp-hero-bg" style={{ backgroundImage: `url("${blurArt}")` }} /> : null}
-          <div className="rp-hero-dim" />
+      <>
+      {/* The hero's glow sits under the scroller, not in it, so it spans the
+          scrollbar strip too; it follows the scroll (see heroPaintRef). */}
+      <div className="rp-hero-paint" ref={heroPaintRef}>
+        {blurStyle ? <div className="rp-hero-bg" style={blurStyle} /> : null}
+        <div className="rp-hero-dim" />
+      </div>
+      <div className="rp-scroll sth-libscroll" ref={scrollRef}>
+        <div className="rp-hero" ref={heroRef}>
           {cover()}
           <div className="rp-hero-txt">{kind}{title}{byLine}</div>
         </div>
         <div className="rp-bar">{actions({ genres: true })}</div>
         <div className="rp-pad">{list}{more}</div>
       </div>
+      </>
     );
   } else if (layout === 'centred') {
     body = (
@@ -593,7 +640,7 @@ export default function RecordPage({
   } else {
     body = (
       <div className="rp-poster">
-        {blurArt ? <div className="rp-backdrop" style={{ backgroundImage: `url("${blurArt}")` }} /> : null}
+        {blurStyle ? <div className="rp-backdrop" style={blurStyle} /> : null}
         <div className="rp-backdrop-dim" />
         <div className="rp-poster-l">
           {cover({ shadow: false, noVeil: true })}

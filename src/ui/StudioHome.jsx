@@ -11,7 +11,7 @@ import { useDownloadProgress, VideoPicker } from './sharedUI.jsx';
 import InstantSearch from './InstantSearch.jsx';
 import LyricShare from './LyricShare.jsx';
 import { LyricsPickerButton } from './LyricsPicker.jsx';
-import { sampleCoverTheme, washSourceFor, setColourIntensity, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
+import { sampleCoverTheme, recordWashSource, washSourceFor, setColourIntensity, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
 import { titleCollator, parseGenres } from '../lib/mediaUtils.js';
 import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
@@ -1844,7 +1844,19 @@ export default function StudioHome({
     // Playlist order is the stored order, not the library's — that's the point
     // of a playlist.
     const tracks = ids.map((id) => byId.get(id)).filter(Boolean);
-    return { kind: 'playlist', title: pl.name, by: 'You', customArt: !!pl.coverArt, art: pl.coverArt || tracks[0] ? (pl.coverArt || coverFor(tracks[0])) : null, tracks };
+    /* Without a cover of its own a playlist shows four of the albums in it
+       (RecordPage draws the same four), so its colours come from all four. */
+    let mosaic = null;
+    if (!pl.coverArt) {
+      const seen = [];
+      for (const t of tracks) {
+        const a = coverFor(t);
+        if (a && !seen.includes(a)) seen.push(a);
+        if (seen.length === 4) break;
+      }
+      if (seen.length === 4) mosaic = seen;
+    }
+    return { kind: 'playlist', title: pl.name, by: 'You', customArt: !!pl.coverArt, art: pl.coverArt || tracks[0] ? (pl.coverArt || coverFor(tracks[0])) : null, mosaic, tracks };
   }, [libDetail, libAlbums, playlists, library, coverFor]);
 
   /* Page wash, sampled from the open record's cover. Same sampler the
@@ -1852,13 +1864,24 @@ export default function StudioHome({
      and it means a record page carries the record's identity instead of the
      flat black every other view uses. */
   const [detailTheme, setDetailTheme] = useState(null);
+  const detailMosaicKey = detailData?.mosaic ? detailData.mosaic.join('\n') : '';
   useEffect(() => {
     const art = detailData?.art;
     if (!art) { setDetailTheme(null); return undefined; }
     let dead = false;
-    sampleCoverTheme(art).then((t) => { if (!dead) setDetailTheme(t || null); }).catch(() => {});
+    /* A four-cover playlist: the page is washed in the first cover's colour
+       (it's top left), and its palette, which the layouts spread around the
+       page, takes the main colour of each of the four. */
+    const tiles = detailMosaicKey ? detailMosaicKey.split('\n') : [art];
+    Promise.all(tiles.map((src) => sampleCoverTheme(src).catch(() => null))).then((themes) => {
+      if (dead) return;
+      const [first] = themes;
+      if (!first || themes.length < 2) { setDetailTheme(first || null); return; }
+      const main = themes.map((t) => recordWashSource(t)).filter(Boolean);
+      setDetailTheme({ ...first, palette: main.length ? main : first.palette });
+    });
     return () => { dead = true; };
-  }, [detailData?.art]);
+  }, [detailData?.art, detailMosaicKey]);
 
   /** Tracks after the in-page filter. */
   const detailTracks = useMemo(() => {
