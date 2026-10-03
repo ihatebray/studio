@@ -21,6 +21,11 @@ macOS note: the script fetches yt-dlp automatically but ffmpeg has no stable
 direct-download URL for mac. Grab a static build from evermeet.cx/ffmpeg,
 drop it at `bin/darwin-arm64/ffmpeg` (or `darwin-x64`), then `chmod +x` it.
 
+`npm start` keeps its data in its own folder (`studio-dev` beside the
+installed app's `studio` in your app-data folder), copied from the installed
+app's the first time, so the two can run side by side. Only one copy of each
+runs at a time: opening it again brings the open window forward.
+
 First launch walks you through signing in to Spotify and, optionally,
 Soulseek. Both can be changed later under Settings → Connections, which can
 also replay the walkthrough.

@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, nativeImage } from 'electron';
+// First: picks the data folder (studio-dev for npm start) and takes the one-copy lock.
+import { isFirstInstance } from './appIdentity.js';
+import { app, BrowserWindow, ipcMain, dialog, protocol, net, shell, nativeImage, session } from 'electron';
 
 // ── Text rendering quality ─────────────────────────────────────────
 // Force sub-pixel font rendering so text stays crisp inside
@@ -451,6 +453,11 @@ function createWindow() {
     },
   });
 
+  // Leaving the window, and every half minute, settings go to disk.
+  mainWindow.on('blur', flushStorage);
+  const flushTimer = setInterval(flushStorage, 30_000);
+  mainWindow.on('closed', () => clearInterval(flushTimer));
+
   // MAIN_WINDOW_VITE_DEV_SERVER_URL is set by electron-forge vite plugin
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
@@ -509,6 +516,7 @@ function restartApp() {
        the old process with SIGTERM, which skips the quit events, so they
        run here first: the library database is saved, the helper stopped. */
     const noop = { preventDefault() {} };
+    flushStorage();
     app.emit('before-quit', noop);
     app.emit('will-quit', noop);
     try {
@@ -518,6 +526,7 @@ function restartApp() {
       console.warn('[reload] could not ask Forge to restart:', String(e?.message || e));
     }
   }
+  flushStorage();
   app.relaunch();
   app.exit(0);
 }
@@ -534,7 +543,29 @@ function reloadApp(contents, { full = false } = {}) {
 
 ipcMain.handle('app:reload', (e, opts) => reloadApp(e.sender, opts || {}));
 
+/* One Studio at a time (appIdentity.js): a second launch hands over to the
+   window that's already open and quits, rather than running on a blank,
+   throwaway copy of the settings. */
+if (!isFirstInstance) {
+  console.log('[studio] already running; bringing that window forward instead.');
+  app.quit();
+}
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
+/* Settings are written to disk by Chromium when it gets round to it; ask
+   for it now at the moments that matter, so a quit or crash can't take the
+   last changes with it. */
+function flushStorage() {
+  try { session.defaultSession?.flushStorageData(); } catch { /* ignore */ }
+}
+
 app.whenReady().then(async () => {
+  if (!isFirstInstance) return;
   protocol.handle('studio-media', handleStudioMediaRequest);
   protocol.handle('studio-cover', handleStudioCoverRequest);
   try {
@@ -556,6 +587,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  flushStorage();
   closeLibraryDb();
   // Cleanly tear down the Discord presence connection. Without this,
   // Discord may take ~30s to notice the app went away and the stale
