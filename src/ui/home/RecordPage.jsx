@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { api } from '../../lib/format.js';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
-import { hoverPreload } from '../../lib/spotifyMediaElement.js';
+import { hoverPreload, spotifyIdOf } from '../../lib/spotifyMediaElement.js';
 import { ExplicitBadge, HiResImg, PlayIcon } from '../sharedUI.jsx';
 import { PlayingBars } from './common.jsx';
 import { RowPlayButton } from './Library.jsx';
@@ -158,18 +159,10 @@ const CSS = `
   -webkit-mask-image: linear-gradient(90deg, #000 58%, transparent 100%); mask-image: linear-gradient(90deg, #000 58%, transparent 100%); }
 .rp-poster-txt { position: absolute; left: 28px; right: 36px; bottom: 28px; }
 .rp-poster-txt .rp-title { font-size: clamp(30px, 3.4vw, 46px); margin: 8px 0 10px; text-shadow: 0 2px 24px rgba(0,0,0,0.35); text-wrap: balance; }
-/* A slow drift across the artwork, so the poster isn't a still. */
-.rp-poster-l .rp-cover img, .rp-poster-l .rp-mosaic { animation: rpDrift 32s ease-in-out infinite alternate; transform-origin: 40% 40%; }
-@keyframes rpDrift { from { transform: scale(1.02) translate(0, 0); } to { transform: scale(1.09) translate(-1.5%, -1%); } }
-@media (prefers-reduced-motion: reduce) { .rp-poster-l .rp-cover img, .rp-poster-l .rp-mosaic { animation: none; } }
-.rp-nowchip { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px 0 10px; margin-bottom: 14px; border-radius: 999px; max-width: 100%;
-  background: rgba(255,255,255,0.16); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font-size: 12.5px; font-weight: 700; }
-.rp-nowchip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rp-poster-txt .rp-acts { margin-top: 18px; }
 .rp-poster-txt .rp-ib { background: rgba(255,255,255,0.16); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 
-/* Soft rows (Poster): rounder, numbers in circles, play
-   counts, and a tag on your most played song. */
+/* Soft rows (Poster): rounder, numbers in circles, play counts. */
 .rp-list.is-soft { display: flex; flex-direction: column; gap: 2px; }
 .rp-list.is-soft .sth-lrow { height: 58px; border-radius: 16px; padding: 0 12px 0 8px; }
 .rp-list.is-soft .sth-lrow-n { height: 34px; }
@@ -177,10 +170,15 @@ const CSS = `
   background: rgba(255,255,255,0.08); font-size: 12.5px; font-weight: 700; color: rgba(255,255,255,0.78); }
 .rp-list.is-soft .sth-lrow-play { left: 0; width: 32px; height: 32px; background: #fff; color: #000; border-radius: 50% !important; }
 .rp-list.is-soft .rp-art { width: 44px; height: 44px; border-radius: 12px; }
+.rp-list .sth-lrow.is-missing .rp-ttl { color: rgba(255,255,255,0.5) !important; }
+.rp-list .sth-lrow.is-missing .rp-sub, .rp-list .sth-lrow.is-missing .sth-lrow-dim { opacity: 0.7; }
+.rp-list .sth-lrow.is-missing:hover .rp-ttl { color: rgba(255,255,255,0.85) !important; }
+.rp-save { width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); background: transparent; color: rgba(255,255,255,0.85);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background .15s ease, border-color .15s ease; }
+.rp-save:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.6); }
+.rp-save:disabled { cursor: default; opacity: 0.6; }
 .rp-sub { font-size: 13px; color: rgba(255,255,255,0.6); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rp-plays { font-size: 12px; color: rgba(255,255,255,0.55); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
-.rp-top { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; flex-shrink: 0;
-  background: rgba(var(--rp-wash), 0.55); color: #fff; font-size: 10.5px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
 `;
 
 const ICONS = {
@@ -205,6 +203,65 @@ function yearOf(tracks) {
 
 const primaryArtist = (s) => String(s || '').split(/,|feat\.|ft\.|&|\bx\b/i)[0].trim();
 
+/* The whole album, from Spotify, so an album you've saved part of shows
+   every song: yours as usual, the rest dimmed, ready to play or save.
+   Found by searching for the album and matching its name and main artist,
+   then reading its tracklist. Cached per album for the session; an album
+   that isn't on Spotify is remembered as such, an error isn't. */
+const fullAlbumCache = new Map();
+const normTitle = (s) => String(s || '').toLowerCase()
+  .replace(/\(.*?\)|\[.*?\]/g, ' ')
+  .replace(/\s[-–—]\s.*$/, ' ')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+const normAlbum = (s) => normTitle(s).replace(/\b(deluxe|expanded|edition|version|remaster(ed)?|anniversary)\b/g, ' ').replace(/\s+/g, ' ').trim();
+
+function useFullAlbum(enabled, key, title, artist) {
+  const [rows, setRows] = useState(() => (enabled ? fullAlbumCache.get(key) || null : null));
+  useEffect(() => {
+    if (!enabled) { setRows(null); return undefined; }
+    if (fullAlbumCache.has(key)) { setRows(fullAlbumCache.get(key)); return undefined; }
+    setRows(null);
+    const a = api();
+    if (!a?.spotifySearchAlbums || !a?.spotifyGetAlbumTracks) return undefined;
+    let live = true;
+    (async () => {
+      const who = primaryArtist(artist).toLowerCase();
+      const want = normAlbum(title);
+      const found = await a.spotifySearchAlbums(`${title} ${primaryArtist(artist)}`);
+      const list = (Array.isArray(found) ? found : []).filter((x) => String(x?.artists || '').toLowerCase().includes(who));
+      const hit = list.find((x) => normAlbum(x.name) === want)
+        || list.find((x) => { const n = normAlbum(x.name); return n && want && (n.startsWith(want) || want.startsWith(n)); });
+      const id = hit && (hit.albumId || hit.id);
+      let out = null;
+      if (id) {
+        const r = await a.spotifyGetAlbumTracks(String(id));
+        const tracks = (r?.tracks || r?.data?.tracks || []).filter((t) => t?.spotifyId || t?.id).map((t) => ({
+          ...t, spotifyId: t.spotifyId || t.id, album: t.album || hit.name, albumArtUrl: t.albumArtUrl || hit.albumArtUrl || '',
+        }));
+        out = tracks.length ? tracks : null;
+      }
+      fullAlbumCache.set(key, out);
+      if (live) setRows(out);
+    })().catch(() => { /* offline or signed out: just your songs */ });
+    return () => { live = false; };
+  }, [enabled, key, title, artist]);
+  return rows;
+}
+
+/** A Spotify row as a track the player can stream (nothing is saved). */
+const streamTrack = (row) => ({
+  id: `spotify:track:${row.spotifyId}`,
+  filePath: `spotify:track:${row.spotifyId}`,
+  title: row.title || '',
+  artist: row.artists || '',
+  album: row.album || '',
+  coverArt: row.albumArtUrl || null,
+  duration: (Number(row.durationMs) || 0) / 1000,
+  explicit: !!row.explicit,
+  trackNumber: row.trackNumber || null,
+  streamOnly: true,
+});
+
 export default function RecordPage({
   layout,
   data,          // detailData: { kind, title, by, art, customArt, tracks }
@@ -219,6 +276,7 @@ export default function RecordPage({
   libAlbums = [], libArtists = [], onOpenAlbum, onOpenArtist, onBack,
   onChangeCover, onEditAlbum, onEditPlaylist, onDeletePlaylist,
   moreOpen, setMoreOpen,
+  bridge = null,  // saveRow / saveState for Spotify rows (StudioHome's mySpotifyBridge)
 }) {
   const isAlbum = data.kind === 'album';
   const kindLabel = isAlbum ? 'Album' : 'Playlist';
@@ -242,9 +300,7 @@ export default function RecordPage({
     const who = primaryArtist(data.by).toLowerCase();
     const others = libAlbums.filter((a) => a.key !== libDetailKey);
     const mine = others.filter((a) => primaryArtist(a.artist).toLowerCase() === who);
-    if (mine.length) return [`More by ${primaryArtist(data.by)}`, mine.slice(0, 12)];
-    // Nothing else by them: the newest records in the library instead.
-    return ['More in your library', [...others].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)).slice(0, 8)];
+    return [`More by ${primaryArtist(data.by)}`, mine.slice(0, 12)];
   }, [isAlbum, data.by, libAlbums, libDetailKey]);
   const plArtists = useMemo(() => {
     if (isAlbum) return [];
@@ -264,9 +320,31 @@ export default function RecordPage({
     });
   }, [isAlbum, data.tracks, coverFor, libArtists]);
 
+  const fullRows = useFullAlbum(isAlbum && !!bridge, libDetailKey, data.title, data.by);
+  /* The album in Spotify's order: each song paired with your copy when you
+     have it. Songs of yours Spotify doesn't list stay, at the end. Only
+     used when something is actually missing. */
+  const merged = useMemo(() => {
+    if (!fullRows) return null;
+    const pool = [...data.tracks];
+    const take = (row) => {
+      let i = pool.findIndex((t) => spotifyIdOf(t) === row.spotifyId);
+      if (i < 0) i = pool.findIndex((t) => normTitle(t.title) === normTitle(row.title));
+      return i < 0 ? null : pool.splice(i, 1)[0];
+    };
+    const items = fullRows.map((row) => { const lib = take(row); return { lib, row, key: lib ? lib.id : `sp:${row.spotifyId}` }; });
+    for (const lib of pool) items.push({ lib, row: null, key: lib.id });
+    return items.some((x) => !x.lib) ? items : null;
+  }, [fullRows, data.tracks]);
+  const queue = useMemo(() => (merged ? merged.map((x) => x.lib || streamTrack(x.row)) : null), [merged]);
+  const missingCount = merged ? merged.filter((x) => !x.lib).length : 0;
+
   const totalMs = data.tracks.reduce((n, t) => n + (Number(t.duration) || 0) * 1000, 0);
   const year = isAlbum ? yearOf(data.tracks) : null;
-  const meta = [year, `${data.tracks.length} ${data.tracks.length === 1 ? 'song' : 'songs'}`, formatTotalMs(totalMs)].filter(Boolean).join(' · ');
+  const fullMs = merged ? merged.reduce((n, x) => n + (x.lib ? (Number(x.lib.duration) || 0) * 1000 : Number(x.row.durationMs) || 0), 0) : totalMs;
+  const meta = merged
+    ? [year, `${merged.length} songs`, `${merged.length - missingCount} saved`, formatTotalMs(fullMs)].filter(Boolean).join(' · ')
+    : [year, `${data.tracks.length} ${data.tracks.length === 1 ? 'song' : 'songs'}`, formatTotalMs(totalMs)].filter(Boolean).join(' · ');
   const oneArtist = isAlbum && new Set(data.tracks.map((t) => (t.artist || '').toLowerCase())).size <= 1;
   const showAlbumCol = !isAlbum;
   const showPlaysCol = showPlayCounts && isAlbum;
@@ -296,8 +374,10 @@ export default function RecordPage({
     </div>
   );
 
-  const playAll = () => onPlayTrack?.(data.tracks[0], data.tracks);
-  const shuffle = () => { const sh = [...data.tracks].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); };
+  // With the whole album known, Play plays all of it (your copies where you have them).
+  const playList = queue || data.tracks;
+  const playAll = () => onPlayTrack?.(playList[0], playList);
+  const shuffle = () => { const sh = [...playList].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); };
   const actions = (opts = {}) => (
     <div className="rp-acts">
       {opts.shuffleFirst ? <button type="button" className="rp-ib" title="Shuffle" aria-label="Shuffle" onClick={shuffle}><Icon name="shuffle" /></button> : null}
@@ -320,14 +400,6 @@ export default function RecordPage({
     </div>
   );
 
-  /* Your most played song here, when you've played any of them. */
-  const topId = useMemo(() => {
-    if (data.tracks.length < 2) return null;
-    let best = null; let n = 0;
-    for (const t of data.tracks) { const c = playCountFor(t.id); if (c > n) { n = c; best = t.id; } }
-    return best;
-  }, [data.tracks, playCountFor]);
-
   const heart = (t) => (onToggleFavorite ? (
     <button type="button" className="sth-lrow-more" onClick={() => onToggleFavorite(t.id)}
       title={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
@@ -342,23 +414,13 @@ export default function RecordPage({
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
     </button>
   ) : null);
-  const numCell = (t, i, playing) => (
-    <div className="sth-lrow-n" {...hoverPreload(t)}>
-      {playing
-        ? <span style={{ display: 'inline-flex', width: 32, justifyContent: 'center' }}><PlayingBars acc={accUI} playing={isPlaying} /></span>
-        : <span className="sth-lrow-num">{isAlbum ? (t.trackNumber || i + 1) : i + 1}</span>}
-      <RowPlayButton playing={playing} isPlaying={isPlaying} title={t.title}
-        onPlay={() => onPlayTrack?.(t, tracks)} onTogglePlay={onTogglePlay} />
-    </div>
-  );
   const titleCell = (t, playing, sub) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
       {!isAlbum ? (coverFor(t) ? <img className="rp-art" src={coverFor(t)} alt="" draggable={false} /> : <span className="rp-art" />) : null}
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-          <span style={{ fontSize: 15, fontWeight: 650, color: playing ? `rgb(${accUI})` : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
+          <span className="rp-ttl" style={{ fontSize: 15, fontWeight: 650, color: playing ? `rgb(${accUI})` : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
           {t.explicit ? <ExplicitBadge /> : null}
-          {sub === 'soft' && t.id === topId ? <span className="rp-top">Most played</span> : null}
         </div>
         {sub === 'soft'
           ? ((!isAlbum || !oneArtist) ? <div className="rp-sub">{isAlbum ? t.artist : [t.artist, t.album].filter(Boolean).join(' · ')}</div> : null)
@@ -367,28 +429,51 @@ export default function RecordPage({
     </div>
   );
 
-  const nowHere = currentTrack ? data.tracks.find((t) => t.id === currentTrack.id) || null : null;
   const totalPlays = useMemo(() => data.tracks.reduce((n, t) => n + playCountFor(t.id), 0), [data.tracks, playCountFor]);
+
+  const saveBtn = (row) => {
+    const st = bridge?.saveState(row);
+    if (st === 'saved') return <span className="rp-save" title="In your library" style={{ borderColor: 'transparent' }}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 12.5 10 17.5 19 7" /></svg></span>;
+    return (
+      <button type="button" className="rp-save" disabled={st === 'busy'} onClick={() => bridge?.saveRow(row)}
+        title={st === 'busy' ? 'Saving…' : 'Add to your library'} aria-label={`Add ${row.title} to your library`}>
+        {st === 'busy'
+          ? <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
+          : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>}
+      </button>
+    );
+  };
 
   const renderList = (soft) => {
     const softCols = `44px minmax(0,1fr) auto 48px ${!isAlbum && onRemoveFromPlaylist ? '64px' : '36px'}`;
+    const items = merged || tracks.map((t) => ({ lib: t, row: null, key: t.id }));
+    const order = queue || tracks;
     return (
       <div className={`rp-list${soft ? ' is-soft' : ''}`}>
-        {tracks.length ? tracks.map((t, i) => {
-          const playing = currentTrack?.id === t.id;
-          const plays = playCountFor(t.id);
+        {items.length ? items.map((it, i) => {
+          const t = it.lib || streamTrack(it.row);
+          const missing = !it.lib;
+          const playing = missing ? spotifyIdOf(currentTrack) === it.row.spotifyId : currentTrack?.id === t.id;
+          const plays = missing ? 0 : playCountFor(t.id);
+          const num = isAlbum ? (it.row?.trackNumber || t.trackNumber || i + 1) : i + 1;
           return (
-            <div key={t.id} className={`sth-lrow${playing ? ' is-playing' : ''}`}
+            <div key={it.key} className={`sth-lrow${playing ? ' is-playing' : ''}${missing ? ' is-missing' : ''}`}
               style={soft ? { gridTemplateColumns: softCols } : { gridTemplateColumns: cols, height: rowH }}
-              onDoubleClick={() => onPlayTrack?.(t, tracks)}
-              onContextMenu={canManage ? (e) => openRowMenu(e, t) : undefined}>
-              {numCell(t, i, playing)}
+              onDoubleClick={() => onPlayTrack?.(order[i], order)}
+              onContextMenu={!missing && canManage ? (e) => openRowMenu(e, t) : undefined}>
+              <div className="sth-lrow-n" {...hoverPreload(t)}>
+                {playing
+                  ? <span style={{ display: 'inline-flex', width: soft ? 32 : 'auto', justifyContent: 'center' }}><PlayingBars acc={accUI} playing={isPlaying} /></span>
+                  : <span className="sth-lrow-num">{num}</span>}
+                <RowPlayButton playing={playing} isPlaying={isPlaying} title={t.title}
+                  onPlay={() => onPlayTrack?.(order[i], order)} onTogglePlay={onTogglePlay} />
+              </div>
               {titleCell(t, playing, soft ? 'soft' : 'plain')}
               {soft ? <div className="rp-plays">{plays ? `${plays} ${plays === 1 ? 'play' : 'plays'}` : ''}</div> : null}
               {!soft && showAlbumCol ? <div className="sth-lrow-dim sth-lcol-album">{t.album}</div> : null}
-              {!soft && showPlaysCol ? <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{plays}</div> : null}
+              {!soft && showPlaysCol ? <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{missing ? '' : plays}</div> : null}
               <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{formatTime(t.duration)}</div>
-              <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>{heart(t)}{removeBtn(t)}</div>
+              <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>{missing ? saveBtn(it.row) : <>{heart(t)}{removeBtn(t)}</>}</div>
             </div>
           );
         }) : <div className="rp-empty">No songs yet.</div>}
@@ -397,7 +482,7 @@ export default function RecordPage({
   };
   const list = renderList(false);
 
-  const more = moreAlbums.length ? (
+  const more = moreAlbums.length && !merged ? (
     <section className="rp-more">
       <h3>{moreTitle}</h3>
       <div className="rp-shelf">
@@ -515,7 +600,6 @@ export default function RecordPage({
           <div className="rp-poster-fade" />
           {back}
           <div className="rp-poster-txt">
-            {nowHere ? <div className="rp-nowchip"><PlayingBars acc="255, 255, 255" playing={isPlaying} /><span>{isPlaying ? 'Now playing' : 'Paused'} · {nowHere.title}</span></div> : null}
             {kind}{title}
             <div className="rp-line"><span className="rp-by">{artistLink}</span> · {meta}{totalPlays ? ` · ${totalPlays} ${totalPlays === 1 ? 'play' : 'plays'}` : ''}</div>
             {actions()}

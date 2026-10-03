@@ -30,6 +30,7 @@ import {
   useStudioFollows, useHiddenArtists, isStudioFollowed, followArtist, unfollowArtist, setArtistHidden,
 } from '../lib/studioFollows.js';
 import { ago, cx, fmtMs } from '../lib/format.js';
+import { hiResCover } from '../lib/coverUrl.js';
 
 /* ------------------------------------------------------------------ data */
 
@@ -441,11 +442,18 @@ const CSS = `
 
 /* ---------------------------------------------------------------- pieces */
 
-function Art({ src, round = false, children, style, className }) {
-  const [broken, setBroken] = useState(false);
+function Art({ src: raw, round = false, children, style, className }) {
+  /* The large size first (sharp on high-density screens), then the
+     original, then nothing. */
+  const big = hiResCover(raw);
+  const [stage, setStage] = useState(0);
+  useEffect(() => { setStage(0); }, [raw]);
+  const src = stage === 0 && big !== raw ? big : raw;
+  const broken = stage > 1 || (stage === 1 && big === raw);
+  const setBroken = () => setStage((n) => n + 1);
   return (
     <span className={cx('msp-art', round && 'is-round', className)} style={style}>
-      {src && !broken ? <img src={src} alt="" loading="lazy" draggable={false} onError={() => setBroken(true)} /> : null}
+      {src && !broken ? <img src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={setBroken} /> : null}
       {children}
     </span>
   );

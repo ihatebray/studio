@@ -324,6 +324,7 @@ export default function LibraryPage({
                 onDeletePlaylist={isPl ? () => setDeletePl({ id: libDetail.key, name: detailData.title }) : null}
                 moreOpen={detailMore}
                 setMoreOpen={setDetailMore}
+                bridge={mySpotifyBridge}
               />
             );
           }
@@ -685,7 +686,7 @@ export default function LibraryPage({
                 <button key={a.key} type="button" className="sth-alb" style={{ textAlign: 'left' }}
                   onClick={() => setLibDetail({ kind: 'album', key: a.key })}>
                   <div className="sth-albart" style={{ width: '100%', aspectRatio: '1' }}>
-                    {a.art ? <div className="sth-albimg" style={{ backgroundImage: `url("${a.art}")` }} /> : null}
+                    {a.art ? <div className="sth-albimg" style={{ backgroundImage: coverLayers(a.art) }} /> : null}
                     {/* Fades in over the artwork's lower right. */}
                     <span className="sth-alb-play" title={`Play ${a.name}`} aria-hidden
                       onClick={(e) => { e.stopPropagation(); if (a.tracks?.length) onPlayTrack?.(a.tracks[0], a.tracks); }}>

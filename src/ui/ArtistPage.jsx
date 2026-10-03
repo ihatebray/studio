@@ -4,6 +4,7 @@ import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readable
 import { PlayIcon } from './sharedUI.jsx';
 import { formatTotalMs } from '../lib/mediaUtils.js';
 import { api, fmtMs } from '../lib/format.js';
+import { coverLayers } from '../lib/coverUrl.js';
 
 /* =========================================================================
  *  studio — artist page
@@ -391,7 +392,7 @@ function DiscCard({ r, owned, accent, onClick, opensTracklist = false, open = fa
       }}>
       <div style={{
         position: 'relative', width: '100%', aspectRatio: '1', borderRadius: 9, overflow: 'hidden',
-        background: r.albumArtUrl ? `url("${String(r.albumArtUrl).replace(/"/g, '%22')}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
+        background: r.albumArtUrl ? coverLayers(String(r.albumArtUrl).replace(/"/g, '%22'), ' center/cover') : 'rgba(var(--st-fg-rgb), 0.07)',
         boxShadow: `${hot || open ? '0 16px 34px rgba(0,0,0,0.5)' : '0 10px 26px rgba(0,0,0,0.4)'}${open ? `, 0 0 0 2px rgb(${readableAccent(accent)})` : ''}`,
         transform: hot || open ? 'translateY(-3px)' : 'none',
         transition: 'transform 0.22s cubic-bezier(0.22,0.9,0.3,1), box-shadow 0.22s ease',
@@ -646,7 +647,7 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
     <div className="apx-rel" ref={boxRef} style={{ '--apx-notch': notch, '--apx-acc': accent }}>
       <div className="apx-rel-card">
         <div className="apx-rel-side">
-          <div className="apx-rel-cover" style={{ backgroundImage: release.albumArtUrl ? `url("${String(release.albumArtUrl).replace(/"/g, '%22')}")` : 'none' }} />
+          <div className="apx-rel-cover" style={{ backgroundImage: release.albumArtUrl ? coverLayers(String(release.albumArtUrl).replace(/"/g, '%22')) : 'none' }} />
           <div className="apx-rel-eyebrow">{[relKind(release), year].filter(Boolean).join(' · ')}</div>
           <div className="apx-rel-title">{release.name}</div>
           <div className="apx-rel-meta">
