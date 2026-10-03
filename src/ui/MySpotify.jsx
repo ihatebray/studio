@@ -911,7 +911,6 @@ export function SpotifyHome({ bridge }) {
       if (rows?.length) bridge.playRows(rows, 0, { ...opts, context: it });
     } catch { openPanel(it); }
   };
-  const liked = data?.liked || { kind: 'liked', id: 'liked', name: 'Liked Songs', sub: 'Collection' };
   const today = data?.mixes?.find((x) => x.id === 'today');
 
   const hasStudio = !!mine?.pulse?.total;
@@ -930,7 +929,8 @@ export function SpotifyHome({ bridge }) {
             <div className="msp-lhead-r2">
               <button type="button" className="msp-act is-primary" disabled={!today}
                 onClick={() => today && playItem(today)}>{Icon.play(12)} Today’s Mix</button>
-              <button type="button" className="msp-act" disabled={!data} onClick={() => playItem(liked, { shuffle: true })}>
+              <button type="button" className="msp-act" disabled={!bridge.likedCount} onClick={() => bridge.shuffleLiked?.()}
+                title={bridge.likedCount ? 'The songs you’ve hearted in Studio' : 'Heart songs in Studio to shuffle them here'}>
                 {Icon.shuffle(14)} <span className="msp-act-label">Shuffle Liked Songs</span>
               </button>
               <span className="msp-sep" />

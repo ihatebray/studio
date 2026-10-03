@@ -1241,15 +1241,6 @@ export async function findTrack(title, artists, durationMs = 0, search = (q) => 
   return null;
 }
 
-/** Heart tracks on Spotify (Liked Songs). Up to 50 ids per call. */
-export async function likeTracks(ids) {
-  const clean = [...new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))];
-  for (let i = 0; i < clean.length; i += 50) {
-    await webApi(`/me/tracks?ids=${clean.slice(i, i + 50).join(',')}`, 0, 'PUT');
-  }
-  return clean.length;
-}
-
 /* Popular songs without play counts, for when the overview (Pathfinder) is
    the thing that's rate-limited or broken. Different endpoint, different
    limit bucket — often still answering. */

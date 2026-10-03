@@ -202,14 +202,6 @@ ipcMain.handle('library:saveSpotify', async (_e, meta) => {
         repeatAfterMs: 5 * 60 * 1000,
       });
     }
-    if (res?.ok && res.likeError) {
-      notice({
-        key: 'save-like', kind: 'warning', source: 'Save',
-        title: 'Saved, but not hearted on Spotify',
-        detail: `“${title}” is in your library, but Spotify refused to add it to your Liked Songs (${res.likeError}). If it says 403, sign in to Spotify again in Settings → Connections.`,
-        repeatAfterMs: 10 * 60 * 1000,
-      });
-    }
     return res;
   } catch (e) { return { ok: false, error: String(e?.message || e), noPicker: true }; }
 });

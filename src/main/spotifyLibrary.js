@@ -5,16 +5,16 @@
  *  whose file_path is `spotify:track:<id>` instead of a path on disk, so it
  *  shows up in every library view, playlist and stat like any other track;
  *  the player sees the prefix and plays it through the studio-spotify helper.
- *  Saving also hearts the track on Spotify (Liked Songs).
+ *  Saving is Studio's alone: nothing is added to the Spotify account.
  *
  *  Rows from elsewhere (iTunes charts and releases) carry no Spotify ID, so
  *  they're matched on the signed-in account first.
  * ========================================================================= */
 
-import { partnerState, trackById, trackByIdPathfinder, findTrack, likeTracks } from './spotifyPartner.js';
+import { partnerState, trackById, trackByIdPathfinder, findTrack } from './spotifyPartner.js';
 import { spotifyCredentialsConfigured, spotifyGetTrack, spotifySearchTracks } from './spotifyClient.js';
 import { itunesCrossCheck } from './itunesClient.js';
-import { helperTracks, helperLike } from './spotifyPlayer.js';
+import { helperTracks } from './spotifyPlayer.js';
 import { upsertTracks, idsForFilePaths, loadAllTracks } from './libraryDb.js';
 
 const SPOTIFY_PATH_PREFIX = 'spotify:track:';
@@ -152,12 +152,9 @@ async function rowFor(meta) {
 }
 
 /**
- * Save catalogue tracks to the library and heart them on Spotify.
- * Returns { ok, tracks, failed: [{ meta, error }], liked }.
- *
- * Library first, heart second: the library row is what the user asked for,
- * so a Spotify refusal (rate limit, an old sign-in without the permission)
- * still leaves the track saved, and is reported as `likeError`.
+ * Save catalogue tracks to the library. Returns { ok, tracks, failed: [{ meta, error }] }.
+ * They aren't hearted on Spotify: your library and your Spotify Liked Songs
+ * stay separate.
  */
 async function saveSpotifyTracks(metas) {
   const why = notReady();
@@ -182,22 +179,8 @@ async function saveSpotifyTracks(metas) {
   const ids = await idsForFilePaths(rows.map((r) => r.track.filePath));
   for (const r of rows) r.track.id = ids.get(r.track.filePath) || r.track.id;
 
-  let liked = 0;
-  let likeError = null;
-  /* Hearted the way Spotify's clients do it (the helper, through the
-     collection service), else through the Web API, whose quota is the one
-     that keeps running out. */
-  const trackIds = rows.map((r) => r.id);
-  try {
-    liked = (await helperLike(trackIds))?.count || trackIds.length;
-  } catch (viaHelper) {
-    try { liked = await likeTracks(trackIds); } catch (e) { likeError = String(e?.message || e); }
-    if (likeError) console.warn('[save] helper couldn’t heart it either:', String(viaHelper?.message || viaHelper));
-  }
-  if (likeError) console.warn('[save] library saved, but hearting on Spotify failed:', likeError);
-
   return {
-    ok: true, tracks: rows.map((r) => r.track), failed, liked, likeError,
+    ok: true, tracks: rows.map((r) => r.track), failed,
     // Saved with Apple Music's album and cover because Spotify wouldn't say.
     fromItunes: rows.filter((r) => r.albumFrom === 'itunes').map((r) => r.track.title),
   };
@@ -207,7 +190,7 @@ async function saveSpotifyTracks(metas) {
 export async function saveSpotifyTrack(meta) {
   const r = await saveSpotifyTracks([meta]);
   if (!r.ok) return { ok: false, error: r.error, noPicker: true };
-  return { ok: true, track: r.tracks[0], likeError: r.likeError, fromItunes: r.fromItunes.length > 0 };
+  return { ok: true, track: r.tracks[0], fromItunes: r.fromItunes.length > 0 };
 }
 
 /* ---- repair --------------------------------------------------------------

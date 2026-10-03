@@ -331,8 +331,6 @@ export const helperAlbum = (id) => helperRequest({ cmd: 'album', id: String(id) 
 export const helperArtist = (id) => helperRequest({ cmd: 'artist', id: String(id) });
 /** `{ releases, artistsChecked, artistsTotal }`: the followed artists' last `days`. */
 export const helperReleases = (days = 60, ids = [], spotify = true) => helperRequest({ cmd: 'releases', days, ids, spotify }, 60_000);
-/** Heart (or un-heart) songs through Spotify's collection service. */
-export const helperLike = (ids, saved = true) => helperRequest({ cmd: 'like', ids: (ids || []).map(String), saved }, 20_000);
 /** A playlist's songs / Liked Songs / songs by id, in the pages' track shape. */
 export const helperPlaylist = (id) => helperRequest({ cmd: 'playlist', id: String(id) }, 30_000);
 export const helperLiked = () => helperRequest({ cmd: 'liked' }, 30_000);

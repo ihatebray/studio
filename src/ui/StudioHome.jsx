@@ -2185,6 +2185,7 @@ export default function StudioHome({
       trackNumber: row.trackNumber || null,
       streamOnly: true,
     }, [libBySpotifyId, ownedTrackFor]);
+  const favorites = useMemo(() => library.filter((t) => t.isFavorite), [library]);
   const mySpotifyBridge = useMemo(() => {
     const saveState = (row) => {
       if (libBySpotifyId.has(row.spotifyId) || ownedTrackFor(row.title, row.artists)) return 'saved';
@@ -2207,13 +2208,21 @@ export default function StudioHome({
       },
       saveRow(row) { if (!saveState(row)) downloadSpotifyRow(row, { noPicker: true }); },
       saveState,
+      /* Shuffle Liked Songs: the songs you've hearted in Studio, not
+         Spotify's Liked Songs. */
+      likedCount: favorites.length,
+      shuffleLiked() {
+        if (!favorites.length) return;
+        const mixed = [...favorites].sort(() => Math.random() - 0.5);
+        onPlayTrack?.(mixed[0], mixed);
+      },
       isCurrent: (row) => !!currentSid && currentSid === row.spotifyId,
       isPlaying: !!isPlaying,
       hoverProps: (row) => hoverPreload(spotifyPlayable(row)) || {},
       onOpenArtist: openArtistAnywhere,
       onConnect: () => { pickSection('settings'); setSetCat('connections'); },
     };
-  }, [libBySpotifyId, ownedTrackFor, dlState, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection]);
+  }, [libBySpotifyId, ownedTrackFor, dlState, favorites, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection]);
 
   const barShown = !!currentTrack;
   useEffect(() => {
