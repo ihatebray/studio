@@ -16,14 +16,15 @@ import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 import { listFollows } from './follows.js';
-import { artistUpcoming, partnerState } from './spotifyPartner.js';
+import { artistUpcoming, artistUpcomingDiag, partnerState } from './spotifyPartner.js';
+import { itunesSearchArtist, itunesGetArtistAlbums } from './itunesClient.js';
 import { loadCachedReleases } from './libraryDb.js';
 
 const TTL_MS = 6 * 60 * 60 * 1000;
 /* Nothing found is asked again sooner: it may have been a bad moment. */
 const EMPTY_TTL_MS = 30 * 60 * 1000;
 /* Bumped when what's stored changes meaning; an older file is dropped. */
-const VERSION = 2;
+const VERSION = 3;
 const file = () => path.join(app.getPath('userData'), 'studio-countdowns.json');
 
 let store = null;
@@ -45,8 +46,7 @@ const localDay = (t = Date.now()) => {
 
 let inflight = null;
 async function refresh(force) {
-  const st = partnerState();
-  if (!st.connected) return;
+  const spotify = partnerState().connected;
   const cache = load();
   const now = Date.now();
   const todo = listFollows().filter((f) => force || !cache[f.id]
@@ -55,9 +55,37 @@ async function refresh(force) {
   const worker = async () => {
     while (i < todo.length) {
       const f = todo[i++];
-      try { cache[f.id] = { at: Date.now(), items: await artistUpcoming(f.id) }; } catch (e) {
-        console.warn('[countdowns]', f.name, String(e?.message || e));
+      const items = [];
+      let answered = false;
+      if (spotify) try {
+        const found = await artistUpcoming(f.id);
+        items.push(...found);
+        answered = true;
+        if (!found.length) console.log(`[countdowns] ${f.name}: nothing on Spotify. ${await artistUpcomingDiag(f.id).catch(() => '')}`);
+      } catch (e) {
+        console.warn('[countdowns]', f.name, 'Spotify:', String(e?.message || e));
       }
+      /* Apple Music lists pre-orders with their release date, and isn't
+         held to Spotify's rate limit. */
+      let appleId = cache[f.id]?.appleId || null;
+      try {
+        if (!appleId) appleId = (await itunesSearchArtist(f.name))?.artistId || null;
+        if (appleId) {
+          const today = localDay();
+          for (const al of await itunesGetArtistAlbums(appleId, 50)) {
+            if (!(String(al.releaseDate || '') >= today)) continue;
+            if (items.some((x) => norm(x.name) === norm(al.name) || norm(al.name).startsWith(norm(x.name)))) continue;
+            items.push({
+              id: null, name: al.name, type: al.albumGroup === 'single' ? 'single' : al.albumGroup === 'ep' ? 'ep' : 'album',
+              coverUrl: al.albumArtUrl || null, releaseAt: '', releaseDate: String(al.releaseDate).slice(0, 10), countdown: true, apple: true,
+            });
+          }
+        }
+        answered = true;
+      } catch (e) {
+        console.warn('[countdowns]', f.name, 'Apple Music:', String(e?.message || e));
+      }
+      if (answered) cache[f.id] = { at: Date.now(), items, appleId };
     }
   };
   await Promise.all([worker(), worker()]);
@@ -92,7 +120,7 @@ export async function listCountdowns({ force = false } = {}) {
       mine.push({
         key: `${f.id}:${x.id || norm(x.name)}`, artistId: f.id, artistName: f.name, artistImage: f.image || null,
         albumId: x.id || null, name: x.name, type: x.type || 'album', coverUrl: x.coverUrl || null,
-        releaseAt: x.releaseAt || '', releaseDate: x.releaseDate || '', countdown: !!x.countdown, source: 'spotify',
+        releaseAt: x.releaseAt || '', releaseDate: x.releaseDate || '', countdown: !!x.countdown, source: x.apple ? 'apple' : 'spotify',
       });
     }
     const who = norm(f.name);

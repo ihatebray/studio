@@ -876,6 +876,9 @@ async function artistOverview(artistId) {
     topTracks: (disc.topTracks?.items || []).map((i) => shapeTrack(i?.track)).filter(Boolean),
     latest: shapeRelease(disc.latest, 'latest'),
     upcoming: upcomingFrom(a),
+    /* For the log when no countdown is found: the overview's top-level
+       fields and anything about pre-releases, as Spotify sent them. */
+    preDiag: `fields: ${Object.keys(a).join(', ')} | pre-release: ${JSON.stringify(Object.fromEntries(Object.entries(a).filter(([k]) => /pre/i.test(k)))).slice(0, 800)}`,
     albums: releasesFrom(disc.albums, 'album'),
     singles: releasesFrom(disc.singles, 'single'),
     compilations: releasesFrom(disc.compilations, 'compilation'),
@@ -1376,6 +1379,9 @@ async function cachedOverview(id) {
 /** Albums on the way for an artist (see upcomingFrom). */
 export async function artistUpcoming(id) {
   return (await cachedOverview(id)).upcoming || [];
+}
+export async function artistUpcomingDiag(id) {
+  return (await cachedOverview(id)).preDiag || '';
 }
 
 /* Where artist discographies come from first. main.js points this at the
