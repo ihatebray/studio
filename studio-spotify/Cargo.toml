@@ -1,0 +1,39 @@
+[package]
+name = "studio-spotify"
+version = "0.1.0"
+edition = "2021"
+description = "Studio's Spotify playback helper: librespot, driven over stdin/stdout, playing straight to the sound card."
+publish = false
+
+[dependencies]
+librespot-core = { version = "0.8.0", default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-playback = { version = "0.8.0", default-features = false, features = ["rustls-tls-webpki-roots"] }
+# The output (src/output.rs). Same rodio librespot's backend uses.
+rodio = { version = "0.21", default-features = false, features = ["playback"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "io-std", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+# Search (src/search.rs): the metadata protobufs librespot already builds.
+librespot-protocol = "0.8.0"
+protobuf = "3"
+# The collection service requests (src/library.rs).
+http = "1"
+# Pathfinder requests (src/pathfinder.rs) through the session's HTTP client.
+bytes = "1"
+http-body-util = "0.1"
+
+# The same librespot Sonora ships: upstream 0.8 plus a CDN fallback and a
+# fix for audio keys Spotify refuses. Pinned so a rebuild is reproducible.
+[patch.crates-io]
+librespot-audio = { git = "https://github.com/sonorahq/librespot", rev = "d16b7fa014aef21c0786a68f07c685c30df5b646" }
+librespot-core = { git = "https://github.com/sonorahq/librespot", rev = "d16b7fa014aef21c0786a68f07c685c30df5b646" }
+librespot-metadata = { git = "https://github.com/sonorahq/librespot", rev = "d16b7fa014aef21c0786a68f07c685c30df5b646" }
+librespot-oauth = { git = "https://github.com/sonorahq/librespot", rev = "d16b7fa014aef21c0786a68f07c685c30df5b646" }
+librespot-playback = { git = "https://github.com/sonorahq/librespot", rev = "d16b7fa014aef21c0786a68f07c685c30df5b646" }
+librespot-protocol = { git = "https://github.com/sonorahq/librespot", rev = "d16b7fa014aef21c0786a68f07c685c30df5b646" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

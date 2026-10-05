@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="/src/assets/icon.png" />
+  <title>studio</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      color: #fff;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    #root { width: 100vw; height: 100vh; }
+    /* Every scroller that doesn't style its own: a slim, quiet thumb (4px
+       drawn inside a 10px gutter) that brightens on hover, the same as the
+       library lists. Electron's Chromium ignores scrollbar-width and
+       scrollbar-color, so this is what those scrollers actually get. */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.28); background-clip: content-box; }
+    /* Every track stops short of both ends, so a thumb never runs into a
+       rounded corner (cards round at 16px) and pokes out past the curve.
+       Applies to the scrollers that style their own thumb too. */
+    ::-webkit-scrollbar-track:vertical { margin: 14px 0; }
+    ::-webkit-scrollbar-track:horizontal { margin: 0 14px; }
+    /* Hidden until wanted: a thumb is clear unless the pointer is over its
+       scroller (.sb-hover) or it's scrolling (.sb-active), both set by
+       src/lib/autoHideScrollbars.js. !important so it also wins over the
+       scrollers that colour their own thumb; when it doesn't apply, their
+       own colour shows. */
+    :not(.sb-hover):not(.sb-active)::-webkit-scrollbar-thumb { background: transparent !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/ui/renderer.jsx"></script>
+</body>
+</html>
