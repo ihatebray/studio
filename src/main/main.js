@@ -704,28 +704,8 @@ async function crossCheckMetadata(target) {
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
 
-/**
- * "What's new" overlay support.
- *
- * The renderer wants to show a release-notes overlay the first time
- * an updated version launches. Two pieces of state we own here:
- *
- *   1. The "last seen" version: a single-line file at
- *      userData/last-whats-new.json that stores which version was the
- *      most recent one we showed notes for. Renderer compares this to
- *      app.getVersion() — if the running app is newer, show notes,
- *      then save the new version back here so we don't show them again
- *      on next launch.
- *
- *   2. Release notes themselves: we fetch on demand from GitHub's
- *      public REST API for the release matching the running version's
- *      tag (e.g. v1.0.3). Anonymous requests are rate-limited to 60/hr
- *      per IP but that's plenty for "first launch after an update".
- *
- * The renderer drives the policy (when to fetch, when to dismiss) —
- * this main-side code just provides the persistence + the GitHub
- * network call.
- */
+/* What's new: which version's notes were last shown, in
+   userData/last-whats-new.json. The notes themselves are src/changelog.js. */
 function lastWhatsNewPath() {
   return path.join(app.getPath('userData'), 'last-whats-new.json');
 }
@@ -754,58 +734,6 @@ ipcMain.handle('whatsnew:setLastSeen', (_e, version) => {
     return { ok: false, error: String(e?.message || e) };
   }
 });
-
-/**
- * Fetch the GitHub Release notes for a specific tag. Anonymous request
- * — the repo is public, no auth needed.
- *
- * The repo string is hardcoded to match the publisher config in
- * forge.config.cjs; if you fork this, update both places.
- *
- * Returns `{ ok, body, name, url, error }`. `body` is the raw markdown
- * release-notes string from GitHub. If the release doesn't exist yet
- * (e.g. user is running v1.0.3 but the release was deleted), returns
- * ok=false with a readable error.
- */
-ipcMain.handle('whatsnew:fetchReleaseNotes', async (_e, version) => {
-  const tag = String(version || '').trim();
-  if (!tag) return { ok: false, error: 'No version provided.' };
-  // The publisher tags releases as 'v<version>' (configurable via
-  // tagPrefix in forge.config.cjs, default is 'v'). Strip a leading
-  // 'v' if present, then prepend a fresh one — covers both 'v1.0.3'
-  // and '1.0.3' callers.
-  const tagName = tag.startsWith('v') ? tag : `v${tag}`;
-  const url = `https://api.github.com/repos/ihatebray/studio/releases/tags/${encodeURIComponent(tagName)}`;
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'studio-app',
-      },
-    });
-    if (res.status === 404) {
-      return { ok: false, error: `No release found for ${tagName}.`, notFound: true };
-    }
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      return { ok: false, error: `GitHub API ${res.status}: ${txt.slice(0, 200)}` };
-    }
-    const data = await res.json();
-    return {
-      ok: true,
-      body: String(data.body || '').trim(),
-      name: String(data.name || tagName),
-      url: String(data.html_url || ''),
-      publishedAt: data.published_at || null,
-    };
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
-
-
-
-
 
 function newTrackId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

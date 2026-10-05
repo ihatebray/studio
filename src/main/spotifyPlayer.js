@@ -331,9 +331,11 @@ export const helperAlbum = (id) => helperRequest({ cmd: 'album', id: String(id) 
 export const helperArtist = (id) => helperRequest({ cmd: 'artist', id: String(id) });
 /** `{ releases, artistsChecked, artistsTotal }`: the followed artists' last `days`. */
 export const helperReleases = (days = 60, ids = [], spotify = true) => helperRequest({ cmd: 'releases', days, ids, spotify }, 60_000);
-/** A playlist's songs / Liked Songs / songs by id, in the pages' track shape. */
-export const helperPlaylist = (id) => helperRequest({ cmd: 'playlist', id: String(id) }, 30_000);
-export const helperLiked = () => helperRequest({ cmd: 'liked' }, 30_000);
+/** A playlist's songs / Liked Songs / songs by id, in the pages' track shape.
+ *  `all`: every song (an import) instead of the first few hundred a page
+ *  shows; thousands of songs take a while to read. */
+export const helperPlaylist = (id, all = false) => helperRequest({ cmd: 'playlist', id: String(id), all: !!all }, all ? 300_000 : 30_000);
+export const helperLiked = (all = false) => helperRequest({ cmd: 'liked', all: !!all }, all ? 300_000 : 30_000);
 export const helperTracks = (ids) => helperRequest({ cmd: 'tracks', ids: (ids || []).map(String) });
 /** `[{ id, name, image }]` for artist ids. */
 export const helperArtists = (ids) => helperRequest({ cmd: 'artists', ids: (ids || []).map(String) });

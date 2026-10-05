@@ -20,13 +20,14 @@ export function playlistIdFrom(input) {
 
 export async function importSpotifyPlaylist(a, item, { onCreatePlaylist, onAddTracksToPlaylist, say = () => {} }) {
   say('Reading…');
-  const r = item.kind === 'liked' ? await a.spotifyFeedLiked() : await a.spotifyFeedPlaylist(item.id);
+  // Every song, not the first 300 the My Spotify page shows.
+  const r = item.kind === 'liked' ? await a.spotifyFeedLiked({ all: true }) : await a.spotifyFeedPlaylist(item.id, { all: true });
   const songs = ((r?.ok ? r.data : []) || []).filter((x) => x?.spotifyId);
   if (!songs.length) { say(r?.ok ? 'Empty' : 'Couldn’t read', 'bad'); return 0; }
   const ids = [];
-  for (let i = 0; i < songs.length; i += 25) {
+  for (let i = 0; i < songs.length; i += 100) {
     say(`${Math.min(i, songs.length)} / ${songs.length}`);
-    const res = await a.saveSpotifyMany(songs.slice(i, i + 25));
+    const res = await a.saveSpotifyMany(songs.slice(i, i + 100));
     for (const t of res?.tracks || []) if (t?.id != null) ids.push(t.id);
   }
   if (!ids.length) { say('Couldn’t save', 'bad'); return 0; }

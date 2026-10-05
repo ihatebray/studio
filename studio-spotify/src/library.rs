@@ -32,8 +32,11 @@ const ARTIST_PREFIX: &str = "spotify:artist:";
 const ALBUM_PREFIX: &str = "spotify:album:";
 const BATCH: usize = 200;
 const MAX_FOLLOWED: usize = 250;
+/// What a page of Liked Songs or a playlist shows: enough to browse, quick
+/// to load. Imports ask for `all` and get up to MAX_ALL.
 const MAX_LIKED: usize = 300;
 const MAX_PLAYLIST: usize = 300;
+const MAX_ALL: usize = 20_000;
 // Per artist, the newest few of each (the lists run newest first).
 const RECENT_ALBUMS: usize = 3;
 const RECENT_SINGLES: usize = 5;
@@ -231,28 +234,78 @@ pub async fn tracks(session: &Session, ids: &[String]) -> Result<Value, String> 
 }
 
 /// Liked Songs, newest first.
-pub async fn liked(session: &Session) -> Result<Value, String> {
-    let items = saved_items(session, "collection", TRACK_PREFIX, MAX_LIKED).await?;
+pub async fn liked(session: &Session, all: bool) -> Result<Value, String> {
+    let items = saved_items(session, "collection", TRACK_PREFIX, if all { MAX_ALL } else { MAX_LIKED }).await?;
     let uris: Vec<(String, Option<i64>)> = items.into_iter().map(|(u, at)| (u, Some(at))).collect();
     Ok(Value::Array(rows_for(session, &uris).await?))
 }
 
 /// A playlist's songs, from its context (the pages the clients play from).
-pub async fn playlist(session: &Session, id: &str) -> Result<Value, String> {
+/// A long playlist arrives in pages: the first few with their songs, the
+/// rest only as links (`page_url` for a page still to load, `next_page_url`
+/// for the one after it), each fetched in turn.
+pub async fn playlist(session: &Session, id: &str, all: bool) -> Result<Value, String> {
+    let cap = if all { MAX_ALL } else { MAX_PLAYLIST };
     let context = session
         .spclient()
         .get_context(&format!("spotify:playlist:{id}"))
         .await
         .map_err(|e| format!("playlist: {e}"))?;
     let mut uris: Vec<(String, Option<i64>)> = Vec::new();
-    for t in context.pages.iter().flat_map(|p| p.tracks.iter()) {
-        if let Some(u) = t.uri.as_ref().filter(|u| u.starts_with(TRACK_PREFIX)) {
-            uris.push((u.clone(), None));
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut pending: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    let mut queue_link = |url: &str, pending: &mut std::collections::VecDeque<String>| {
+        if !url.is_empty() && seen.insert(url.to_owned()) {
+            pending.push_back(url.to_owned());
         }
-        if uris.len() >= MAX_PLAYLIST {
-            break;
+    };
+    for p in &context.pages {
+        for t in &p.tracks {
+            if let Some(u) = t.uri.as_ref().filter(|u| u.starts_with(TRACK_PREFIX)) {
+                uris.push((u.clone(), None));
+            }
+        }
+        if p.tracks.is_empty() {
+            queue_link(p.page_url(), &mut pending);
+        }
+        queue_link(p.next_page_url(), &mut pending);
+    }
+    // The links: each page's songs, and the link to the page after it. A
+    // link can answer with one page or a context holding several.
+    while uris.len() < cap {
+        let Some(url) = pending.pop_front() else { break };
+        let raw = match session.spclient().get_next_page(&url).await {
+            Ok(raw) => raw,
+            // One retry: a long import shouldn't fail on a single dropped request.
+            Err(_) => session.spclient().get_next_page(&url).await.map_err(|e| format!("playlist page: {e}"))?,
+        };
+        let body: Value = serde_json::from_slice(&raw).map_err(|e| format!("playlist page: {e}"))?;
+        let pages: Vec<&Value> = match body["pages"].as_array() {
+            Some(list) => list.iter().collect(),
+            None => vec![&body],
+        };
+        for page in pages {
+            let tracks = page["tracks"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+            for t in tracks {
+                if let Some(u) = t["uri"].as_str().filter(|u| u.starts_with(TRACK_PREFIX)) {
+                    uris.push((u.to_owned(), None));
+                }
+            }
+            if tracks.is_empty() {
+                for key in ["page_url", "pageUrl"] {
+                    if let Some(n) = page[key].as_str() {
+                        queue_link(n, &mut pending);
+                    }
+                }
+            }
+            for key in ["next_page_url", "nextPageUrl"] {
+                if let Some(n) = page[key].as_str() {
+                    queue_link(n, &mut pending);
+                }
+            }
         }
     }
+    uris.truncate(cap);
     Ok(Value::Array(rows_for(session, &uris).await?))
 }
 

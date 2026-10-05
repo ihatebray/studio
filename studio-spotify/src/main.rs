@@ -27,8 +27,8 @@
 //!                                             new releases from followed artists (library.rs)
 //!   {"cmd":"like","req":8,"ids":["…"],"saved":true}   Liked Songs, via the collection service
 //!   {"cmd":"artists","req":9,"ids":["…"]}     artist names and portraits
-//!   {"cmd":"playlist","req":5,"id":"…"}       a playlist's songs
-//!   {"cmd":"liked","req":6}                   Liked Songs
+//!   {"cmd":"playlist","req":5,"id":"…","all":false}  a playlist's songs (all: every one)
+//!   {"cmd":"liked","req":6,"all":false}       Liked Songs (all: every one)
 //!   {"cmd":"tracks","req":7,"ids":["…"]}      song details
 //!   {"cmd":"quit"}
 //!
@@ -131,8 +131,9 @@ enum Command {
     Artists { req: u64, ids: Vec<String> },
     Discography { req: u64, id: String },
     Pathfinder { req: u64, op: String, hash: String, #[serde(default)] variables: serde_json::Value },
-    Playlist { req: u64, id: String },
-    Liked { req: u64 },
+    /// `all`: every song (an import), not just the first few hundred a page shows.
+    Playlist { req: u64, id: String, #[serde(default)] all: bool },
+    Liked { req: u64, #[serde(default)] all: bool },
     Tracks { req: u64, ids: Vec<String> },
     Quit,
 }
@@ -334,7 +335,7 @@ async fn main() {
                     // A request gets its own reply; the player's error event is for playback.
                     match &other {
                         Command::Search { req, .. } | Command::Album { req, .. } | Command::Artist { req, .. }
-                        | Command::Releases { req, .. } | Command::Playlist { req, .. } | Command::Liked { req } | Command::Tracks { req, .. }
+                        | Command::Releases { req, .. } | Command::Playlist { req, .. } | Command::Liked { req, .. } | Command::Tracks { req, .. }
                         | Command::Like { req, .. } | Command::Artists { req, .. } | Command::Discography { req, .. } | Command::Pathfinder { req, .. } => {
                             send(json!({ "event": "answer", "req": req, "ok": false, "error": "not signed in" }));
                         }
@@ -368,8 +369,8 @@ async fn main() {
                     Command::Artists { req, ids } => answer(req, e.session.clone(), move |s| async move { library::artists(&s, &ids).await }),
                     Command::Discography { req, id } => answer(req, e.session.clone(), move |s| async move { library::discography(&s, &id).await }),
                     Command::Pathfinder { req, op, hash, variables } => answer(req, e.session.clone(), move |s| async move { pathfinder::query(&s, &op, &hash, &variables).await }),
-                    Command::Playlist { req, id } => answer(req, e.session.clone(), move |s| async move { library::playlist(&s, &id).await }),
-                    Command::Liked { req } => answer(req, e.session.clone(), move |s| async move { library::liked(&s).await }),
+                    Command::Playlist { req, id, all } => answer(req, e.session.clone(), move |s| async move { library::playlist(&s, &id, all).await }),
+                    Command::Liked { req, all } => answer(req, e.session.clone(), move |s| async move { library::liked(&s, all).await }),
                     Command::Tracks { req, ids } => answer(req, e.session.clone(), move |s| async move { library::tracks(&s, &ids).await }),
                     Command::Play => e.player.play(),
                     Command::Pause => e.player.pause(),

@@ -2,7 +2,9 @@ import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CHANGELOG } from '../changelog.js';
 
-/* Settings → System → Changelog: every version and what came with it. */
+/* Settings → System → Changelog: every version and what came with it.
+   Also What's new after an update: the same window with `title` and just
+   the `versions` that came since the last one shown. */
 
 const CSS = `
 .stcl-scrim { position: fixed; inset: 0; z-index: 320; display: flex; align-items: center; justify-content: center; padding: 24px;
@@ -32,7 +34,8 @@ const dateText = (iso) => {
   try { return new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); } catch { return iso; }
 };
 
-export default function Changelog({ current, onClose }) {
+export default function Changelog({ current, onClose, title = 'Changelog', versions = null }) {
+  const list = versions ? CHANGELOG.filter((v) => versions.includes(v.version)) : CHANGELOG;
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
     window.addEventListener('keydown', onKey);
@@ -42,15 +45,15 @@ export default function Changelog({ current, onClose }) {
   return createPortal(
     <div className="stcl-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}>
       <style>{CSS}</style>
-      <div className="stcl" role="dialog" aria-label="Changelog">
+      <div className="stcl" role="dialog" aria-label={title}>
         <div className="stcl-head">
-          <b>Changelog</b>
+          <b>{title}</b>
           <button type="button" className="stcl-x" onClick={onClose} aria-label="Close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
           </button>
         </div>
         <div className="stcl-body">
-          {CHANGELOG.map((v) => (
+          {list.map((v) => (
             <section key={v.version} className="stcl-v">
               <div className="stcl-vh">
                 <b>{v.version}</b>

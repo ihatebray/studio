@@ -17,6 +17,8 @@ import { loadCustomFonts } from '../lib/customFonts.js';
 import { ImmerseTooltipLayer } from './sharedUI.jsx';
 import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
 import WindowControls from './WindowControls.jsx';
+import Changelog from './Changelog.jsx';
+import { changelogSince } from '../changelog.js';
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -152,57 +154,33 @@ export default function App() {
 
   const updateToastIdRef = useRef(null);
 
-  // "What's new" overlay state. Shown once after every version bump.
-  //   whatsNewOpen: boolean controlling visibility of the overlay
-  //   whatsNewData: { version, name, body, url, publishedAt } once we've
-  //                 fetched the notes from GitHub. Null while loading or
-  //                 if the fetch failed (in which case we don't show
-  //                 the overlay at all — silent failure is preferable
-  //                 to a "couldn't load release notes" splash).
+  // What's new: after an update, the changelog entries for every version
+  // since the last one shown (Settings → Changelog, the same window).
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [whatsNewData, setWhatsNewData] = useState(null);
 
   useEffect(() => {
     const api = typeof window !== 'undefined' ? window.electronAPI : null;
     if (!api?.appGetVersion || !api?.whatsnewGetLastSeen) return;
-    // Don't show the overlay in dev mode — there's no "release" for an
-    // unpackaged build, the fetch would 404, and it'd be noise during
-    // development.
     let cancelled = false;
     (async () => {
       try {
         const currentVersion = String(await api.appGetVersion());
         const seen = await api.whatsnewGetLastSeen();
         const lastSeen = String(seen?.version || '');
-        if (cancelled) return;
-        // Already shown for this version (or earlier of the same).
-        // Comparison is string-based which is wrong for proper semver
-        // (1.0.10 < 1.0.9 stringwise), but for our linear bump pattern
-        // an EXACT match check is sufficient: we only need to know
-        // "did we show notes for THIS version yet?" If yes, skip; if
-        // no, show. After showing once, we save currentVersion so the
-        // next launch sees an exact match and skips.
-        if (lastSeen === currentVersion) return;
-        // Fetch release notes. Failure is silent — better to skip
-        // than show a broken overlay.
-        const notes = await api.whatsnewFetchReleaseNotes(currentVersion);
-        if (cancelled) return;
-        if (!notes?.ok || !notes.body) {
-          // Mark as seen anyway so we don't refetch every launch when
-          // the release page has no body or the release hasn't been
-          // created yet.
+        if (cancelled || lastSeen === currentVersion) return;
+        let onboarded = true;
+        try { onboarded = localStorage.getItem('studio:onboarded') === '1'; } catch { /* ignore */ }
+        // A fresh install goes through setup instead; nothing is "new" yet.
+        const versions = onboarded ? changelogSince(lastSeen, currentVersion) : [];
+        if (!versions.length) {
+          // Nothing to show for this version: don't ask again next launch.
           try { await api.whatsnewSetLastSeen(currentVersion); } catch { /* ignore */ }
           return;
         }
-        setWhatsNewData({
-          version: currentVersion,
-          name: notes.name || `v${currentVersion}`,
-          body: notes.body,
-          url: notes.url || '',
-          publishedAt: notes.publishedAt || null,
-        });
+        setWhatsNewData({ version: currentVersion, versions });
         setWhatsNewOpen(true);
-      } catch { /* swallow — no overlay on any error */ }
+      } catch { /* no overlay on any error */ }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -2566,7 +2544,8 @@ export default function App() {
       setPlaylists((ls) => ls.map((p) => {
         if (p.id !== playlistId) return p;
         const cur = Array.isArray(p.trackIds) ? p.trackIds : [];
-        const merged = [...cur, ...ids.filter((id) => !cur.includes(id))];
+        const have = new Set(cur);
+        const merged = [...cur, ...ids.filter((id) => !have.has(id))];
         return { ...p, trackIds: merged, trackCount: merged.length };
       }));
       await refreshPlaylists();
@@ -2699,10 +2678,12 @@ export default function App() {
           app-shell notification path. Pinned to bottom-right above the
           player chrome. */}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
-      {/* What's new overlay — shown once per version bump. */}
+      {/* What's new: shown once after each update. */}
       {whatsNewOpen && whatsNewData ? (
-        <WhatsNewOverlay
-          data={whatsNewData}
+        <Changelog
+          title="What's new"
+          current={whatsNewData.version}
+          versions={whatsNewData.versions}
           onClose={dismissWhatsNew}
         />
       ) : null}
@@ -2888,425 +2869,6 @@ function FirefliesOverlay({ active }) {
       }}
     />
   );
-}
-
-/**
- * WhatsNewOverlay — modal that appears once after each app update with
- * the GitHub release notes for the new version.
- *
- * Notes are pulled from the GitHub Release's `body` field, which is
- * GitHub-flavored markdown. We do a lightweight render here (headings,
- * bold, italic, inline code, code blocks, links, lists) — no full
- * markdown parser dep. The renderer is intentionally conservative;
- * anything we don't recognize falls through as plain text rather than
- * raw HTML, so a malformed release body just looks plain, not broken.
- *
- * The overlay matches Immerse's existing modal style: blurred backdrop,
- * frosted glass card, accent green for headings + the close button.
- */
-function WhatsNewOverlay({ data, onClose }) {
-  const { name, body, url, publishedAt } = data;
-
-  // Escape key dismisses, matching the rest of Immerse's modals.
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose?.();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const dateLine = useMemo(() => {
-    if (!publishedAt) return '';
-    try {
-      const d = new Date(publishedAt);
-      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-    } catch { return ''; }
-  }, [publishedAt]);
-
-  return (
-    <div
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        background: 'rgba(0,0,0,0.55)',
-        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 24,
-      }}
-    >
-      <div style={{
-        width: 'min(560px, 100%)',
-        maxHeight: 'calc(100vh - 80px)',
-        display: 'flex', flexDirection: 'column',
-        borderRadius: 18,
-        background: 'rgba(22, 22, 24, 0.88)',
-        backdropFilter: 'blur(40px) saturate(1.6)', WebkitBackdropFilter: 'blur(40px) saturate(1.6)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(29,185,84,0.12), inset 0 1px 0 rgba(255,255,255,0.06)',
-        overflow: 'hidden',
-      }}>
-        {/* Header */}
-        <div style={{
-          padding: '18px 22px 14px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'flex-start', gap: 14,
-        }}>
-          <div style={{
-            flexShrink: 0,
-            width: 38, height: 38,
-            borderRadius: 10,
-            background: 'rgba(29,185,84,0.16)',
-            border: '1px solid rgba(29,185,84,0.4)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 18,
-          }}>
-            <span aria-hidden style={{ color: '#1db954' }}>✨</span>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontSize: 10.5, letterSpacing: 0.6, textTransform: 'uppercase',
-              color: '#1db954', fontWeight: 700,
-            }}>
-              What's new
-            </div>
-            <div style={{
-              fontSize: 18, fontWeight: 600, color: '#fff',
-              marginTop: 2,
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>
-              {name}
-            </div>
-            {dateLine ? (
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
-                Released {dateLine}
-              </div>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{
-              flexShrink: 0,
-              width: 28, height: 28,
-              borderRadius: 8,
-              border: '1px solid rgba(255,255,255,0.1)',
-              background: 'rgba(255,255,255,0.04)',
-              color: 'rgba(255,255,255,0.7)',
-              cursor: 'pointer',
-              fontSize: 14,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            ×
-          </button>
-        </div>
-
-        {/* Body — scrollable */}
-        <div style={{
-          flex: 1,
-          overflowY: 'auto',
-          padding: '14px 22px 18px',
-          fontSize: 12.5,
-          lineHeight: 1.65,
-          color: 'rgba(255,255,255,0.82)',
-        }}>
-          <MarkdownLite text={body} />
-          {url ? (
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                display: 'inline-block', marginTop: 14,
-                fontSize: 11, color: 'rgba(255,255,255,0.45)',
-                borderBottom: '1px solid rgba(255,255,255,0.15)',
-                textDecoration: 'none',
-              }}
-            >
-              View on GitHub →
-            </a>
-          ) : null}
-        </div>
-
-        {/* Footer */}
-        <div style={{
-          padding: '12px 22px 16px',
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', justifyContent: 'flex-end',
-        }}>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: '8px 18px',
-              borderRadius: 10,
-              border: '1px solid rgba(29,185,84,0.4)',
-              background: 'rgba(29,185,84,0.22)',
-              color: '#1db954',
-              fontSize: 12, fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            Got it
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-/**
- * MarkdownLite — minimal renderer for GitHub release-notes markdown.
- * Handles only the subset that's actually common in release notes:
- *
- *   - # / ## / ### headings
- *   - **bold** and *italic*
- *   - `inline code`
- *   - ```fenced code blocks```
- *   - [link text](url)
- *   - - / * bullet lists (single level)
- *   - 1. 2. 3. numbered lists (single level)
- *   - Blank lines as paragraph separators
- *
- * Anything else falls through as plain text. We don't use
- * dangerouslySetInnerHTML — every match is rendered as React elements,
- * which keeps untrusted release-notes content sandboxed (GitHub itself
- * sanitizes markdown but we don't want to depend on that).
- *
- * Why not pull in a real markdown lib? Three reasons:
- *   - Bundle size: react-markdown + remark-gfm pulls in ~80 KB of
- *     code we don't otherwise use.
- *   - Style isolation: real libs need extra CSS to match a dark theme.
- *   - Scope: release notes are short and structurally simple; we don't
- *     need tables, footnotes, task lists, etc.
- *
- * The implementation is line-based: split on \n, classify each line by
- * its prefix, render. Inline transforms (bold, links, code) are applied
- * per-line. Code fences span multiple lines so we maintain a small
- * state machine for "inside fence" vs "normal".
- */
-function MarkdownLite({ text }) {
-  const blocks = useMemo(() => parseMarkdownLite(text || ''), [text]);
-  return (
-    <div>
-      {blocks.map((b, i) => renderMdBlock(b, i))}
-    </div>
-  );
-}
-
-function parseMarkdownLite(src) {
-  const lines = src.split(/\r?\n/);
-  const blocks = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Fenced code block
-    if (/^```/.test(line)) {
-      const lang = line.replace(/^```/, '').trim();
-      const body = [];
-      i++;
-      while (i < lines.length && !/^```/.test(lines[i])) {
-        body.push(lines[i]);
-        i++;
-      }
-      i++; // skip closing fence
-      blocks.push({ type: 'code', lang, text: body.join('\n') });
-      continue;
-    }
-
-    // Headings
-    const h = /^(#{1,3})\s+(.+)$/.exec(line);
-    if (h) {
-      blocks.push({ type: 'heading', level: h[1].length, text: h[2] });
-      i++;
-      continue;
-    }
-
-    // Bulleted list — consume consecutive bullet lines into one block
-    if (/^[\-*]\s+/.test(line)) {
-      const items = [];
-      while (i < lines.length && /^[\-*]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^[\-*]\s+/, ''));
-        i++;
-      }
-      blocks.push({ type: 'ul', items });
-      continue;
-    }
-
-    // Numbered list
-    if (/^\d+\.\s+/.test(line)) {
-      const items = [];
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\d+\.\s+/, ''));
-        i++;
-      }
-      blocks.push({ type: 'ol', items });
-      continue;
-    }
-
-    // Blank line — separator
-    if (line.trim() === '') {
-      i++;
-      continue;
-    }
-
-    // Paragraph — consume consecutive non-blank, non-special lines
-    const para = [line];
-    i++;
-    while (i < lines.length
-      && lines[i].trim() !== ''
-      && !/^(#{1,3})\s+/.test(lines[i])
-      && !/^[\-*]\s+/.test(lines[i])
-      && !/^\d+\.\s+/.test(lines[i])
-      && !/^```/.test(lines[i])) {
-      para.push(lines[i]);
-      i++;
-    }
-    blocks.push({ type: 'p', text: para.join(' ') });
-  }
-  return blocks;
-}
-
-function renderMdBlock(b, key) {
-  if (b.type === 'heading') {
-    const sizes = { 1: 17, 2: 14.5, 3: 13 };
-    const weights = { 1: 700, 2: 700, 3: 600 };
-    return (
-      <div
-        key={key}
-        style={{
-          fontSize: sizes[b.level] || 13,
-          fontWeight: weights[b.level] || 600,
-          color: '#fff',
-          marginTop: key === 0 ? 0 : 14,
-          marginBottom: 6,
-        }}
-      >
-        {renderInline(b.text)}
-      </div>
-    );
-  }
-  if (b.type === 'ul') {
-    return (
-      <ul key={key} style={{ margin: '4px 0 8px 0', paddingLeft: 22 }}>
-        {b.items.map((it, j) => (
-          <li key={j} style={{ marginBottom: 2 }}>{renderInline(it)}</li>
-        ))}
-      </ul>
-    );
-  }
-  if (b.type === 'ol') {
-    return (
-      <ol key={key} style={{ margin: '4px 0 8px 0', paddingLeft: 22 }}>
-        {b.items.map((it, j) => (
-          <li key={j} style={{ marginBottom: 2 }}>{renderInline(it)}</li>
-        ))}
-      </ol>
-    );
-  }
-  if (b.type === 'code') {
-    return (
-      <pre
-        key={key}
-        style={{
-          margin: '6px 0 10px',
-          padding: '10px 12px',
-          borderRadius: 8,
-          background: 'rgba(0,0,0,0.4)',
-          border: '1px solid rgba(255,255,255,0.06)',
-          fontSize: 11.5,
-          lineHeight: 1.5,
-          color: 'rgba(255,255,255,0.85)',
-          fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace',
-          overflowX: 'auto',
-          whiteSpace: 'pre',
-        }}
-      >
-        {b.text}
-      </pre>
-    );
-  }
-  // paragraph
-  return (
-    <div key={key} style={{ marginBottom: 8 }}>
-      {renderInline(b.text)}
-    </div>
-  );
-}
-
-/**
- * renderInline — apply inline markdown formatting (links, bold, italic,
- * code) to a single string and return a list of React nodes. Goes
- * link → code → bold → italic in that priority order so combos like
- * `**bold with `code` inside**` work reasonably.
- *
- * Returns an array of strings + spans / anchor elements. Caller embeds
- * the array directly as children.
- */
-function renderInline(text) {
-  if (!text) return null;
-  // Tokenize: walk the string finding the next match for any of our
-  // patterns. We always consume the EARLIEST match at each step.
-  const patterns = [
-    { re: /\[([^\]]+)\]\(([^)]+)\)/, kind: 'link' },     // [text](url)
-    { re: /`([^`]+)`/, kind: 'code' },                   // `code`
-    { re: /\*\*([^*]+)\*\*/, kind: 'bold' },             // **bold**
-    { re: /\*([^*]+)\*/, kind: 'italic' },               // *italic*
-    { re: /_([^_]+)_/, kind: 'italic' },                 // _italic_
-  ];
-  const out = [];
-  let remaining = text;
-  let nodeKey = 0;
-  while (remaining.length > 0) {
-    let earliest = null;
-    for (const pat of patterns) {
-      const m = pat.re.exec(remaining);
-      if (m && (earliest === null || m.index < earliest.match.index)) {
-        earliest = { match: m, kind: pat.kind };
-      }
-    }
-    if (!earliest) {
-      out.push(remaining);
-      break;
-    }
-    if (earliest.match.index > 0) {
-      out.push(remaining.slice(0, earliest.match.index));
-    }
-    const m = earliest.match;
-    if (earliest.kind === 'link') {
-      out.push(
-        <a key={`mdn${nodeKey++}`} href={m[2]} target="_blank" rel="noreferrer"
-          style={{ color: '#1db954', textDecoration: 'none', borderBottom: '1px solid rgba(29,185,84,0.4)' }}>
-          {m[1]}
-        </a>,
-      );
-    } else if (earliest.kind === 'code') {
-      out.push(
-        <code key={`mdn${nodeKey++}`}
-          style={{
-            padding: '1px 6px',
-            borderRadius: 4,
-            background: 'rgba(0,0,0,0.4)',
-            border: '1px solid rgba(255,255,255,0.07)',
-            fontSize: '0.92em',
-            fontFamily: 'ui-monospace, SF Mono, Menlo, Consolas, monospace',
-            color: 'rgba(255,255,255,0.92)',
-          }}>
-          {m[1]}
-        </code>,
-      );
-    } else if (earliest.kind === 'bold') {
-      out.push(<strong key={`mdn${nodeKey++}`} style={{ color: 'rgba(255,255,255,0.95)' }}>{m[1]}</strong>);
-    } else if (earliest.kind === 'italic') {
-      out.push(<em key={`mdn${nodeKey++}`}>{m[1]}</em>);
-    }
-    remaining = remaining.slice(m.index + m[0].length);
-  }
-  return out;
 }
 
 

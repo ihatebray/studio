@@ -260,15 +260,19 @@ async function studioHome() {
 
 /* ------------------------------------------------------------ collections */
 
-async function playlistTracks(id) {
-  try { return await helperPlaylist(id); } catch (e) { console.warn('[playlist] helper route failed:', e?.message || e); }
-  const rows = await paged(`/playlists/${encodeURIComponent(id)}/tracks?limit=100&market=from_token`, 300);
+/* Browsing shows the first 300 songs; an import (`all`) takes every one. */
+const PREVIEW_CAP = 300;
+const IMPORT_CAP = 20_000;
+
+async function playlistTracks(id, all = false) {
+  try { return await helperPlaylist(id, all); } catch (e) { console.warn('[playlist] helper route failed:', e?.message || e); }
+  const rows = await paged(`/playlists/${encodeURIComponent(id)}/tracks?limit=100&market=from_token`, all ? IMPORT_CAP : PREVIEW_CAP);
   return rows.map((r) => shapeTrack(r?.track, { addedAt: r?.added_at })).filter(Boolean);
 }
 
-async function likedTracks() {
-  try { return await helperLiked(); } catch (e) { console.warn('[liked] helper route failed:', e?.message || e); }
-  const rows = await paged('/me/tracks?limit=50&market=from_token', 300);
+async function likedTracks(all = false) {
+  try { return await helperLiked(all); } catch (e) { console.warn('[liked] helper route failed:', e?.message || e); }
+  const rows = await paged('/me/tracks?limit=50&market=from_token', all ? IMPORT_CAP : PREVIEW_CAP);
   return rows.map((r) => shapeTrack(r?.track, { addedAt: r?.added_at })).filter(Boolean);
 }
 
@@ -292,7 +296,7 @@ export function registerSpotifyFeedIpc(ipcMain) {
   ipcMain.handle('spotifyFeed:home', wrap((force) => cached('home', HOME_TTL_MS, buildHome, !!force, false, true)));
   ipcMain.handle('spotifyFeed:studio', wrap(() => studioHome()));
   ipcMain.handle('spotifyFeed:releases', wrap((force) => cached('releases', RELEASES_TTL_MS, buildReleases, !!force)));
-  ipcMain.handle('spotifyFeed:playlist', wrap((id) => playlistTracks(String(id || ''))));
+  ipcMain.handle('spotifyFeed:playlist', wrap((id, opts) => playlistTracks(String(id || ''), !!opts?.all)));
   /* Your playlists and Liked Songs, for setup's playlist import: just the
      library list, not the whole of Home. */
   ipcMain.handle('spotifyFeed:myPlaylists', wrap(async () => {
@@ -300,7 +304,7 @@ export function registerSpotifyFeedIpc(ipcMain) {
     const r = await libraryItems();
     return (r.items || []).filter((i) => i.kind === 'playlist' || i.kind === 'liked');
   }));
-  ipcMain.handle('spotifyFeed:liked', wrap(() => likedTracks()));
+  ipcMain.handle('spotifyFeed:liked', wrap((opts) => likedTracks(!!opts?.all)));
   /* Name and cover for a pasted playlist link, from Spotify's public link
      preview (oEmbed): no sign-in, and it works for any public playlist. */
   ipcMain.handle('spotifyFeed:playlistMeta', wrap(async (id) => {

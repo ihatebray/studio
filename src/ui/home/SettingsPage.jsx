@@ -242,7 +242,7 @@ export default function SettingsPage({
         {cat === 'library' ? (
           <>
             <div className="sth-set-list">
-              <SetRow title="Auto-follow artists" note="Follows an artist in Studio once you have more than 5 of their songs, so their new releases and countdowns show up. Unfollowing one stops it for that artist.">
+              <SetRow title="Auto-follow artists" note="Follows an artist in Studio once you have more than 5 of their songs, so their new releases and countdowns show up. It checks every time songs are added, imports included. Artists are looked up on Spotify one at a time so your account doesn’t get rate-limited, which means a big import can take a few minutes to finish following. Unfollowing an artist stops it for them.">
                 <SetSeg label="Auto-follow artists" value={theme.autoFollow === false ? 'off' : 'on'} onPick={(v) => setThemeKey('autoFollow', v === 'on')}
                   options={[['on', 'On'], ['off', 'Off']]} />
               </SetRow>
@@ -467,7 +467,7 @@ const TOUR = [
     ] },
   { cat: 'library', mark: true, title: 'Library',
     points: [
-      ['Auto-follow artists', 'artists with more than 5 songs in your library are followed for you'],
+      ['Auto-follow artists', 'artists with more than 5 songs in your library are followed for you, a few at a time'],
       ['Columns', 'show or hide Date added, and play counts on album and artist pages'],
       ['Clear Library', 'removes songs and playlists but keeps your listening history'],
       ['Delete Everything', 'wipes it all, history included, and starts setup again'],

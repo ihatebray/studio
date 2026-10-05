@@ -79,7 +79,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // "What's new" overlay support
   whatsnewGetLastSeen: () => ipcRenderer.invoke('whatsnew:getLastSeen'),
   whatsnewSetLastSeen: (version) => ipcRenderer.invoke('whatsnew:setLastSeen', version),
-  whatsnewFetchReleaseNotes: (version) => ipcRenderer.invoke('whatsnew:fetchReleaseNotes', version),
   /* Behind-the-scenes problems from main (notices.js): rate limits,
      fallbacks, the playback helper. { key, kind, title, detail, source, at } */
   onAppNotice: (cb) => {
@@ -191,11 +190,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('follows:hiddenChanged', listener);
   },
   spotifyFeedReleases: (force) => ipcRenderer.invoke('spotifyFeed:releases', force),
-  spotifyFeedPlaylist: (id) => ipcRenderer.invoke('spotifyFeed:playlist', id),
+  spotifyFeedPlaylist: (id, opts) => ipcRenderer.invoke('spotifyFeed:playlist', id, opts),
   spotifyFeedMyPlaylists: () => ipcRenderer.invoke('spotifyFeed:myPlaylists'),
   spotifyFeedPlaylistMeta: (id) => ipcRenderer.invoke('spotifyFeed:playlistMeta', id),
   saveSpotifyMany: (metas) => ipcRenderer.invoke('library:saveSpotifyMany', metas),
-  spotifyFeedLiked: () => ipcRenderer.invoke('spotifyFeed:liked'),
+  spotifyFeedLiked: (opts) => ipcRenderer.invoke('spotifyFeed:liked', opts),
   onSpotifyPartnerChanged: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('spotifyPartner:changed', listener);

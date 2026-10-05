@@ -34,8 +34,9 @@ npm run publish
 ```
 
 4. On GitHub, open **Releases**. There's a draft named after the new version.
-   Write what changed (this is what people see in "What's new" after they
-   update), then press **Publish release**.
+   Write what changed if you like (it's only shown on GitHub; the app's
+   What's new screen shows the src/changelog.js entry), then press
+   **Publish release**.
 
 Installed copies pick it up within the hour. Settings → System →
 **Check for updates** checks straight away. After you publish, the update

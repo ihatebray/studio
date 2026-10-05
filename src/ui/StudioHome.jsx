@@ -1878,44 +1878,67 @@ export default function StudioHome({
      the library is followed in Studio, so their releases and countdowns
      show up. Each artist is tried once and remembered (studio:autoFollowed),
      so unfollowing one sticks; one Spotify couldn't find is tried again a
-     day later. A few seconds apart, ten at most per pass, one toast for the
-     lot. */
+     day later. One pass at a time works through every artist due, a few
+     seconds apart, with one toast for the lot. The library changing while a
+     pass runs (an import saving in batches) doesn't stop it: the pass picks
+     up the newly due artists once it's through the ones it has. */
   const autoFollowOn = theme.autoFollow !== false;
   const autoFollowKey = useMemo(() => libArtists
     .filter((a) => (a.tracks?.length || 0) > 5)
     .map((a) => a.name).sort().join('|'), [libArtists]);
+  const autoFollowLive = useRef({});
+  autoFollowLive.current = { on: autoFollowOn, artists: libArtists, follows: studioFollows };
+  const autoFollowRun = useRef({ running: false, again: false, stopped: false });
   useEffect(() => {
-    if (!autoFollowOn || !autoFollowKey) return undefined;
-    let log = {};
-    try { log = JSON.parse(localStorage.getItem('studio:autoFollowed') || '{}') || {}; } catch { log = {}; }
+    // Set on every mount: StrictMode mounts, unmounts and mounts again.
+    autoFollowRun.current.stopped = false;
+    return () => { autoFollowRun.current.stopped = true; };
+  }, []);
+  useEffect(() => {
+    if (!autoFollowOn || !autoFollowKey) return;
+    const run = autoFollowRun.current;
+    if (run.running) { run.again = true; return; }
+    run.running = true;
     const DAY = 24 * 60 * 60 * 1000;
-    const todo = libArtists
-      .filter((a) => (a.tracks?.length || 0) > 5 && a.name)
-      .filter((a) => !isStudioFollowed({ name: a.name }, studioFollows))
-      .filter((a) => { const e = log[a.name.toLowerCase()]; return !e || (!e.ok && Date.now() - e.at > DAY); })
-      .sort((x, y) => y.tracks.length - x.tracks.length)
-      .slice(0, 10);
-    if (!todo.length) return undefined;
-    let cancelled = false;
-    const t = setTimeout(async () => {
+    const due = (log, done) => {
+      const { artists, follows } = autoFollowLive.current;
+      return artists
+        .filter((a) => (a.tracks?.length || 0) > 5 && a.name && !done.has(a.name.toLowerCase()))
+        .filter((a) => !isStudioFollowed({ name: a.name }, follows))
+        .filter((a) => { const e = log[a.name.toLowerCase()]; return !e || (!e.ok && Date.now() - e.at > DAY); })
+        .sort((x, y) => y.tracks.length - x.tracks.length);
+    };
+    (async () => {
+      await new Promise((res) => { setTimeout(res, 4000); });
+      let log = {};
+      try { log = JSON.parse(localStorage.getItem('studio:autoFollowed') || '{}') || {}; } catch { log = {}; }
       const followed = [];
-      for (const a of todo) {
-        if (cancelled) break;
-        const r = await followArtist({ name: a.name }).catch(() => null);
-        log[a.name.toLowerCase()] = { at: Date.now(), ok: !!r?.ok };
-        try { localStorage.setItem('studio:autoFollowed', JSON.stringify(log)); } catch { /* ignore */ }
-        if (r?.ok) followed.push(a.name);
-        await new Promise((res) => { setTimeout(res, 2500); });
+      const done = new Set();
+      for (;;) {
+        run.again = false;
+        const todo = due(log, done);
+        if (!todo.length) break;
+        for (const a of todo) {
+          if (run.stopped || !autoFollowLive.current.on) break;
+          done.add(a.name.toLowerCase());
+          const r = await followArtist({ name: a.name }).catch(() => null);
+          log[a.name.toLowerCase()] = { at: Date.now(), ok: !!r?.ok };
+          try { localStorage.setItem('studio:autoFollowed', JSON.stringify(log)); } catch { /* ignore */ }
+          if (r?.ok) followed.push(a.name);
+          await new Promise((res) => { setTimeout(res, 2500); });
+        }
+        if (run.stopped || !autoFollowLive.current.on || !run.again) break;
       }
-      if (followed.length) {
+      run.running = false;
+      if (followed.length && !run.stopped) {
+        const names = followed.length > 12 ? `${followed.slice(0, 12).join(', ')} and ${followed.length - 12} more` : followed.join(', ');
         pushToast?.({
           message: followed.length === 1 ? `Following ${followed[0]}` : `Following ${followed.length} artists you listen to`,
-          detail: `${followed.join(', ')}. You have more than 5 of their songs, so their new releases show up in New Releases. Turn this off in Settings → Library.`,
+          detail: `${names}. You have more than 5 of their songs, so their new releases show up in New Releases. Turn this off in Settings → Library.`,
           kind: 'success', durationMs: 6000, log: false,
         });
       }
-    }, 4000);
-    return () => { cancelled = true; clearTimeout(t); };
+    })();
   }, [autoFollowOn, autoFollowKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** The open album or playlist, normalised so the detail view renders one shape. */
