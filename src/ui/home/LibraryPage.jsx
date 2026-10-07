@@ -9,6 +9,7 @@ import { PlayingBars } from './common.jsx';
 import { DetailAction, LibHeader, LibRow, RowPlayButton } from './Library.jsx';
 import RecordPage, { isAllCaps, recordLayoutOf } from './RecordPage.jsx';
 import { coverLayers } from '../../lib/coverUrl.js';
+import ScrollJump from './ScrollJump.jsx';
 
 export default function LibraryPage({
   LIB_OVERSCAN,
@@ -56,7 +57,6 @@ export default function LibraryPage({
   npWashTheme,
   onImportFiles,
   onImportFolder,
-  onImportSpotify,
   onPlayTrack,
   onRemoveFromPlaylist,
   onToggleFavorite,
@@ -89,6 +89,8 @@ export default function LibraryPage({
   theme,
   toggleFollow,
 }) {
+  // The classic playlist view's song list, for its top/end arrows.
+  const classicScrollRef = React.useRef(null);
   const view = libView;
   /* The hero shows the LIBRARY, always — not the playing track. The
      Now Playing bar already reports that, and two places saying the
@@ -508,16 +510,17 @@ export default function LibraryPage({
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '16px 0 14px' }}>
-                    {/* 48px, 12px radius — a rounded square like every
-                        other control (brief, radius scale). */}
+                    {/* The same white Play pill as the other album and playlist layouts. */}
                     <button type="button" onClick={() => onPlayTrack?.(detailData.tracks[0], detailData.tracks)}
-                      title="Play" aria-label={`Play ${detailData.title}`}
+                      aria-label={`Play ${detailData.title}`}
                       style={{
-                        width: 48, height: 48, borderRadius: 12, border: 'none', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                        background: 'var(--accent)', color: 'var(--accent-ink)',
-                      }}>
-                      <PlayIcon size={18} />
+                        height: 46, padding: '0 24px 0 20px', borderRadius: 999, border: 'none', cursor: 'pointer', flexShrink: 0,
+                        display: 'inline-flex', alignItems: 'center', gap: 9, font: 'inherit', fontWeight: 800, fontSize: 15,
+                        background: '#fff', color: '#000', transition: 'transform 0.12s ease',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
+                      <PlayIcon size={15} />Play
                     </button>
                     <DetailAction title="Shuffle" onClick={() => { const sh = [...detailData.tracks].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); }}>
                       <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
@@ -575,9 +578,13 @@ export default function LibraryPage({
                       {showAlbumCol ? <div className="sth-lcol-album">Album</div> : null}
                       {showPlaysCol ? <div style={{ textAlign: 'right' }}>Plays</div> : null}
                       <div style={{ textAlign: 'right' }}>Time</div>
-                      <div />
+                      {/* A long playlist's top/end arrows, in the headings rather
+                          than over the songs. */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        {detailData.kind === 'playlist' ? <ScrollJump scrollRef={classicScrollRef} watch={detailTracks.length} size={24} /> : null}
+                      </div>
                     </div>
-                    <div className="sth-libscroll sth-lfade" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    <div className="sth-libscroll sth-lfade" ref={classicScrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
                       {detailTracks.map((t, i) => {
                         const playing = currentTrack?.id === t.id;
                         return (
@@ -661,7 +668,6 @@ export default function LibraryPage({
             searchPlaceholder="Search artists"
             onImportFiles={onImportFiles}
             onImportFolder={onImportFolder}
-            onImportSpotify={onImportSpotify}
             importing={importing}
           />
           <div className="sth-libscroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -690,7 +696,6 @@ export default function LibraryPage({
             searchPlaceholder="Search albums"
             onImportFiles={onImportFiles}
             onImportFolder={onImportFolder}
-            onImportSpotify={onImportSpotify}
             importing={importing}
           />
           <div className="sth-libscroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -737,7 +742,6 @@ export default function LibraryPage({
           onShuffle={rows.length ? () => { const sh = [...rows].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); } : null}
           onImportFiles={onImportFiles}
           onImportFolder={onImportFolder}
-          onImportSpotify={onImportSpotify}
           importing={importing}
         />
 

@@ -220,8 +220,9 @@ export default function ArtistGrid({
         .stag-mono { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
           font-size: 34px; font-weight: 800; color: rgba(255,255,255,0.75); background: linear-gradient(150deg, #23232a, #131317); }
         .stag-play { position: absolute; right: 10%; bottom: 8%; width: 38px; height: 38px; border-radius: var(--r-ctl-m, 10px);
-          display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-ink);
-          opacity: 0; transform: translateY(4px); transition: opacity 140ms ease, transform 140ms ease; }
+          display: flex; align-items: center; justify-content: center; color: #fff;
+          background: rgba(12,12,14,0.58); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+          opacity: 0; transform: translateY(4px); transition: opacity 140ms ease, transform 140ms ease, background 140ms ease; }
         .stag-tile:hover .stag-play, .stag-art:focus-visible .stag-play { opacity: 1; transform: translateY(0); }
         .stag-name { display: block; width: 100%; margin-top: 14px; padding: 0; border: none; background: none; cursor: pointer;
           font: inherit; font-size: 14.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

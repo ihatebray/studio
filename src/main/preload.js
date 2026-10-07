@@ -195,6 +195,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyFeedPlaylistMeta: (id) => ipcRenderer.invoke('spotifyFeed:playlistMeta', id),
   saveSpotifyMany: (metas) => ipcRenderer.invoke('library:saveSpotifyMany', metas),
   spotifyFeedLiked: (opts) => ipcRenderer.invoke('spotifyFeed:liked', opts),
+  /* Spotify links (spotifyLinks.js). fromClipboard: the clipboard's link,
+     { kind, id } or null. resolve: a link in some text, looked up as
+     { kind, id, name, sub, image, album?, rows? }. */
+  spotifyLinkFromClipboard: () => ipcRenderer.invoke('spotifyLink:fromClipboard'),
+  spotifyLinkResolve: (text) => ipcRenderer.invoke('spotifyLink:resolve', text),
+  spotifyLinkWatch: (on) => ipcRenderer.invoke('spotifyLink:watch', on),
+  onSpotifyLinkCopied: (cb) => {
+    const listener = (_event, info) => cb(info);
+    ipcRenderer.on('spotifyLink:copied', listener);
+    return () => ipcRenderer.removeListener('spotifyLink:copied', listener);
+  },
   onSpotifyPartnerChanged: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('spotifyPartner:changed', listener);

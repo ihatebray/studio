@@ -28,6 +28,13 @@ const CSS = `
 .stcl-t { margin-top: 4px; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.75); }
 .stcl ul { margin: 10px 0 0; padding-left: 18px; }
 .stcl li { font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.68); margin: 3px 0; }
+.stcl li b { color: rgba(255,255,255,0.92); font-weight: 750; }
+.stcl li ul { margin: 4px 0 6px; }
+.stcl li li { font-size: 12.5px; color: rgba(255,255,255,0.58); }
+.stcl-sec { margin-top: 14px; }
+.stcl-sec + .stcl-sec { margin-top: 12px; }
+.stcl-sh { font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.45); }
+.stcl-sec ul { margin-top: 6px; }
 `;
 
 const dateText = (iso) => {
@@ -56,12 +63,27 @@ export default function Changelog({ current, onClose, title = 'Changelog', versi
           {list.map((v) => (
             <section key={v.version} className="stcl-v">
               <div className="stcl-vh">
-                <b>{v.version}</b>
+                <b>Studio {v.version}</b>
                 {v.date ? <span>{dateText(v.date)}</span> : null}
                 {current && current === v.version ? <em>Installed</em> : null}
               </div>
               {v.title ? <div className="stcl-t">{v.title}</div> : null}
-              <ul>{v.notes.map((n) => <li key={n}>{n}</li>)}</ul>
+              {v.sections ? v.sections.map((s) => (
+                <div key={s.heading} className="stcl-sec">
+                  <div className="stcl-sh">{s.heading}</div>
+                  <ul>
+                    {s.items.map((it) => {
+                      const item = typeof it === 'string' ? { text: it } : it;
+                      return (
+                        <li key={item.lead || item.text}>
+                          {item.lead ? <><b>{item.lead}:</b> </> : null}{item.text}
+                          {item.sub?.length ? <ul>{item.sub.map((x) => <li key={x}>{x}</li>)}</ul> : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )) : <ul>{(v.notes || []).map((n) => <li key={n}>{n}</li>)}</ul>}
             </section>
           ))}
         </div>

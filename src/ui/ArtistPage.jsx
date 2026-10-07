@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { PreviewButton, stop as stopPreview } from './previewPlayer.jsx';
-import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent, accentTextColor } from '../lib/coverTheme.js';
+import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent } from '../lib/coverTheme.js';
 import { PlayIcon } from './sharedUI.jsx';
 import { formatTotalMs } from '../lib/mediaUtils.js';
 import { api, fmtMs } from '../lib/format.js';
@@ -206,12 +206,10 @@ function ReleaseCard({ art, name, meta, missing = false, accent, onClick }) {
         transition: 'transform 0.22s cubic-bezier(0.22,0.9,0.3,1), filter 0.22s ease',
       }}>
         <span style={{
-          position: 'absolute', right: 9, bottom: 9, width: 36, height: 36, borderRadius: '50%',
+          position: 'absolute', right: 9, bottom: 9, width: 36, height: 36, borderRadius: 'var(--r-ctl-m, 10px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: missing ? 'rgba(255,255,255,0.16)' : `rgb(${accent})`,
-          color: missing ? '#fff' : accentTextColor(accent),
-          backdropFilter: missing ? 'blur(6px)' : 'none',
-          boxShadow: '0 6px 16px rgba(0,0,0,0.45)',
+          // The bar's play button, on a dark glass square so it reads on any cover.
+          background: 'rgba(12,12,14,0.58)', color: '#fff', backdropFilter: 'blur(12px)',
           opacity: hot ? 1 : 0, transform: hot ? 'none' : 'translateY(7px)',
           transition: 'opacity 0.18s ease, transform 0.18s ease',
         }}>
@@ -423,10 +421,9 @@ function DiscCard({ r, owned, accent, onClick, opensTracklist = false, open = fa
           </span>
         ) : null}
         <span style={{
-          position: 'absolute', right: 9, bottom: 9, width: 36, height: 36, borderRadius: '50%',
+          position: 'absolute', right: 9, bottom: 9, width: 36, height: 36, borderRadius: 'var(--r-ctl-m, 10px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: `rgb(${accent})`, color: accentTextColor(accent),
-          boxShadow: '0 6px 16px rgba(0,0,0,0.45)',
+          background: 'rgba(12,12,14,0.58)', color: '#fff', backdropFilter: 'blur(12px)',
           opacity: hot ? 1 : 0, transform: hot ? 'none' : 'translateY(7px)',
           transition: 'opacity 0.18s ease, transform 0.18s ease',
         }}>
@@ -1612,18 +1609,18 @@ export default function ArtistPage({
             <button type="button" onClick={() => playQueue(false)} disabled={!playable.length}
               title={playable.length ? 'Play' : 'None of their songs are in your library yet'}
               aria-label="Play"
+              /* The same white Play pill as album and playlist pages. */
               style={{
-                width: 52, height: 52, borderRadius: '50%', border: 'none', flexShrink: 0,
+                height: 46, padding: '0 24px 0 20px', borderRadius: 999, border: 'none', flexShrink: 0,
                 cursor: playable.length ? 'pointer' : 'default',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: playable.length ? `rgb(${pageAcc})` : 'rgba(var(--st-fg-rgb), 0.12)',
-                color: playable.length ? accentTextColor(pageAcc) : 'rgba(var(--st-fg-rgb), 0.4)',
-                boxShadow: playable.length ? `0 6px 22px rgba(${pageAcc},0.5)` : 'none',
-                transition: 'transform 0.16s cubic-bezier(0.22,0.9,0.3,1)',
+                display: 'inline-flex', alignItems: 'center', gap: 9, font: 'inherit', fontWeight: 800, fontSize: 15,
+                background: playable.length ? '#fff' : 'rgba(var(--st-fg-rgb), 0.12)',
+                color: playable.length ? '#000' : 'rgba(var(--st-fg-rgb), 0.4)',
+                transition: 'transform 0.12s ease',
               }}
-              onMouseEnter={(e) => { if (playable.length) e.currentTarget.style.transform = 'scale(1.06)'; }}
+              onMouseEnter={(e) => { if (playable.length) e.currentTarget.style.transform = 'scale(1.03)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
-              <PlayIcon size={19} />
+              <PlayIcon size={15} />Play
             </button>
 
             {playable.length > 1 ? (

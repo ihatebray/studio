@@ -12,6 +12,7 @@ import { checkForUpdate, installUpdate, useUpdate } from '../updates.js';
 import Changelog from '../Changelog.jsx';
 
 export default function SettingsPage({
+  onPreviewLinkCard,
   tour = false,
   onEndTour,
   uiFontId,
@@ -246,6 +247,16 @@ export default function SettingsPage({
                 <SetSeg label="Auto-follow artists" value={theme.autoFollow === false ? 'off' : 'on'} onPick={(v) => setThemeKey('autoFollow', v === 'on')}
                   options={[['on', 'On'], ['off', 'Off']]} />
               </SetRow>
+              <SetRow title="Spotify links" note="When you copy a Spotify link in another app, Studio offers to open it: songs play, albums and playlists open here, artists open their page. Only Spotify links are noticed, nothing else you copy. Pressing Ctrl+V in Studio, or pasting a link into search, opens it either way.">
+                <SetSeg label="Spotify links" value={theme.linkWatch === false ? 'off' : 'on'} onPick={(v) => setThemeKey('linkWatch', v === 'on')}
+                  options={[['on', 'On'], ['off', 'Off']]} />
+              </SetRow>
+              {theme.linkWatch !== false ? (
+                <SetRow title="Link card" note="How a copied Spotify link shows up. Slim, Strip and Capsule are one row with the cover, title and artist; Large adds the album, year and length. Picking one shows you what it looks like.">
+                  <SetSeg label="Link card" value={theme.linkCard || 'slim'} onPick={(v) => { setThemeKey('linkCard', v); onPreviewLinkCard?.(v); }}
+                    options={[['slim', 'Slim'], ['strip', 'Strip'], ['capsule', 'Capsule'], ['large', 'Large']]} />
+                </SetRow>
+              ) : null}
               <SetRow title="Date added column" note="Shows when each track joined your library. Hiding it gives the space to Title, Artist and Album." wide={false}>
                 <SetToggle label="Date added column" on={showDateAdded} onToggle={toggleDateAdded} />
               </SetRow>
@@ -468,6 +479,7 @@ const TOUR = [
   { cat: 'library', mark: true, title: 'Library',
     points: [
       ['Auto-follow artists', 'artists with more than 5 songs in your library are followed for you, a few at a time'],
+      ['Spotify links', 'copy a Spotify link anywhere and Studio offers to open it'],
       ['Columns', 'show or hide Date added, and play counts on album and artist pages'],
       ['Clear Library', 'removes songs and playlists but keeps your listening history'],
       ['Delete Everything', 'wipes it all, history included, and starts setup again'],

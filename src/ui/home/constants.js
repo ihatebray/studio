@@ -89,6 +89,8 @@ export const THEME_DEFAULTS = {
   playlistLayout: null,     // playlist page layout; null = the same as albums
   showHome: true,
   autoFollow: true,         // follow (in Studio) artists with more than 5 songs in the library           // My Spotify → Home in the sidebar; off moves countdowns to New Releases
+  linkWatch: true,          // offer to open Spotify links copied in other apps
+  linkCard: 'slim',         // how that offer looks: 'slim' | 'strip' | 'capsule' | 'large'
   albumSongs: 'owned',      // album pages: 'owned' (your songs) or 'full' (the whole album, from Spotify)
   /* How the now-playing wash reads colour out of the cover, and how far it
      reaches. See coverTheme.js for what each extraction actually does. */

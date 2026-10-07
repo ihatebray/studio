@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
    side-by-side actions don't shrink into a 360px column, so the panel gets its
    own. Same props, same onSave contract. See PanelLyricsEditor. */
 import { StudioMotionStyles } from './StudioOnboarding.jsx';
-import { useToast, setToastLayout } from './Toasts.jsx';
+import { useToast, setToastLayout, OPEN_NOTICES_EVENT } from './Toasts.jsx';
 import { useDownloadProgress, VideoPicker } from './sharedUI.jsx';
 import InstantSearch from './InstantSearch.jsx';
 import { LyricsPickerButton } from './LyricsPicker.jsx';
@@ -21,12 +21,12 @@ import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPla
 import { hoverPreload, spotifyIdOf } from '../lib/spotifyMediaElement.js';
 import { CompactVizContext, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from '../lib/compactVizStyles.js';
-import { SpotifyHome, SpotifyReleases } from './MySpotify.jsx';
+import { SpotifyHome, SpotifyReleases, SpotifyLinkPanel } from './MySpotify.jsx';
 import NotificationsButton from './Notifications.jsx';
 import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from '../lib/studioFollows.js';
 import { notePlayContext } from '../lib/playContext.js';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT } from '../lib/accentTokens.js';
-import { api } from '../lib/format.js';
+import { api, fmtMs } from '../lib/format.js';
 import { CoverColourTab } from './home/Settings.jsx';
 import { CoverLightbox, NowPlayingBar, NowPlayingFullView, NowPlayingPanelDock } from './home/NowPlaying.jsx';
 import { HOME_CSS } from './home/styles.js';
@@ -35,6 +35,7 @@ import WindowControls from './WindowControls.jsx';
 import { MenuItem, Modal, albumKeyOf, primaryArtistOf } from './home/common.jsx';
 import SettingsPage from './home/SettingsPage.jsx';
 import LibraryPage from './home/LibraryPage.jsx';
+import { ImportMenuItem } from './home/Library.jsx';
 
 export default function StudioHome({
   library = [],
@@ -819,17 +820,37 @@ export default function StudioHome({
      an edge doesn't throw chrome over the thing being dragged. The pointer
      over the revealed top bar is inside a drag region and generates no
      mousemove at all — which is exactly the state that should hold it open. */
+  /* The notifications panel hangs from the top bar. Opened from a toast in
+     compact mode, the bar slides out with it and stays while it's open, the
+     pointer wherever it is; once it closes, the bar goes back unless the
+     pointer is up there. */
+  const noticesOpenRef = useRef(false);
+  const pointerYRef = useRef(0);
+  useEffect(() => {
+    const onAsk = () => { if (compactRef.current) setChromePeek('top'); };
+    const onNotices = (e) => {
+      noticesOpenRef.current = !!e.detail?.open;
+      if (!noticesOpenRef.current && compactRef.current) {
+        setChromePeek((p) => (p === 'top' && pointerYRef.current > TOPBAR_H + 16 ? null : p));
+      }
+    };
+    window.addEventListener(OPEN_NOTICES_EVENT, onAsk);
+    window.addEventListener('studio:notices', onNotices);
+    return () => { window.removeEventListener(OPEN_NOTICES_EVENT, onAsk); window.removeEventListener('studio:notices', onNotices); };
+  }, []);
+
   useEffect(() => {
     if (!compactMode || npFull) { setChromePeek(null); return undefined; }
     const EDGE = 8;
     const onMove = (e) => {
+      pointerYRef.current = e.clientY;
       if (e.buttons) return;
       const x = e.clientX; const y = e.clientY;
       /* Anything that drops down from the top bar (notifications) hangs
          below it; the bar stays out while the pointer is over one. */
       const overDropdown = !!e.target?.closest?.('[data-topbar-dropdown]');
       setChromePeek((p) => {
-        if (p === 'top') return y > TOPBAR_H + 16 && !overDropdown ? null : p;
+        if (p === 'top') return y > TOPBAR_H + 16 && !overDropdown && !noticesOpenRef.current ? null : p;
         if (p === 'side') return x > SIDEBAR_W + 28 ? null : p;
         if (y <= EDGE) return 'top';
         if (x <= EDGE) return 'side';
@@ -2116,6 +2137,7 @@ export default function StudioHome({
   }, []);
 
   const [newPlaylist, setNewPlaylist] = useState(null);   // { name } | null
+  const [plAddMenu, setPlAddMenu] = useState(null);       // the sidebar's + menu: { left, top } | null
   const [addToPl, setAddToPl] = useState(null);           // { trackIds } | null
 
   /* The same menu, opened from a button rather than a right-click.
@@ -2298,6 +2320,25 @@ export default function StudioHome({
       streamOnly: true,
     }, [libBySpotifyId, ownedTrackFor]);
   const favorites = useMemo(() => library.filter((t) => t.isFavorite), [library]);
+  /* A song playing straight from Spotify (a copied link, My Spotify) isn't in
+     the library: the bar offers Save, and once it's saved, the heart and
+     add-to-playlist act on its library row. */
+  const npSid = currentTrack?.streamOnly ? spotifyIdOf(currentTrack) : null;
+  const npSaved = npSid ? libBySpotifyId.get(npSid) || null : null;
+  const npSaveBusy = !!npSid && dlState[`s:${npSid}`] === 'busy';
+  const npSaveFailed = !!npSid && dlState[`s:${npSid}`] === 'failed';
+  const saveCurrentToLibrary = useCallback((t) => {
+    const sid = spotifyIdOf(t);
+    if (!sid) return;
+    downloadSpotifyRow({
+      spotifyId: sid, title: t.title || '', artists: t.artist || '', album: t.album || '',
+      albumArtUrl: typeof t.coverArt === 'string' && /^https?:/.test(t.coverArt) ? t.coverArt : '',
+      durationMs: Math.round((t.duration || 0) * 1000), explicit: !!t.explicit,
+    }, { noPicker: true }).then((saved) => {
+      // A failure says so itself (downloadSpotifyRow's error toast).
+      if (saved) pushToast?.({ message: `Saved “${t.title || 'the song'}” to your library`, kind: 'success', durationMs: 3500, log: false });
+    });
+  }, [downloadSpotifyRow, pushToast]);
   const mySpotifyBridge = useMemo(() => {
     const saveState = (row) => {
       if (libBySpotifyId.has(row.spotifyId) || ownedTrackFor(row.title, row.artists)) return 'saved';
@@ -2335,6 +2376,161 @@ export default function StudioHome({
       onConnect: () => { pickSection('settings'); setSetCat('connections'); },
     };
   }, [libBySpotifyId, ownedTrackFor, dlState, favorites, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection]);
+
+  /* ---------- Spotify links (spotifyLinks.js) ----------------------------
+     Ctrl+V anywhere in Studio, or pasting into search, opens a Spotify link;
+     one copied in another app is offered in a notification. A song plays
+     and its album opens with it marked; an album or playlist opens in the
+     side panel; an artist opens their page. */
+  const [linkPanel, setLinkPanel] = useState(null);
+  const openSpotifyLink = useCallback((info, { play = true } = {}) => {
+    if (!info?.id) {
+      pushToast?.({ message: 'Couldn’t open that Spotify link', kind: 'error', durationMs: 4000, dedupeKey: 'spotify-link', log: false });
+      return;
+    }
+    setPaletteOpen(false);
+    if (info.kind === 'artist') {
+      setLinkPanel(null);
+      openArtistAnywhere({ name: info.name, spotifyId: info.id, image: info.image || null });
+      return;
+    }
+    if (info.kind === 'album' || info.kind === 'playlist') {
+      setLinkPanel({ kind: info.kind, id: info.id, name: info.name || 'Spotify', image: info.image || null, sub: info.sub || '', label: info.kind === 'album' ? 'Album' : 'Playlist', rows: info.rows || null });
+      return;
+    }
+    // A song: play it, and open its album with it marked.
+    if (play && info.rows?.length) mySpotifyBridge.playRows(info.rows, 0);
+    if (info.album?.id) {
+      setLinkPanel({ kind: 'album', id: info.album.id, name: info.album.name || info.name, image: info.album.image || info.image || null, sub: info.sub || '', label: 'Album', focusId: info.id });
+    } else if (!info.rows?.length && info.name) {
+      openPalette(info.name); // signed out: find it instead
+    }
+  }, [pushToast, openArtistAnywhere, mySpotifyBridge, openPalette]);
+  const openSpotifyLinkText = useCallback(async (text) => {
+    const api = window.electronAPI;
+    if (!api?.spotifyLinkResolve) return;
+    pushToast?.({ message: 'Opening Spotify link…', kind: 'info', durationMs: 2500, dedupeKey: 'spotify-link', log: false });
+    openSpotifyLink(await api.spotifyLinkResolve(text).catch(() => null));
+  }, [pushToast, openSpotifyLink]);
+
+  // Ctrl+V outside a text field.
+  useEffect(() => {
+    const onKey = async (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'v') return;
+      const el = e.target;
+      if (el?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName || '')) return;
+      const link = await window.electronAPI?.spotifyLinkFromClipboard?.().catch(() => null);
+      if (!link) return;
+      openSpotifyLinkText(link.kind === 'short' ? link.url : `spotify:${link.kind}:${link.id}`);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openSpotifyLinkText]);
+
+  /* The copied-link card (Toasts.jsx, ToastCard): what the link is and its
+     buttons. Built when it's shown, from what's current then (saved yet,
+     followed yet). A button with `again` shows the card again with that
+     added, so Save and Follow turn into a tick in place. */
+  const linkLive = useRef({});
+  linkLive.current = { bridge: mySpotifyBridge, follows: studioFollows, open: openSpotifyLink, style: theme.linkCard || 'slim' };
+  const linkCardFor = useCallback((info) => {
+    const live = () => linkLive.current;
+    const { bridge, follows, style } = live();
+    const rows = info.rows || null;
+    const row = info.kind === 'track' ? rows?.[0] : null;
+    const year = String(info.date || '').slice(0, 4);
+    const card = { style, image: info.image || '', title: info.name || 'Spotify link', sub: info.sub || '', buttons: [] };
+    const saveBtn = (done, label, save) => (done
+      ? { label: 'In library', icon: 'check', disabled: true }
+      : { label, icon: 'plus', stay: true, again: { saved: true }, onClick: save });
+    const open = { label: 'Open', icon: 'open', onClick: () => live().open(info) };
+    if (info.kind === 'track') {
+      card.explicit = !!row?.explicit;
+      card.meta = [info.album?.name, year, row?.durationMs ? fmtMs(row.durationMs) : ''].filter(Boolean).join(' · ');
+      if (row) {
+        card.buttons.push({ label: 'Play', icon: 'play', primary: true, onClick: () => live().bridge.playRows([row], 0) });
+        card.buttons.push(saveBtn(info.saved || bridge.saveState(row), 'Save', () => live().bridge.saveRow(row)));
+        if (info.album?.id) card.buttons.push({ label: 'Album', icon: 'open', onClick: () => live().open(info, { play: false }) });
+      } else {
+        // Signed out: Studio can't play it, but can look for it.
+        card.buttons.push({ ...open, label: 'Find', primary: true });
+      }
+    } else if (info.kind === 'album') {
+      const mins = rows?.length ? Math.round(rows.reduce((n, r) => n + (r.durationMs || 0), 0) / 60000) : 0;
+      card.meta = [year, rows?.length ? `${rows.length} songs` : '', mins ? `${mins} min` : ''].filter(Boolean).join(' · ');
+      if (rows?.length) {
+        const context = { kind: 'album', id: info.id, name: info.name };
+        const unsaved = (b) => rows.filter((r) => !b.saveState(r));
+        card.buttons.push({ label: 'Play', icon: 'play', primary: true, onClick: () => live().bridge.playRows(rows, 0, { context }) });
+        card.buttons.push(saveBtn(info.saved || !unsaved(bridge).length, 'Save all', () => { const b = live().bridge; unsaved(b).forEach((r) => b.saveRow(r)); }));
+      }
+      card.buttons.push(rows?.length ? open : { ...open, primary: true });
+    } else if (info.kind === 'playlist') {
+      card.sub = card.sub || 'Playlist';
+      card.buttons.push({
+        label: 'Play', icon: 'play', primary: true,
+        onClick: async () => {
+          const r = await window.electronAPI?.spotifyFeedPlaylist?.(info.id).catch(() => null);
+          if (r?.ok && r.data?.length) live().bridge.playRows(r.data, 0, { context: { kind: 'playlist', id: info.id, name: info.name, image: info.image } });
+          else live().open(info);
+        },
+      });
+      card.buttons.push(open);
+    } else if (info.kind === 'artist') {
+      card.round = true;
+      card.sub = 'Artist';
+      card.buttons.push({ ...open, primary: true });
+      card.buttons.push(info.following || isStudioFollowed({ name: info.name, spotifyId: info.id }, follows)
+        ? { label: 'Following', icon: 'check', disabled: true }
+        : { label: 'Follow', icon: 'follow', stay: true, again: { following: true }, onClick: () => { followArtist({ spotifyId: info.id, name: info.name, image: info.image }); } });
+    }
+    return card;
+  }, []);
+
+  /* Settings → Library → Link card: picking a look shows it, with the song
+     that's playing (or one from the library) standing in. */
+  const previewLinkCard = useCallback((style) => {
+    const t = currentTrack || library.find((x) => coverFor?.(x) || x.coverArt) || library[0];
+    pushToast?.({
+      message: 'Link card preview', kind: 'info', durationMs: 6000, dedupeKey: 'spotify-link-copied', log: false,
+      card: {
+        style, image: (t && (coverFor?.(t) || t.coverArt)) || '', title: t?.title || 'Song title', sub: t?.artist || 'Artist',
+        meta: [t?.album, t?.year, t?.duration ? fmtMs(t.duration * 1000) : ''].filter(Boolean).join(' · '),
+        buttons: [{ label: 'Play', icon: 'play', primary: true }, { label: 'Save', icon: 'plus' }, { label: 'Album', icon: 'open' }],
+      },
+    });
+  }, [currentTrack, library, coverFor, pushToast]);
+
+  // Copied in another app: offered now if Studio is on screen, and again
+  // when you come back to it (within a few minutes). Watching restarts only
+  // when the setting changes: a restart counts whatever is on the clipboard
+  // as already seen, so restarting on every play/pause could miss a link.
+  const linkWatchOn = theme.linkWatch !== false;
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.spotifyLinkWatch) return undefined;
+    api.spotifyLinkWatch(linkWatchOn).catch(() => {});
+    if (!linkWatchOn || !api.onSpotifyLinkCopied) return () => { api.spotifyLinkWatch(false).catch(() => {}); };
+    let pending = null;
+    const offer = (info) => {
+      const card = linkCardFor(info);
+      pushToast?.({
+        message: card.sub ? `${card.title} · ${card.sub}` : card.title,
+        kind: 'info', durationMs: 15000, dedupeKey: 'spotify-link-copied', log: false,
+        card: { ...card, buttons: card.buttons.map((btn) => (btn.again ? { ...btn, onClick: () => { btn.onClick(); offer({ ...info, ...btn.again }); } } : btn)) },
+      });
+    };
+    const off = api.onSpotifyLinkCopied((info) => {
+      pending = { info, at: Date.now() };
+      if (document.visibilityState === 'visible') offer(info);
+    });
+    const onFocus = () => {
+      if (pending && Date.now() - pending.at < 5 * 60 * 1000) offer(pending.info);
+      pending = null;
+    };
+    window.addEventListener('focus', onFocus);
+    return () => { off?.(); window.removeEventListener('focus', onFocus); api.spotifyLinkWatch(false).catch(() => {}); };
+  }, [linkWatchOn, pushToast, linkCardFor]);
 
   const barShown = !!currentTrack;
   useEffect(() => {
@@ -2566,17 +2762,47 @@ export default function StudioHome({
 
         <div className="sth-side-eyebrow" style={{ marginTop: 20 }}>
           <span className="st-eyebrow">Playlists</span>
+          {/* + : a new playlist, or bring yours over from Spotify. The
+              importer lives here rather than under Songs → Import, since
+              what it brings over is playlists. */}
           {onCreatePlaylist ? (
-            <button type="button" className="st-icon-btn is-sm" onClick={() => setNewPlaylist({ name: '' })}
-              title="New playlist" aria-label="New playlist" style={{ width: 24, height: 24, background: 'rgba(255,255,255,0.07)' }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
-            </button>
+            <>
+              <button type="button" className="st-icon-btn is-sm"
+                onClick={(e) => {
+                  if (!onImportSpotify) { setNewPlaylist({ name: '' }); return; }
+                  if (plAddMenu) { setPlAddMenu(null); return; }
+                  /* Drawn over the whole window (a portal), from the button's
+                     spot: inside the sidebar its edge cut the menu off. */
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setPlAddMenu({ left: Math.max(8, r.right - 222), top: r.bottom + 6 });
+                }}
+                title="New playlist" aria-label="New playlist" aria-haspopup={onImportSpotify ? 'menu' : undefined} aria-expanded={onImportSpotify ? !!plAddMenu : undefined}
+                style={{ width: 24, height: 24, background: plAddMenu ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.07)' }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+              </button>
+              {plAddMenu ? createPortal(
+                <>
+                  <div onClick={() => setPlAddMenu(null)} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
+                  <div role="menu" style={{
+                    position: 'fixed', left: plAddMenu.left, top: plAddMenu.top, zIndex: 301,
+                    width: 222, padding: 5, borderRadius: 11,
+                    background: 'rgb(18, 18, 21)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
+                  }}>
+                    <ImportMenuItem label="New playlist" hint="Start an empty one"
+                      onClick={() => { setPlAddMenu(null); setNewPlaylist({ name: '' }); }} />
+                    <ImportMenuItem label="Import from Spotify…" hint="Your playlists and Liked Songs"
+                      onClick={() => { setPlAddMenu(null); onImportSpotify(); }} />
+                  </div>
+                </>,
+                document.body,
+              ) : null}
+            </>
           ) : null}
         </div>
         <div className="sth-libscroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', marginTop: 4 }}>
           {playlists.length === 0 ? (
             <div style={{ padding: '6px 12px', fontSize: 12.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
-              No playlists yet. Use + to start one.
+              {onImportSpotify ? 'No playlists yet. Use + to start one or bring yours over from Spotify.' : 'No playlists yet. Use + to start one.'}
             </div>
           ) : null}
           {playlists.map((pl) => {
@@ -2647,6 +2873,8 @@ export default function StudioHome({
               (MySpotify.jsx). Each page scrolls itself. */}
           {sec === 'sp-home' ? <SpotifyHome bridge={mySpotifyBridge} /> : null}
           {sec === 'sp-releases' ? <SpotifyReleases bridge={mySpotifyBridge} countdowns={!homeOn} /> : null}
+          {/* An album or playlist opened from a Spotify link, over any page. */}
+          {linkPanel ? <SpotifyLinkPanel item={linkPanel} bridge={mySpotifyBridge} onClose={() => setLinkPanel(null)} /> : null}
 
           {/* ================= LIBRARY =================
               Rebuilt to the mockup: a fixed left rail of views + playlists,
@@ -2701,7 +2929,6 @@ export default function StudioHome({
               npWashTheme={npWashTheme}
               onImportFiles={onImportFiles}
               onImportFolder={onImportFolder}
-              onImportSpotify={onImportSpotify}
               onPlayTrack={onPlayTrack}
               onRemoveFromPlaylist={onRemoveFromPlaylist}
               onToggleFavorite={onToggleFavorite}
@@ -2741,6 +2968,7 @@ export default function StudioHome({
           {/* ================= SETTINGS ================= */}
           {sec === 'settings' ? (
             <SettingsPage
+              onPreviewLinkCard={previewLinkCard}
               tour={settingsTour}
               onEndTour={endSettingsTour}
               accentFixed={accentFixed}
@@ -3300,6 +3528,7 @@ export default function StudioHome({
 
         <NowPlayingBar
           track={currentTrack}
+          compact={compactMode}
           isPlaying={isPlaying}
           art={currentTrack ? coverFor(currentTrack) : null}
           accent={accent}
@@ -3332,6 +3561,10 @@ export default function StudioHome({
              that does nothing, the same way it drops the cover zoom when
              there's no artwork. */
           onToggleFavorite={onToggleFavorite}
+          savedTrack={npSaved}
+          onSaveToLibrary={saveCurrentToLibrary}
+          saveBusy={npSaveBusy}
+          saveFailed={npSaveFailed}
           onAddToPlaylist={onAddTracksToPlaylist ? (e, t) => {
             const r = e.currentTarget.getBoundingClientRect();
             // Right-aligned to the button and growing upward — the bar sits
@@ -3407,6 +3640,10 @@ export default function StudioHome({
           onSetGainBoost={onSetGainBoost}
           getGainReduction={getGainReduction}
           onToggleFavorite={onToggleFavorite}
+          savedTrack={npSaved}
+          onSaveToLibrary={saveCurrentToLibrary}
+          saveBusy={npSaveBusy}
+          saveFailed={npSaveFailed}
           onAddToPlaylist={onAddTracksToPlaylist ? (e, t) => {
             const r = e.currentTarget.getBoundingClientRect();
             openPlaylistPicker(t, { x: Math.max(12, r.left + r.width / 2 - 144), y: r.top - 10, above: true });
@@ -4098,6 +4335,7 @@ export default function StudioHome({
         onGetSlskFile={downloadSoulseekRow}
         onGetSlskAlbum={downloadSsAlbum}
         onPlayTrack={(t) => onPlayTrack?.(t, library, 'list')}
+        onSpotifyLink={openSpotifyLinkText}
         seed={paletteSeed}
         onFilterLibrary={(q) => {
           setLibFilter(q);

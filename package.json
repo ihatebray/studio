@@ -1,7 +1,7 @@
 {
   "name": "studio",
   "productName": "studio",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "studio — a personal fullscreen now-playing app",
   "author": "bray",
   "main": ".vite/build/main.js",

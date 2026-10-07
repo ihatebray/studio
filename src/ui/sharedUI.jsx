@@ -433,7 +433,9 @@ export function PlayIcon({ size = 13, nudge = true }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"
       strokeWidth="4" strokeLinejoin="round" strokeLinecap="round"
-      style={nudge ? { marginLeft: Math.round(size * 0.12) } : undefined}>
+      /* A triangle's weight sits left of its box, so it's nudged right to
+         look centred, by about a pixel: more read as off-centre. */
+      style={nudge ? { marginLeft: Math.max(1, Math.round(size * 0.05)) } : undefined}>
       <path d="M8 6.5v11l9.5-5.5z" />
     </svg>
   );

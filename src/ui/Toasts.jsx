@@ -57,9 +57,10 @@ function setLog(next) {
   logSubs.forEach((fn) => fn());
 }
 
-/** Keep a notice in the history. `title` is what the toast said. */
+/** Keep a notice in the history. `title` is what the toast said. Returns
+ *  its entry's id (an existing entry's, when it folds into one). */
 export function recordNotice({ key, kind = 'info', title, detail = '', source = '', at = Date.now() }) {
-  if (!title) return;
+  if (!title) return null;
   const k = key || `${kind}:${title}`;
   const i = log.items.findIndex((n) => n.key === k && at - n.at < LOG_MERGE_MS);
   let items;
@@ -67,10 +68,13 @@ export function recordNotice({ key, kind = 'info', title, detail = '', source = 
     const prev = log.items[i];
     const bumped = { ...prev, title, detail: detail || prev.detail, kind, at, count: (prev.count || 1) + 1 };
     items = [bumped, ...log.items.slice(0, i), ...log.items.slice(i + 1)];
-  } else {
-    items = [{ id: `${at}-${Math.random().toString(36).slice(2, 7)}`, key: k, kind, title, detail, source, at, count: 1 }, ...log.items];
+    setLog({ ...log, items: items.slice(0, LOG_MAX) });
+    return prev.id;
   }
+  const id = `${at}-${Math.random().toString(36).slice(2, 7)}`;
+  items = [{ id, key: k, kind, title, detail, source, at, count: 1 }, ...log.items];
   setLog({ ...log, items: items.slice(0, LOG_MAX) });
+  return id;
 }
 
 export function markNoticesSeen() { if (log.items[0]?.at > log.seenAt) setLog({ ...log, seenAt: Date.now() }); }
@@ -83,10 +87,19 @@ export function useNotices() {
   return { ...snap, unread: snap.items.filter((n) => n.at > snap.seenAt).length };
 }
 
-/** Ask the top bar to open the notifications panel (a toast was clicked). */
+/** Ask the top bar to open the notifications panel (a toast was clicked),
+ *  at entry `id` when there is one. */
 export const OPEN_NOTICES_EVENT = 'studio:open-notices';
-function openNotices() {
-  try { window.dispatchEvent(new Event(OPEN_NOTICES_EVENT)); } catch { /* ignore */ }
+function openNotices(id = null) {
+  try { window.dispatchEvent(new CustomEvent(OPEN_NOTICES_EVENT, { detail: { id } })); } catch { /* ignore */ }
+}
+
+/* A toast's entry in the history: the one made when it appeared, or, for a
+   toast that wasn't kept (most info toasts), one made now, since clicking
+   it means you want it there. */
+function noticeFor(toast) {
+  if (toast.noticeId && log.items.some((n) => n.id === toast.noticeId)) return toast.noticeId;
+  return recordNotice({ key: toast.dedupeKey, kind: toast.kind, title: toast.message, detail: toast.detail, source: toast.source, at: toast.createdAt });
 }
 
 /* ── Bus (state owner — called once in App.jsx) ─────────────── */
@@ -105,10 +118,14 @@ export function useToastBus() {
     const dedupeKey = opts.dedupeKey || `${kind}:${message}`;
     const durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : DEFAULT_DURATION_MS;
     const action = opts.action || null;
+    // A richer card (cover, title, buttons) instead of the one-line message.
+    const card = opts.card || null;
     // The why, for the notifications panel; the toast itself stays short.
     const detail = opts.detail ? String(opts.detail) : '';
+    const source = opts.source || '';
+    let noticeId = null;
     if (opts.log !== false && (kind === 'error' || kind === 'warning' || detail || opts.log)) {
-      recordNotice({ key: opts.dedupeKey, kind, title: message, detail, source: opts.source || '' });
+      noticeId = recordNotice({ key: opts.dedupeKey, kind, title: message, detail, source });
     }
 
     let resultId = null;
@@ -121,7 +138,7 @@ export function useToastBus() {
         resultId = existing.id;
         const updated = {
           ...existing,
-          message, kind, action, durationMs, detail,
+          message, kind, action, card, durationMs, detail, source, noticeId: noticeId || existing.noticeId,
           revision: (existing.revision || 0) + 1,
           createdAt: Date.now(),
         };
@@ -136,7 +153,7 @@ export function useToastBus() {
       const toast = {
         id: resultId,
         dedupeKey,
-        message, kind, action, durationMs, detail,
+        message, kind, action, card, durationMs, detail, source, noticeId,
         revision: 0,
         createdAt: Date.now(),
       };
@@ -282,6 +299,7 @@ const CSS = `
   -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
 .st-toasts.is-inbar .st-toast-msg { -webkit-line-clamp: 2; }
 .st-toast.is-dragging { transition: none; }
+.st-toast.is-openable { cursor: pointer; }
 .st-toast-in { display: flex; align-items: flex-start; gap: 11px; padding: 11px 10px 12px 12px;
   transition: opacity 0.22s ease; }
 .st-toast-icon { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 999px; margin-top: -1px;
@@ -297,6 +315,75 @@ const CSS = `
   background: transparent; color: rgba(255, 255, 255, 0.42); cursor: pointer;
   display: flex; align-items: center; justify-content: center; transition: color 0.14s, background 0.14s; }
 .st-toast-x:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.st-toast.is-card { border: none; box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4); }
+.st-toast.is-capsule { border-radius: 999px; }
+.st-tcard { position: relative; transition: opacity 0.22s ease; }
+/* The blurred cover reaches well past the card: blur fades a layer's edges,
+   and stopping it at the card's edge left a dark rim. */
+.st-tcard-bg { position: absolute; inset: -90px; z-index: 0; background-size: cover; background-position: center;
+  filter: blur(30px) brightness(0.42) saturate(1.4); pointer-events: none; }
+.st-tcard-row { position: relative; display: flex; align-items: center; gap: 11px; }
+.st-tcard-art { flex: 0 0 auto; background: rgba(255, 255, 255, 0.08) center / cover no-repeat; }
+.st-tcard-text { flex: 1; min-width: 0; }
+.st-tcard-title { font-size: 13.5px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-tcard-title .e { display: inline-block; margin-right: 5px; padding: 0 4px; border-radius: 3px; font-size: 9px; font-weight: 800; line-height: 14px;
+  vertical-align: 2px; background: rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.85); }
+.st-tcard-sub { margin-top: 1px; font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-tcard-meta { margin-top: 2px; font-size: 11px; color: rgba(255, 255, 255, 0.48); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The now-playing bar's buttons: a white glyph on nothing, a faint square
+   behind it on hover. */
+.st-tcard-ib { flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border: none; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; background: transparent; color: #fff; transition: background 0.14s, transform 0.1s; }
+.st-tcard-ib:hover { background: rgba(255, 255, 255, 0.14); }
+.st-tcard-ib:active { transform: scale(0.94); }
+.st-tcard-ib:disabled { cursor: default; background: transparent; opacity: 0.6; }
+/* Play buttons have no hover state, anywhere. */
+.st-tcard-ib.is-play:hover { background: transparent; }
+.st-tcard-ib svg { width: 14px; height: 14px; }
+.st-tcard-ib svg[data-icon="play"] { width: 15px; height: 15px; margin-left: 1px; }
+.st-tcard .st-toast-x { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; color: rgba(255, 255, 255, 0.55); }
+/* slim (D): one row over a blur of the cover */
+.st-tcard.is-slim { padding: 8px; }
+.st-tcard.is-slim .st-tcard-art { width: 44px; height: 44px; border-radius: 7px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); }
+.st-tcard.is-slim .st-tcard-art.is-round, .st-tcard.is-capsule .st-tcard-art { border-radius: 50%; }
+/* strip (E): the cover flush on the left edge, plain background */
+.st-tcard.is-strip { display: flex; height: 58px; }
+.st-tcard.is-strip > .st-tcard-art { width: 58px; height: 58px; }
+.st-tcard.is-strip > .st-tcard-art.is-round { width: 42px; height: 42px; margin: 8px 0 8px 8px; border-radius: 50%; }
+.st-tcard.is-strip .st-tcard-row { flex: 1; min-width: 0; padding: 0 8px 0 12px; }
+/* capsule (F): a rounded pill */
+.st-tcard.is-capsule { padding: 6px 8px 6px 6px; }
+.st-tcard.is-capsule .st-tcard-row { gap: 10px; }
+.st-tcard.is-capsule .st-tcard-art { width: 38px; height: 38px; }
+.st-tcard.is-capsule .st-tcard-title { font-size: 13px; }
+.st-tcard.is-capsule .st-tcard-sub { font-size: 11.5px; }
+.st-tcard.is-capsule .st-tcard-ib { flex-basis: 28px; width: 28px; height: 28px; }
+.st-toast.is-capsule .st-toast-life { left: 26px; right: 26px; }
+/* large (C): the cover across the top, labelled buttons below */
+.st-tcard-hero { position: relative; height: 150px; overflow: hidden; }
+/* The cover fades out into the card itself (a mask, not a dark overlay laid
+   on top), so there's no seam where the two meet. */
+.st-tcard-hero-img { position: absolute; inset: 0; background: center / cover no-repeat;
+  -webkit-mask-image: linear-gradient(180deg, #000 35%, rgba(0, 0, 0, 0.25) 85%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 35%, rgba(0, 0, 0, 0.25) 85%, transparent 100%); }
+.st-tcard-hero .st-tcard-bg { inset: -60px; filter: blur(26px) brightness(0.55) saturate(1.3);
+  /* The layer runs 60px past the hero, so it has to be clear by then. */
+  -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent calc(100% - 60px)); mask-image: linear-gradient(180deg, #000 45%, transparent calc(100% - 60px)); }
+.st-tcard-hero-art { position: absolute; left: 14px; top: 16px; z-index: 1; width: 84px; height: 84px; border-radius: 50%;
+  background: center / cover no-repeat; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5); }
+.st-tcard-over { position: absolute; left: 14px; right: 14px; bottom: 10px; z-index: 1; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45); }
+.st-tcard-over .st-tcard-title { font-size: 18px; font-weight: 800; }
+.st-tcard.is-large .st-toast-x { position: absolute; top: 9px; right: 9px; z-index: 2; width: 22px; height: 22px; background: rgba(0, 0, 0, 0.35); color: #fff; }
+.st-tcard-body { padding: 2px 14px 14px; }
+.st-tcard-body .st-tcard-sub { font-size: 12.5px; }
+.st-tcard-btns { display: flex; gap: 6px; margin-top: 12px; }
+.st-tcard-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border: none; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: rgba(255, 255, 255, 0.13); color: #fff; transition: background 0.14s; }
+.st-tcard-btn:hover { background: rgba(255, 255, 255, 0.22); }
+.st-tcard-btn.is-primary { background: #fff; color: #0b0b0d; }
+.st-tcard-btn.is-primary:hover { background: rgba(255, 255, 255, 0.86); }
+.st-tcard-btn:disabled { cursor: default; opacity: 0.6; background: rgba(255, 255, 255, 0.13); }
+.st-tcard-btn svg { width: 11px; height: 11px; }
 .st-toast-life { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; transform-origin: 0 50%;
   background: rgba(var(--tk), 0.55); animation-name: stToastLife; animation-timing-function: linear; animation-fill-mode: forwards; }
 @keyframes stToastLife { from { transform: scaleX(1); } to { transform: scaleX(0); } }
@@ -305,6 +392,86 @@ const CSS = `
   .st-toasts, .st-toast-deck, .st-toast, .st-toast-in { transition-duration: 0.01s !important; }
 }
 `;
+
+/* A card toast: a cover, a title and artist, and buttons. Four looks
+   (Settings → Library → Link card): slim, one row over a blur of the cover;
+   strip, the cover flush on the left; capsule, a rounded pill; large, the
+   cover across the top with labelled buttons.
+   card: { style, image, round, title, explicit, sub, meta,
+           buttons: [{ label, icon, primary, disabled, stay, onClick }] }
+   A button dismisses the card unless it says `stay`. */
+const CARD_ICONS = {
+  play: <path d="M8 6.5v11l9.5-5.5z" fill="currentColor" strokeWidth="4" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  open: <path d="M9 6l6 6-6 6" />,
+  follow: <path d="M15 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19 8v6M22 11h-6" />,
+};
+export const CARD_STYLES = ['slim', 'strip', 'capsule', 'large'];
+const CardIcon = ({ name }) => (CARD_ICONS[name] ? (
+  <svg data-icon={name} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">{CARD_ICONS[name]}</svg>
+) : null);
+const XIcon = () => (
+  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
+    <line x1="6" y1="6" x2="18" y2="18" />
+    <line x1="18" y1="6" x2="6" y2="18" />
+  </svg>
+);
+const bgOf = (src) => (src ? { backgroundImage: `url("${src}")` } : undefined);
+
+function ToastCard({ card, onButton, onDismiss }) {
+  const style = CARD_STYLES.includes(card.style) ? card.style : 'slim';
+  const close = <button type="button" className="st-toast-x" onClick={onDismiss} title="Dismiss" aria-label="Dismiss"><XIcon /></button>;
+  const title = <div className="st-tcard-title" title={card.title}>{card.explicit ? <span className="e">E</span> : null}{card.title}</div>;
+  const sub = card.sub ? <div className="st-tcard-sub" title={card.sub}>{card.sub}</div> : null;
+  const blur = card.image ? <span className="st-tcard-bg" style={bgOf(card.image)} /> : null;
+
+  if (style === 'large') {
+    return (
+      <>
+        <div className="st-tcard-hero">
+          {card.round ? blur : <span className="st-tcard-hero-img" style={bgOf(card.image)} />}
+          {card.round ? <span className="st-tcard-hero-art" style={bgOf(card.image)} /> : null}
+          <div className="st-tcard-over">{title}</div>
+        </div>
+        {close}
+        <div className="st-tcard-body">
+          {sub}
+          {card.meta ? <div className="st-tcard-meta">{card.meta}</div> : null}
+          <div className="st-tcard-btns">
+            {(card.buttons || []).map((b) => (
+              <button key={b.label} type="button" className={`st-tcard-btn${b.primary ? ' is-primary' : ''}`} disabled={!!b.disabled} onClick={() => onButton(b)}>
+                <CardIcon name={b.icon} />{b.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  const art = <span className={`st-tcard-art${card.round ? ' is-round' : ''}`} style={bgOf(card.image)} />;
+  const row = (
+    <div className="st-tcard-row">
+      {style === 'strip' ? null : art}
+      <div className="st-tcard-text">{title}{sub}</div>
+      {(card.buttons || []).map((b) => (
+        <button key={b.label} type="button" className={`st-tcard-ib${b.primary ? ' is-primary' : ''}${b.icon === 'play' ? ' is-play' : ''}`} disabled={!!b.disabled}
+          title={b.label} aria-label={b.label} onClick={() => onButton(b)}>
+          <CardIcon name={b.icon} />
+        </button>
+      ))}
+      {close}
+    </div>
+  );
+  return (
+    <>
+      {style === 'strip' ? null : blur}
+      {style === 'strip' ? art : null}
+      {row}
+    </>
+  );
+}
 
 export function ToastStack({ toasts, onDismiss }) {
   const [hovered, setHovered] = useState(false);
@@ -505,6 +672,17 @@ function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, on
     exitTimer.current = setTimeout(() => onDismiss(toast.id), EXIT_MS);
   }, [exiting, onDismiss, toast.id]);
 
+  /* Clicking a notification (not one of its buttons, and not the end of a
+     swipe) opens the notifications panel at its entry, where the whole of it
+     is. Link cards are the exception: they're played or opened from their
+     own buttons. */
+  const movedRef = useRef(0);
+  const showInPanel = () => { openNotices(noticeFor(toast)); dismiss(); };
+  const onCardClick = (e) => {
+    if (toast.card || e.target.closest('button') || movedRef.current > 5) return;
+    showInPanel();
+  };
+
   const handleAction = () => {
     if (!toast.action?.onClick) return;
     try { toast.action.onClick(); } catch (e) { console.error('toast action threw:', e); }
@@ -515,11 +693,13 @@ function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, on
   const onPointerDown = (e) => {
     if (e.button !== 0 || e.target.closest('button')) return;
     dragRef.current = { x: e.clientX, id: e.pointerId };
+    movedRef.current = 0;
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const onPointerMove = (e) => {
     if (!dragRef.current || dragRef.current.id !== e.pointerId) return;
     setDrag(e.clientX - dragRef.current.x);
+    movedRef.current = Math.max(movedRef.current, Math.abs(e.clientX - dragRef.current.x));
   };
   const endDrag = (e) => {
     if (!dragRef.current || dragRef.current.id !== e.pointerId) return;
@@ -558,7 +738,7 @@ function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, on
 
   return (
     <div
-      className={`st-toast${drag ? ' is-dragging' : ''}`}
+      className={`st-toast${drag ? ' is-dragging' : ''}${toast.card ? '' : ' is-openable'}${toast.card ? ` is-card${toast.card.style === 'capsule' ? ' is-capsule' : ''}` : ''}`}
       role={toast.kind === 'error' ? 'alert' : 'status'}
       style={{
         '--tk': rgb,
@@ -573,7 +753,16 @@ function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, on
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onClick={onCardClick}
     >
+      {toast.card ? (
+        <div ref={innerRef} className={`st-tcard is-${CARD_STYLES.includes(toast.card.style) ? toast.card.style : 'slim'}`} style={{ opacity: behind ? 0 : 1 }}>
+          <ToastCard card={toast.card} onButton={(b) => {
+            try { b.onClick?.(); } catch (e) { console.error('toast button threw:', e); }
+            if (!b.stay) dismiss();
+          }} onDismiss={() => dismiss()} />
+        </div>
+      ) : (
       <div ref={innerRef} className="st-toast-in" style={{ opacity: behind ? 0 : 1 }}>
         <span className="st-toast-icon"><KindIcon kind={toast.kind} /></span>
         <div className="st-toast-msg">{toast.message}</div>
@@ -581,7 +770,7 @@ function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, on
           <button type="button" className="st-toast-act" onClick={handleAction}>{toast.action.label}</button>
         ) : toast.detail ? (
           /* The full explanation lives in the notifications panel. */
-          <button type="button" className="st-toast-act" onClick={() => { openNotices(); dismiss(); }}>Why?</button>
+          <button type="button" className="st-toast-act" onClick={showInPanel}>Why?</button>
         ) : null}
         <button type="button" className="st-toast-x" onClick={() => dismiss()} title="Dismiss" aria-label="Dismiss">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
@@ -590,6 +779,7 @@ function ToastRow({ toast, index, dir, expanded, offset, frontHeight, paused, on
           </svg>
         </button>
       </div>
+      )}
       {/* The countdown is this bar's animation: it pauses with the hover and
           restarts when the toast is updated (new key). */}
       {life ? (

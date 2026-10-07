@@ -153,9 +153,11 @@ export function PreviewButton({ pkey, track, size = 26, accent = '255,255,255', 
       style={{
         position: 'relative', width: size, height: size, flexShrink: 0, padding: 0,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        borderRadius: '50%', border: 'none', cursor: 'pointer',
-        background: playing || loading ? `rgba(${accent}, 0.2)` : 'rgba(var(--st-fg-rgb, 255,255,255), 0.08)',
-        color: failed ? 'rgb(255,150,120)' : playing || loading ? `rgb(${accent})` : 'rgba(var(--st-fg-rgb, 255,255,255), 0.72)',
+        /* At rest, the now-playing bar's play button: a white glyph and
+           nothing behind it. Round only while the ring counts the preview down. */
+        borderRadius: playing || loading ? '50%' : 'var(--r-ctl-s, 8px)', border: 'none', cursor: 'pointer',
+        background: playing || loading ? `rgba(${accent}, 0.2)` : 'transparent',
+        color: failed ? 'rgb(255,150,120)' : playing || loading ? `rgb(${accent})` : '#fff',
         transition: 'background 0.14s ease, color 0.14s ease',
         ...style,
       }}>
@@ -177,7 +179,8 @@ export function PreviewButton({ pkey, track, size = 26, accent = '255,255,255', 
       ) : failed ? (
         <svg width={size * 0.42} height={size * 0.42} viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 7v6M12 17v.5" /></svg>
       ) : (
-        <svg width={size * 0.4} height={size * 0.4} viewBox="0 0 24 24" aria-hidden><path d="M8 5.5v13l10.5-6.5z" fill="currentColor" /></svg>
+        <svg width={size * 0.5} height={size * 0.5} viewBox="0 0 24 24" aria-hidden fill="currentColor" stroke="currentColor" strokeWidth="4" strokeLinejoin="round"
+          style={{ marginLeft: Math.round(size * 0.06) }}><path d="M8 6.5v11l9.5-5.5z" /></svg>
       )}
     </button>
   );

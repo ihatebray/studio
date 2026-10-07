@@ -9,6 +9,7 @@ import {
   fmtSize, fmtSpeed, normLoose, normTitle,
 } from '../lib/instantSearch.js';
 import { api, fmtMs, fmtSec } from '../lib/format.js';
+import { parseSpotifyLink } from '../lib/spotifyLink.js';
 
 /* =========================================================================
  *  studio — instant search
@@ -258,6 +259,7 @@ export default function InstantSearch({
   onOpenLibraryAlbum,     // (libTrack) → your album page, for owned songs Spotify can't place
   onOpenAlbum,            // (album)   → push the full album page (optional)
   seed = '',              // preload the query when something else opens this
+  onSpotifyLink,          // (text) → open a pasted Spotify link instead of searching for it
   onFilterLibrary,        // (queryString) → narrow the library table and go there
 }) {
   /* ---------------------------------------------------------------- state */
@@ -2487,6 +2489,12 @@ export default function InstantSearch({
                     setChips((c) => c.slice(0, -1));
                     setText(`${last}${text ? ` ${text}` : ''}`);
                   }
+                }}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData?.getData('text') || '';
+                  if (!onSpotifyLink || !parseSpotifyLink(pasted)) return;
+                  e.preventDefault();
+                  onSpotifyLink(pasted);
                 }}
                 placeholder={chips.length ? 'Add words…' : 'Search songs, albums, artists'}
                 spellCheck={false}

@@ -908,6 +908,24 @@ export const HOME_CSS = `
         .sth-npbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; transition: opacity 0.24s ease, transform 0.36s cubic-bezier(0.22,1,0.36,1); }
         /* A notification docked in the bar sits over the song info. */
         :root[data-st-toast-in-bar] .sth-npbar-left { opacity: 0; transform: translateX(-10px); pointer-events: none; }
+        /* Saving a song from the bar: the + becomes a tick with a pop and a
+           ring (as Spotify does), then the heart and add-to-playlist slide in
+           from where it was. */
+        .sth-saved-tick { position: relative; opacity: 1 !important; cursor: default; }
+        .sth-npbtn.sth-saved-tick, .sth-npbtn.sth-saved-tick:hover { background: transparent; }
+        .sth-saved-tick svg { animation: sthTickPop 0.42s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+        .sth-saved-tick::after { content: ''; position: absolute; inset: 6px; border-radius: 50%; border: 2px solid #fff; pointer-events: none;
+          animation: sthTickRing 0.55s ease-out both; }
+        @keyframes sthTickPop { 0% { transform: scale(0.3); opacity: 0; } 55% { transform: scale(1.18); opacity: 1; } 100% { transform: scale(1); } }
+        @keyframes sthTickRing { 0% { transform: scale(0.6); opacity: 0.75; } 100% { transform: scale(1.55); opacity: 0; } }
+        .sth-lib-arrive { animation: sthLibIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .sth-lib-arrive.is-second { animation-delay: 0.07s; }
+        @keyframes sthLibIn { from { opacity: 0; transform: translateX(-6px) scale(0.7); } to { opacity: 1; transform: none; } }
+        @media (prefers-reduced-motion: reduce) {
+          .sth-saved-tick svg, .sth-saved-tick::after, .sth-lib-arrive { animation-duration: 0.01s; animation-delay: 0s; }
+        }
+        /* Clear of the title: their hover square mustn't touch the text. */
+        .sth-npbar-lib { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin-left: 2px; }
         .sth-npbar-art { width: 52px; height: 52px; border-radius: var(--r-art); flex-shrink: 0; padding: 0; border: none; box-shadow: 0 0 0 1px rgba(255,255,255,0.06); }
         .sth-npbar-title { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         /* Title doubles as the Spotify link: click to copy. */
@@ -941,7 +959,8 @@ export const HOME_CSS = `
         /* Same as the bar's play button: a plain white glyph, no filled plate,
            a soft square behind it on hover. */
         .sth-full-play { width: 52px; height: 52px; border-radius: var(--r-ctl-m); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: transparent; color: #fff; transition: transform 0.1s ease, background 0.14s ease; }
-        .sth-full-play:hover { background: rgba(255,255,255,0.08); }
+        /* Play buttons have no hover state, anywhere. */
+        .sth-full-play:hover { background: transparent; }
         .sth-full-play:active { transform: scale(0.95); }
         .sth-full-actions { margin-top: 14px; display: flex; align-items: center; gap: 4px; }
         .sth-full-panel { position: relative; flex-shrink: 0; width: clamp(340px, 36%, 520px); min-height: 0; display: flex; flex-direction: column; border-radius: var(--r-card); overflow: hidden; background: rgba(0,0,0,0.34); border: 1px solid rgba(255,255,255,0.07); animation: sthPanelIn 0.26s cubic-bezier(0.22,1,0.3,1) both; }
@@ -967,7 +986,7 @@ export const HOME_CSS = `
         /* The original treatment: a plain white glyph, no filled plate behind
            it. Same size as the rest of the transport, just brighter. */
         .sth-npbar-play { width: 40px; height: 40px; border-radius: var(--r-ctl-m); background: transparent; color: #fff; }
-        .sth-npbar-play:hover { background: rgba(255,255,255,0.08); filter: none; }
+        .sth-npbar-play:hover { background: transparent; filter: none; }
         .sth-npbar-scrub { display: grid; grid-template-columns: 36px 420px 36px; align-items: center; gap: 10px; max-width: 100%; }
         @media (max-width: 1180px) { .sth-npbar-scrub { grid-template-columns: 36px minmax(120px, 1fr) 36px; width: 100%; } }
         .sth-npbar-t { font-size: 11px; color: var(--text-faint); }
@@ -1046,8 +1065,10 @@ export const HOME_CSS = `
         .sth-albart { border-radius: var(--r-art); }
         .sth-alb-play { position: absolute; right: 10px; bottom: 10px; width: 40px; height: 40px; border-radius: var(--r-ctl-m);
           display: flex; align-items: center; justify-content: center; border: none; cursor: pointer;
-          background: var(--accent); color: var(--accent-ink); opacity: 0; transform: translateY(6px);
-          transition: opacity 150ms ease, transform 150ms ease; }
+          /* The bar's play button, on a dark glass square so it reads on any cover. */
+          background: rgba(12,12,14,0.58); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); color: #fff;
+          opacity: 0; transform: translateY(6px);
+          transition: opacity 150ms ease, transform 150ms ease, background 140ms ease; }
         .sth-alb:hover .sth-alb-play, .sth-alb:focus-within .sth-alb-play { opacity: 1; transform: translateY(0); }
         @media (prefers-reduced-motion: reduce) { .sth-alb-play { transition: none; } }
 

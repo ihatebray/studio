@@ -6,6 +6,7 @@ import { ExplicitBadge, HiResImg, PlayIcon } from '../sharedUI.jsx';
 import { PlayingBars } from './common.jsx';
 import { RowPlayButton } from './Library.jsx';
 import { BoundedMap } from '../../lib/boundedMap.js';
+import ScrollJump from './ScrollJump.jsx';
 
 /* Album and playlist pages, in the layouts picked under Settings → Layout.
    (Classic is the original page and still lives in LibraryPage.) Every
@@ -61,9 +62,8 @@ const CSS = `
 .rp-topbar-id { display: flex; align-items: center; gap: 10px; min-width: 0; opacity: 0; transform: translateY(4px); pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease; }
 .rp-topbar.is-stuck .rp-topbar-id { opacity: 1; transform: none; pointer-events: auto; }
-.rp-topbar-play { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
-  background: #fff; color: #0a0a0b; }
-.rp-topbar-play:hover { filter: brightness(0.9); }
+.rp-topbar-play { width: 32px; height: 32px; flex-shrink: 0; border-radius: var(--r-ctl-s, 8px); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  background: transparent; color: #fff; transition: background 0.14s ease; }
 .rp-topbar-art { width: 32px; height: 32px; flex-shrink: 0; border-radius: 6px; background-color: rgba(255,255,255,0.08); background-size: cover; background-position: center; }
 .rp-topbar-id b { font-size: 15px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
 .rp-cover { position: relative; flex-shrink: 0; overflow: hidden; background: rgba(255,255,255,0.06); }
@@ -210,7 +210,7 @@ const CSS = `
 .rp-list.is-soft .sth-lrow-n { height: 34px; }
 .rp-list.is-soft .sth-lrow-num { width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,0.08); font-size: 12.5px; font-weight: 700; color: rgba(255,255,255,0.78); }
-.rp-list.is-soft .sth-lrow-play { left: 0; width: 32px; height: 32px; background: #fff; color: #000; border-radius: 50% !important; }
+.rp-list.is-soft .sth-lrow-play { left: 0; width: 32px; height: 32px; background: transparent; color: #fff; transition: background 0.14s ease; }
 .rp-list.is-soft .rp-art { width: 44px; height: 44px; border-radius: 12px; }
 .rp-list .sth-lrow.is-missing .rp-ttl { color: rgba(255,255,255,0.5) !important; }
 .rp-list .sth-lrow.is-missing .rp-sub, .rp-list .sth-lrow.is-missing .sth-lrow-dim { opacity: 0.7; }
@@ -441,6 +441,8 @@ export default function RecordPage({
         </span>
       ) : null}
       {opts.genres && genres.length ? genres.map((g) => <span key={g} className="rp-pill">{g}</span>) : null}
+      {/* Poster has no top bar: its list's arrows go with the other actions. */}
+      {layout === 'poster' && !isAlbum ? <ScrollJump scrollRef={glassRef} watch={tracks.length} size={34} /> : null}
     </div>
   );
 
@@ -579,6 +581,7 @@ export default function RecordPage({
   /* Big header: the glow layer is as tall as the hero and moves with the
      scroll, set straight on the element so scrolling doesn't re-render. */
   const scrollRef = useRef(null);
+  const glassRef = useRef(null); // the poster layout's list, which scrolls on its own
   const heroRef = useRef(null);
   const heroPaintRef = useRef(null);
   useLayoutEffect(() => {
@@ -621,6 +624,9 @@ export default function RecordPage({
         <span className="rp-topbar-art" style={blurStyle || undefined} />
         <b>{data.title}</b>
       </div>
+      {/* A playlist can run to thousands of songs: top and end are a click
+          away, up here where they're always in reach and never over a song. */}
+      {!isAlbum ? <span style={{ marginLeft: 'auto' }}><ScrollJump scrollRef={scrollRef} watch={`${layout}:${tracks.length}`} /></span> : null}
     </div>
   );
 
@@ -734,7 +740,7 @@ export default function RecordPage({
             {actions()}
           </div>
         </div>
-        <div className="rp-glasscol"><div className="rp-glass sth-libscroll">{renderList(true)}{more}</div></div>
+        <div className="rp-glasscol"><div className="rp-glass sth-libscroll" ref={glassRef}>{renderList(true)}{more}</div></div>
       </div>
     );
   }

@@ -68,6 +68,7 @@ import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
 import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist, helperDiscography, helperPathfinder } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
+import { registerSpotifyLinkIpc } from './spotifyLinks.js';
 import { registerFollowsIpc } from './follows.js';
 import { registerCountdownsIpc } from './countdowns.js';
 import { registerListeningIpc } from './listening.js';
@@ -180,6 +181,7 @@ registerSpotifyPartnerIpc(ipcMain);
    use, signed in with the account above. */
 registerSpotifyPlayerIpc(ipcMain);
 registerSpotifyFeedIpc(ipcMain);
+registerSpotifyLinkIpc(ipcMain);
 registerFollowsIpc(ipcMain);
 registerCountdownsIpc(ipcMain);
 registerListeningIpc(ipcMain);

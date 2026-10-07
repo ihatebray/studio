@@ -57,6 +57,8 @@ const CSS = `
   background: transparent; color: rgba(255,255,255,0.35); display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.14s; }
 .stn-item:hover .stn-x { opacity: 1; }
 .stn-x:hover { color: #fff; background: rgba(255,255,255,0.08); }
+.stn-item.is-focus { animation: stnFocus 1.8s ease-out both; }
+@keyframes stnFocus { 0%, 35% { background: rgba(var(--tk), 0.16); } 100% { background: transparent; } }
 .stn-empty { padding: 40px 20px 44px; text-align: center; color: rgba(255,255,255,0.5); font-size: 12.5px; }
 .stn-empty b { display: block; color: rgba(255,255,255,0.85); font-size: 14px; margin-bottom: 4px; }
 /* A new version, pinned above the list until it's installed. */
@@ -66,7 +68,7 @@ const CSS = `
 .stn-up-btn { margin-top: 10px; height: 30px; padding: 0 14px; border: none; border-radius: 999px; cursor: pointer; font: inherit;
   font-size: 12.5px; font-weight: 800; background: #fff; color: #0a0a0b; transition: filter 0.14s ease; }
 .stn-up-btn:hover { filter: brightness(0.9); }
-@media (prefers-reduced-motion: reduce) { .stn-panel { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .stn-panel, .stn-item.is-focus { animation: none; } }
 `;
 
 export default function NotificationsButton() {
@@ -79,14 +81,35 @@ export default function NotificationsButton() {
   // What was new when the panel opened stays marked while it's open.
   const [openedSeenAt, setOpenedSeenAt] = useState(0);
 
+  // The entry a clicked toast asked for: scrolled to and lit up briefly.
+  const [focusId, setFocusId] = useState(null);
+  const listRef = useRef(null);
+
   const show = () => { setOpenedSeenAt(seenAt); setNow(Date.now()); setOpen(true); };
   const toggle = () => (open ? setOpen(false) : show());
 
   useEffect(() => {
-    const onOpen = () => show();
+    const onOpen = (e) => { setFocusId(e?.detail?.id || null); show(); };
     window.addEventListener(OPEN_NOTICES_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_NOTICES_EVENT, onOpen);
   });
+
+  useEffect(() => {
+    if (!open || !focusId) return undefined;
+    // Entry ids are digits, letters and a dash: safe in a selector as they are.
+    const el = listRef.current?.querySelector(`[data-notice="${focusId}"]`);
+    const box = listRef.current;
+    if (el && box) box.scrollTop = el.offsetTop - box.offsetTop - 6;
+    const t = setTimeout(() => setFocusId(null), 1900);
+    return () => clearTimeout(t);
+  }, [open, focusId]);
+
+  /* Compact mode's top bar hides when the pointer leaves it: it's told the
+     panel is open so it stays out (StudioHome), and when it closes. */
+  useEffect(() => {
+    try { window.dispatchEvent(new CustomEvent('studio:notices', { detail: { open } })); } catch { /* ignore */ }
+    if (!open) setFocusId(null);
+  }, [open]);
 
   // The compact top bar hid (StudioHome): close with it.
   useEffect(() => {
@@ -129,11 +152,11 @@ export default function NotificationsButton() {
             {items.length ? <button type="button" className="stn-clear" onClick={clearNotices}>Clear all</button> : null}
           </div>
           {update.offer || update.status.state === 'downloading' ? <UpdateRow status={update.status} /> : null}
-          <div className="stn-list">
+          <div className="stn-list" ref={listRef}>
             {items.length === 0 && !update.offer && update.status.state !== 'downloading' ? (
               <div className="stn-empty"><b>You’re all caught up</b>New versions of Studio, and problems it runs into like Spotify rate limits, show up here.</div>
             ) : items.map((n) => (
-              <div key={n.id} className={`stn-item${n.at > openedSeenAt ? ' is-new' : ''}`}
+              <div key={n.id} data-notice={n.id} className={`stn-item${n.at > openedSeenAt ? ' is-new' : ''}${n.id === focusId ? ' is-focus' : ''}`}
                 style={{ '--tk': KIND_RGB[n.kind] || 'var(--st-acc-rgb, 190, 190, 196)' }}>
                 <span className="stn-ic"><KindIcon kind={n.kind} /></span>
                 <div style={{ minWidth: 0 }}>

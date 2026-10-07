@@ -18,7 +18,7 @@ import { SORT_LABELS } from './constants.js';
 
 
 
-function ImportMenuItem({ label, hint, onClick }) {
+export function ImportMenuItem({ label, hint, onClick }) {
   const [h, setH] = useState(false);
   return (
     <button

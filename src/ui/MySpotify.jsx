@@ -33,6 +33,7 @@ import { ago, cx, fmtMs } from '../lib/format.js';
 import { hiResCover } from '../lib/coverUrl.js';
 import { pageWash, recordWashSource, sampleCoverTheme } from '../lib/coverTheme.js';
 import { BoundedMap } from '../lib/boundedMap.js';
+import { PlayIcon } from './sharedUI.jsx';
 
 /* ------------------------------------------------------------------ data */
 
@@ -119,6 +120,7 @@ async function loadCollection(item) {
   switch (item.kind) {
     case 'album': {
       if (item.countdown) return countdownAlbum(item.countdown);
+      if (item.rows?.length) return item.rows;
       const r = await api.spotifyGetAlbumTracks(item.id);
       return (r?.tracks || []).map((t) => ({ ...t, albumId: item.id }));
     }
@@ -161,7 +163,8 @@ function greeting() {
 /* ----------------------------------------------------------------- icons */
 
 const Icon = {
-  play: (s = 14) => <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" /></svg>,
+  // The same glyph as the now-playing bar's play button.
+  play: (s = 14) => <PlayIcon size={s} />,
   pause: (s = 14) => <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor" aria-hidden><rect x="6" y="4" width="4.5" height="16" rx="1.2" /><rect x="13.5" y="4" width="4.5" height="16" rx="1.2" /></svg>,
   shuffle: (s = 15) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>,
   refresh: (s = 15) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" /></svg>,
@@ -199,10 +202,11 @@ const CSS = `
   background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.35), rgba(var(--accent-rgb), 0.08)); }
 .msp-art > img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .msp-art.is-round { border-radius: 50%; }
-.msp-playfab { position: absolute; right: 8px; bottom: 8px; width: 40px; height: 40px; border-radius: 50%; border: none;
+.msp-playfab { position: absolute; right: 8px; bottom: 8px; width: 40px; height: 40px; border-radius: var(--r-ctl-m, 10px); border: none;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
-  background: var(--accent); color: var(--accent-ink); box-shadow: 0 8px 22px rgba(0,0,0,0.45);
-  opacity: 0; transform: translateY(6px) scale(0.92); transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22,1,0.36,1); }
+  /* The bar's play button, on a dark glass square so it reads on any cover. */
+  background: rgba(12,12,14,0.58); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); color: #fff;
+  opacity: 0; transform: translateY(6px) scale(0.92); transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22,1,0.36,1), background 0.14s ease; }
 .msp-tile:hover .msp-playfab, .msp-tile:focus-within .msp-playfab, .msp-playfab.is-on { opacity: 1; transform: none; }
 
 /* playing bars */
@@ -270,8 +274,8 @@ const CSS = `
 .msp-jumptile .msp-art { width: 64px; height: 64px; border-radius: 0; }
 .msp-jumptile .nm { font-size: 13.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .msp-jumptile .sb { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
-.msp-jumptile .go { margin-left: auto; width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  background: var(--accent); color: var(--accent-ink); opacity: 0; transform: scale(0.85); transition: opacity 0.16s ease, transform 0.2s ease; }
+.msp-jumptile .go { margin-left: auto; width: 32px; height: 32px; flex-shrink: 0; border-radius: var(--r-ctl-s, 8px); display: flex; align-items: center; justify-content: center;
+  background: transparent; color: #fff; opacity: 0; transform: scale(0.85); transition: opacity 0.16s ease, transform 0.2s ease, background 0.14s ease; }
 .msp-jumptile:hover .go { opacity: 1; transform: none; }
 
 /* two-up lists */
@@ -282,6 +286,7 @@ const CSS = `
   padding: 6px 8px; border-radius: 10px; cursor: pointer; transition: background 0.14s ease; }
 .msp-row:hover { background: rgba(255,255,255,0.05); }
 .msp-row.on .t { color: var(--accent-line); }
+.msp-row.is-focus { background: rgba(255,255,255,0.08); }
 .msp-row .n { font-size: 12.5px; font-weight: 700; color: var(--text-faint); text-align: center; font-variant-numeric: tabular-nums; }
 .msp-row .msp-art { width: 40px; height: 40px; border-radius: 6px; }
 .msp-row .t { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -383,9 +388,8 @@ const CSS = `
 .msp-rgroup span { font-size: 11.5px; font-weight: 500; color: rgba(var(--st-fg-rgb), 0.34); font-variant-numeric: tabular-nums; }
 .msp-rn { position: relative; display: flex; align-items: center; height: 38px; }
 .msp-rn .num { font-size: 12px; color: rgba(var(--st-fg-rgb), 0.35); font-variant-numeric: tabular-nums; display: flex; }
-.msp-rn .pl { position: absolute; left: -6px; top: 0; bottom: 0; margin: auto 0; width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent;
+.msp-rn .pl { position: absolute; left: -6px; top: 0; bottom: 0; margin: auto 0; width: 28px; height: 28px; border-radius: var(--r-ctl-s, 8px); border: none; background: transparent;
   color: var(--st-text, #fff); cursor: pointer; display: none; align-items: center; justify-content: center; }
-.msp-rn .pl:hover { background: rgba(var(--st-fg-rgb), 0.1); }
 .msp-rrow:hover .msp-rn .num { opacity: 0; }
 .msp-rrow:hover .msp-rn .pl { display: flex; }
 .msp-rtitle { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -524,10 +528,19 @@ function SaveButton({ state, onSave }) {
 }
 
 /** One track row. `n` is a rank / position; `meta` the right-hand text. */
-function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context = null }) {
+function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context = null, focus = false }) {
   const on = bridge.isCurrent(row);
+  /* The song a link pointed at: marked, and scrolled to once it's drawn. */
+  const ref = useRef(null);
+  useEffect(() => {
+    // Only the panel's list scrolls: scrollIntoView would also nudge the
+    // page behind it, whose boxes hide their overflow but still scroll.
+    const el = ref.current;
+    const box = focus ? el?.closest('.msp-panel-body') : null;
+    if (box) box.scrollTop = el.offsetTop - box.offsetTop - (box.clientHeight - el.offsetHeight) / 2;
+  }, [focus]);
   return (
-    <div className={cx('msp-row', on && 'on', !showArt && 'no-art')} role="button" tabIndex={0}
+    <div ref={ref} className={cx('msp-row', on && 'on', !showArt && 'no-art', focus && 'is-focus')} role="button" tabIndex={0}
       onClick={() => bridge.playRows(list, index, { context })}
       onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}
       {...bridge.hoverProps(row)}>
@@ -658,12 +671,24 @@ function CollectionPanel({ item, bridge, onClose }) {
           {!rows && !err ? Array.from({ length: 8 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 40, margin: '8px 6px' }} />) : null}
           {(rows || []).map((r, i) => (
             <TrackRow key={`${r.spotifyId}:${i}`} row={r} n={i + 1} list={rows} index={i} bridge={bridge}
-              showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item} />
+              showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item}
+              focus={!!item.focusId && r.spotifyId === item.focusId} />
           ))}
           {rows && !rows.length ? <div className="st-meta" style={{ padding: 20, textAlign: 'center' }}>{item.empty || 'Nothing to play here.'}</div> : null}
         </div>
       </aside>
     </>
+  );
+}
+
+/** An album, playlist or song's album opened from a Spotify link: the same
+ *  side panel, over whatever page is showing. */
+export function SpotifyLinkPanel({ item, bridge, onClose }) {
+  return (
+    <div className="msp-root" style={{ zIndex: 30 }}>
+      <style>{CSS}</style>
+      <CollectionPanel item={item} bridge={bridge} onClose={onClose} />
+    </div>
   );
 }
 
@@ -1246,7 +1271,7 @@ export function SpotifyHome({ bridge }) {
                           <span className="sb" style={{ display: 'block' }}>{it.playedAt ? `${it.kind === 'mix' ? 'Mix' : it.sub || ''}${it.sub || it.kind === 'mix' ? ' · ' : ''}${ago(it.playedAt)}` : it.sub}</span>
                         </span>
                         <button type="button" className="go" aria-label={`Play ${it.name}`} style={{ border: 'none', cursor: 'pointer' }}
-                          onClick={(e) => { e.stopPropagation(); playItem(it); }}>{Icon.play(13)}</button>
+                          onClick={(e) => { e.stopPropagation(); playItem(it); }}>{Icon.play(15)}</button>
                       </div>
                     ))}
                   </div>

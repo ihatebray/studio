@@ -19,6 +19,7 @@ export function NowPlayingFullView({
   track, art, accent, isPlaying = false, onSeek,
   onTogglePlay, onPrev, onNext, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat,
   volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, onToggleFavorite, onAddToPlaylist, onMore,
+  savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false,
   onCopyLink, copyBusy = false, onZoomCover,
   animatedBg = false, immersePalette = null,
   tab = null, onTab, onClose,
@@ -188,23 +189,8 @@ export function NowPlayingFullView({
           </div>
 
           <div className="sth-full-actions">
-            {onToggleFavorite ? (
-              <button type="button" className={`sth-npbtn${track.isFavorite ? ' is-on' : ''}`} onClick={() => onToggleFavorite(track.id)}
-                title={track.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-                aria-label={track.isFavorite ? 'Remove from favourites' : 'Add to favourites'} aria-pressed={!!track.isFavorite}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill={track.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
-                </svg>
-              </button>
-            ) : null}
-            {onAddToPlaylist ? (
-              <button type="button" className="sth-npbtn" onClick={(e) => onAddToPlaylist(e, track)}
-                title="Add to playlist" aria-label="Add to playlist" aria-haspopup="menu">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" />
-                </svg>
-              </button>
-            ) : null}
+            <LibraryActions track={track} saved={savedTrack} onSave={onSaveToLibrary} saveBusy={saveBusy} saveFailed={saveFailed}
+              onToggleFavorite={onToggleFavorite} onAddToPlaylist={onAddToPlaylist} />
             {onMore ? (
               <button type="button" className="sth-npbtn" onClick={(e) => onMore(e, track)}
                 title="More" aria-label="More actions" aria-haspopup="menu">
@@ -957,11 +943,81 @@ export function CoverLightbox({ url, track, accent, albumKey, onPin, onClose }) 
  */
 /* The early return lives out here: the bar's body calls hooks, and a return
    above them changes how many run the moment playback stops (React throws). */
+/* The heart and add-to-playlist, for the bar and the full view. A song
+   played straight from Spotify (a copied link, My Spotify) isn't in the
+   library, so there's nothing to heart yet: the + saves it. Like Spotify's,
+   the + turns into a tick the moment it's clicked (with a little pop), holds
+   it until the save has landed and been seen, then gives way to the heart
+   and add-to-playlist, which slide in. A save that fails puts the + back.
+   Once saved, `saved` is the song's library row and the two act on that. */
+const CHECK_HOLD_MS = 900;
+function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFailed = false, onToggleFavorite, onAddToPlaylist }) {
+  // null: nothing to show off · 'check': the tick · 'reveal': the two arriving
+  const [phase, setPhase] = useState(null);
+  const shownAt = useRef(0);
+  useEffect(() => { setPhase(null); }, [track.id]);
+  useEffect(() => {
+    if (phase === 'check' && saveFailed && !saved) { setPhase(null); return undefined; }
+    if (phase !== 'check' || !saved) return undefined;
+    const t = setTimeout(() => setPhase('reveal'), Math.max(0, CHECK_HOLD_MS - (Date.now() - shownAt.current)));
+    return () => clearTimeout(t);
+  }, [phase, saved, saveFailed]);
+  useEffect(() => {
+    if (phase !== 'reveal') return undefined;
+    const t = setTimeout(() => setPhase(null), 600);
+    return () => clearTimeout(t);
+  }, [phase]);
+
+  if (phase === 'check' || (track.streamOnly && !saved && saveBusy)) {
+    return (
+      <button type="button" className="sth-npbtn sth-saved-tick" disabled title="Saved to your library" aria-label="Saved to your library">
+        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+          <circle cx="12" cy="12" r="9.5" fill="#fff" />
+          <path d="M7.8 12.3l2.9 2.9 5.6-5.8" fill="none" stroke="#0b0b0d" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    );
+  }
+  if (track.streamOnly && !saved) {
+    return onSave ? (
+      <button type="button" className="sth-npbtn" onClick={() => { shownAt.current = Date.now(); setPhase('check'); onSave(track); }}
+        title="Save to your library" aria-label="Save to your library">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" />
+        </svg>
+      </button>
+    ) : null;
+  }
+  const t = saved || track;
+  const arrive = phase === 'reveal';
+  return (
+    <>
+      {onToggleFavorite ? (
+        <button type="button" className={`sth-npbtn${t.isFavorite ? ' is-on' : ''}${arrive ? ' sth-lib-arrive' : ''}`} onClick={() => onToggleFavorite(t.id)}
+          title={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+          aria-label={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'} aria-pressed={!!t.isFavorite}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
+          </svg>
+        </button>
+      ) : null}
+      {onAddToPlaylist ? (
+        <button type="button" className={`sth-npbtn${arrive ? ' sth-lib-arrive is-second' : ''}`} onClick={(e) => onAddToPlaylist(e, t)}
+          title="Add to playlist" aria-label="Add to playlist" aria-haspopup="menu">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" />
+          </svg>
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 export function NowPlayingBar(props) {
   return props.track ? <NowPlayingBarBody {...props} /> : null;
 }
 
-function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
   const currentTime = usePlaybackTime();
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
@@ -1055,6 +1111,15 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
             )}
             <div className="sth-npbar-artist" title={track.artist}>{track.artist}</div>
           </div>
+          {/* Beside the title rather than in the right-hand cluster, which
+              they crowded at full size: the heart and add-to-playlist are
+              about the song. Compact's bar keeps them on the right. */}
+          {!compact ? (
+            <div className="sth-npbar-lib">
+              <LibraryActions track={track} saved={savedTrack} onSave={onSaveToLibrary} saveBusy={saveBusy} saveFailed={saveFailed}
+                onToggleFavorite={onToggleFavorite} onAddToPlaylist={onAddToPlaylist} />
+            </div>
+          ) : null}
         </div>
 
         {/* ---- Centre: transport, scrubber directly beneath ---- */}
@@ -1126,27 +1191,15 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
 
         {/* ---- Right, 282px: three clusters ---- */}
         <div className="sth-npbar-right">
-          <div className="sth-npbar-cluster">
-            {onToggleFavorite ? (
-              <button type="button" className={`sth-npbtn${track.isFavorite ? ' is-on' : ''}`} onClick={() => onToggleFavorite(track.id)}
-                title={track.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-                aria-label={track.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-                aria-pressed={!!track.isFavorite}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill={track.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
-                </svg>
-              </button>
-            ) : null}
-            {onAddToPlaylist ? (
-              <button type="button" className="sth-npbtn" onClick={(e) => onAddToPlaylist(e, track)}
-                title="Add to playlist" aria-label="Add to playlist" aria-haspopup="menu">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" />
-                </svg>
-              </button>
-            ) : null}
-          </div>
-          <span aria-hidden className="sth-npbtn-rule" />
+          {compact ? (
+            <>
+              <div className="sth-npbar-cluster">
+                <LibraryActions track={track} saved={savedTrack} onSave={onSaveToLibrary} saveBusy={saveBusy} saveFailed={saveFailed}
+                  onToggleFavorite={onToggleFavorite} onAddToPlaylist={onAddToPlaylist} />
+              </div>
+              <span aria-hidden className="sth-npbtn-rule" />
+            </>
+          ) : null}
           <div className="sth-npbar-cluster">
             {onToggleQueue ? (
               <button type="button" className={`sth-npbtn is-toggle${queueOpen ? ' is-on' : ''}`} onClick={onToggleQueue}
