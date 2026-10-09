@@ -16,6 +16,9 @@ serde_json = "1"
 log = "0.4"
 # Search (src/search.rs): the metadata protobufs librespot already builds.
 librespot-protocol = "0.8.0"
+# The player's own "can this song play?" (AudioItem), for marking songs on an
+# album that isn't out yet (src/search.rs). Already part of the build.
+librespot-metadata = { version = "0.8.0", default-features = false, features = ["rustls-tls-webpki-roots"] }
 protobuf = "3"
 # The collection service requests (src/library.rs).
 http = "1"

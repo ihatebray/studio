@@ -1,8 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, titleCase } from '../../lib/format.js';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
-import { hoverPreload, spotifyIdOf } from '../../lib/spotifyMediaElement.js';
-import { ExplicitBadge, HiResImg, PlayIcon } from '../sharedUI.jsx';
+import { spotifyIdOf } from '../../lib/spotifyMediaElement.js';
+import { ExplicitBadge, HiResImg, PauseIcon, PlayIcon } from '../sharedUI.jsx';
 import { PlayingBars } from './common.jsx';
 import { RowPlayButton } from './Library.jsx';
 import { BoundedMap } from '../../lib/boundedMap.js';
@@ -37,9 +37,9 @@ export function recordLayoutOf(v) {
 export const RECORD_LAYOUTS = [
   ['classic', 'Classic'],
   ['header', 'Big header'],
-  ['centred', 'Centred'],
+  ['centred', 'Centered'],
   ['sleeve', 'Record sleeve'],
-  ['colour', 'Full colour'],
+  ['colour', 'Full color'],
   ['poster', 'Poster'],
 ];
 
@@ -56,16 +56,36 @@ const CSS = `
    leaves clear. */
 .rp-topbar { position: sticky; top: 0; z-index: 6; height: 56px; margin-bottom: -56px; display: flex; align-items: center; gap: 12px;
   padding: 0 14px; transition: background 0.2s ease, box-shadow 0.2s ease; }
-.rp-topbar.is-stuck { background: rgba(var(--rp-deep), 0.84); backdrop-filter: blur(18px) saturate(1.3); -webkit-backdrop-filter: blur(18px) saturate(1.3);
+/* Solid once stuck: songs scrolling under it used to show through. */
+.rp-topbar.is-stuck { background: rgb(var(--rp-deep));
   box-shadow: inset 0 -1px 0 rgba(255,255,255,0.07); }
+/* The scrollbar's gutter sits beside the bar, so its top takes the same
+   fill and edge: the bar runs to the window's edge instead of stopping short.
+   On the scrollbar itself, not its track: the track starts 14px down (its
+   margin keeps the thumb off the rounded corner). */
+.rp-scroll.is-stuck::-webkit-scrollbar { background: linear-gradient(to bottom, rgb(var(--rp-deep)) 55px, rgba(255,255,255,0.07) 55px, rgba(255,255,255,0.07) 56px, transparent 56px); }
 .rp-topbar .rp-back { position: static; flex-shrink: 0; }
-.rp-topbar-id { display: flex; align-items: center; gap: 10px; min-width: 0; opacity: 0; transform: translateY(4px); pointer-events: none;
+/* Stuck, the bar is its own backdrop: back drops its glass circle and sits
+   as a plain glyph beside play, like the rest of the bar. */
+.rp-topbar.is-stuck .rp-back { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.rp-topbar.is-stuck .rp-back:hover { background: rgba(255,255,255,0.1); }
+/* Stuck: what you're looking at on the left (cover, name, a line of
+   detail), what you can do on the right, ending in Play. Both fade in once
+   the title has scrolled away; before that only back shows. */
+.rp-topbar-id, .rp-topbar-acts { display: flex; align-items: center; min-width: 0; opacity: 0; transform: translateY(4px); pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease; }
-.rp-topbar.is-stuck .rp-topbar-id { opacity: 1; transform: none; pointer-events: auto; }
-.rp-topbar-play { width: 32px; height: 32px; flex-shrink: 0; border-radius: var(--r-ctl-s, 8px); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
-  background: transparent; color: #fff; transition: background 0.14s ease; }
-.rp-topbar-art { width: 32px; height: 32px; flex-shrink: 0; border-radius: 6px; background-color: rgba(255,255,255,0.08); background-size: cover; background-position: center; }
-.rp-topbar-id b { font-size: 15px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
+.rp-topbar-id { gap: 12px; flex: 1; }
+.rp-topbar-acts { gap: 6px; flex-shrink: 0; }
+.rp-topbar.is-stuck .rp-topbar-id, .rp-topbar.is-stuck .rp-topbar-acts { opacity: 1; transform: none; pointer-events: auto; }
+.rp-topbar-art { width: 36px; height: 36px; flex-shrink: 0; border-radius: 6px; background-color: rgba(255,255,255,0.08); background-size: cover; background-position: center; }
+.rp-topbar-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.rp-topbar-txt b { font-size: 15px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
+.rp-topbar-txt span { margin-top: 2px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-topbar-ib { width: 36px; height: 36px; flex-shrink: 0; border: none; border-radius: var(--r-ctl-s, 8px); padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; background: transparent; color: rgba(255,255,255,0.72); transition: color 0.14s ease, background 0.14s ease; }
+.rp-topbar-ib:hover, .rp-topbar-ib[aria-expanded="true"] { color: #fff; background: rgba(255,255,255,0.1); }
+.rp-topbar-play { height: 36px; padding: 0 16px 0 13px; margin-right: 6px; flex-shrink: 0; border-radius: 10px; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px; background: #fff; color: #000; font: inherit; font-size: 13.5px; font-weight: 800; }
 .rp-cover { position: relative; flex-shrink: 0; overflow: hidden; background: rgba(255,255,255,0.06); }
 .rp-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .rp-cover.is-shadow { box-shadow: 0 18px 50px rgba(0,0,0,0.38), 0 2px 8px rgba(0,0,0,0.28); }
@@ -83,12 +103,12 @@ const CSS = `
 .rp-pill { display: inline-flex; align-items: center; height: 28px; padding: 0 13px; border-radius: 999px; background: rgba(255,255,255,0.12); font-size: 12.5px; font-weight: 600; color: rgba(255,255,255,0.88); }
 .rp-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .rp-acts .rp-gap { flex: 1; min-width: 0; }
-.rp-play { height: 46px; padding: 0 24px 0 20px; border-radius: 999px; border: none; cursor: pointer; background: #fff; color: #000;
+.rp-play { height: 46px; padding: 0 24px 0 20px; border-radius: 12px; border: none; cursor: pointer; background: #fff; color: #000;
   display: inline-flex; align-items: center; gap: 9px; font: inherit; font-weight: 800; font-size: 15px; transition: transform .12s ease; flex-shrink: 0; }
 .rp-play:hover { transform: scale(1.03); }
-.rp-ib { position: relative; width: 42px; height: 42px; border-radius: 50%; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
-  color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.12); transition: background .15s ease, color .15s ease; }
-.rp-ib:hover { background: rgba(255,255,255,0.2); color: #fff; }
+.rp-ib { position: relative; width: 40px; height: 40px; border-radius: var(--r-ctl-s, 8px); border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  color: rgba(255,255,255,0.78); background: transparent; transition: background .15s ease, color .15s ease; }
+.rp-ib:hover, .rp-ib[aria-expanded="true"] { background: rgba(255,255,255,0.1); color: #fff; }
 .rp-menu { position: absolute; top: 48px; left: 0; z-index: 20; width: 200px; padding: 5px; border-radius: 12px; background: #0d0d0e; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
 
 .rp-list .sth-lrow { padding: 0 10px; }
@@ -317,6 +337,7 @@ export default function RecordPage({
   coverFor, playCountFor, showPlayCounts,
   libAlbums = [], libArtists = [], onOpenAlbum, onOpenArtist, onBack,
   onChangeCover, onEditAlbum, onEditPlaylist, onDeletePlaylist,
+  onPlayNext, onAddToQueue, onAddToPlaylist,   // (tracks, name) / (tracks, name) / (trackIds)
   moreOpen, setMoreOpen,
   bridge = null,  // saveRow / saveState for Spotify rows (StudioHome's mySpotifyBridge)
   fullAlbum = false, // Settings → Layout → Album Songs: the whole album, not just your songs
@@ -421,23 +442,43 @@ export default function RecordPage({
   // With the whole album known, Play plays all of it (your copies where you have them).
   const playList = queue || data.tracks;
   const playAll = () => onPlayTrack?.(playList[0], playList);
+  /* Playing from here: Play turns into Pause (and pauses rather than
+     starting over), on the page and in the sticking bar. */
+  const curSid = spotifyIdOf(currentTrack);
+  const playingHere = !!currentTrack && playList.some((t) => t && (t.id === currentTrack.id || (!!curSid && spotifyIdOf(t) === curSid)));
+  const showPause = playingHere && isPlaying;
+  const playPause = () => (playingHere && onTogglePlay ? onTogglePlay() : playAll());
   const shuffle = () => { const sh = [...playList].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); };
+  /* The "…" menu, for albums and playlists alike: queue it, add it to a
+     playlist, and (a playlist's own) rename, cover and delete. The same menu
+     opens from the page's buttons and from the bar once it has stuck. */
+  const menuItems = [
+    onPlayNext && playList.length ? { label: 'Play next', run: () => onPlayNext(playList, data.title) } : null,
+    onAddToQueue && playList.length ? { label: 'Add to queue', run: () => onAddToQueue(playList, data.title) } : null,
+    onAddToPlaylist && data.tracks.length ? { label: 'Add to playlist…', run: () => onAddToPlaylist(data.tracks.map((t) => t.id)) } : null,
+    !isAlbum && onEditPlaylist ? { label: 'Rename playlist', run: onEditPlaylist, gap: true } : null,
+    !isAlbum && onChangeCover ? { label: 'Change cover', run: onChangeCover } : null,
+    !isAlbum && onDeletePlaylist ? { label: 'Delete playlist', run: onDeletePlaylist, danger: true } : null,
+  ].filter(Boolean);
+  const moreMenu = (style) => (
+    <span className="rp-menu" role="menu" style={style}>
+      {menuItems.map((it) => (
+        <button key={it.label} type="button" role="menuitem" className="sth-mi"
+          style={{ ...(it.danger ? { color: 'var(--danger)' } : null), ...(it.gap ? { marginTop: 4, boxShadow: '0 -1px 0 rgba(255,255,255,0.08)', borderRadius: '0 0 8px 8px' } : null) }}
+          onClick={() => { setMoreOpen(false); it.run(); }}>{it.label}</button>
+      ))}
+    </span>
+  );
   const actions = (opts = {}) => (
     <div className="rp-acts">
       {opts.shuffleFirst ? <button type="button" className="rp-ib" title="Shuffle" aria-label="Shuffle" onClick={shuffle}><Icon name="shuffle" /></button> : null}
-      <button type="button" className="rp-play" onClick={playAll} aria-label={`Play ${data.title}`}><PlayIcon size={15} />Play</button>
+      <button type="button" className="rp-play" onClick={playPause} aria-label={`${showPause ? 'Pause' : 'Play'} ${data.title}`}>{showPause ? <PauseIcon size={15} /> : <PlayIcon size={15} />}{showPause ? 'Pause' : 'Play'}</button>
       {opts.shuffleFirst ? null : <button type="button" className="rp-ib" title="Shuffle" aria-label="Shuffle" onClick={shuffle}><Icon name="shuffle" /></button>}
       {isAlbum && onEditAlbum ? <button type="button" className="rp-ib" title="Edit album details" aria-label="Edit album details" onClick={onEditAlbum}><Icon name="edit" size={16} /></button> : null}
-      {!isAlbum && (onEditPlaylist || onDeletePlaylist) ? (
+      {menuItems.length ? (
         <span style={{ position: 'relative' }}>
-          <button type="button" className="rp-ib" title="More" aria-label="More" aria-expanded={moreOpen} onClick={() => setMoreOpen((v) => !v)}><Icon name="more" /></button>
-          {moreOpen ? (
-            <span className="rp-menu">
-              {onEditPlaylist ? <button type="button" className="sth-mi" onClick={() => { setMoreOpen(false); onEditPlaylist(); }}>Rename playlist</button> : null}
-              {onChangeCover ? <button type="button" className="sth-mi" onClick={() => { setMoreOpen(false); onChangeCover(); }}>Change cover</button> : null}
-              {onDeletePlaylist ? <button type="button" className="sth-mi" style={{ color: 'var(--danger)' }} onClick={() => { setMoreOpen(false); onDeletePlaylist(); }}>Delete playlist</button> : null}
-            </span>
-          ) : null}
+          <button type="button" className="rp-ib" title="More" aria-label="More" aria-expanded={moreOpen && !stuck} onClick={() => setMoreOpen((v) => !v)}><Icon name="more" /></button>
+          {moreOpen && !stuck ? moreMenu() : null}
         </span>
       ) : null}
       {opts.genres && genres.length ? genres.map((g) => <span key={g} className="rp-pill">{g}</span>) : null}
@@ -448,7 +489,7 @@ export default function RecordPage({
 
   const heart = (t) => (onToggleFavorite ? (
     <button type="button" className="sth-lrow-more" onClick={() => onToggleFavorite(t.id)}
-      title={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+      title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
       style={{ opacity: t.isFavorite ? 1 : undefined, color: t.isFavorite ? `rgb(${accUI})` : undefined }}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
@@ -510,7 +551,7 @@ export default function RecordPage({
               style={soft ? { gridTemplateColumns: softCols } : { gridTemplateColumns: cols, height: rowH }}
               onDoubleClick={() => onPlayTrack?.(order[i], order)}
               onContextMenu={!missing && canManage ? (e) => openRowMenu(e, t) : undefined}>
-              <div className="sth-lrow-n" {...hoverPreload(t)}>
+              <div className="sth-lrow-n">
                 {playing
                   ? <span style={{ display: 'inline-flex', width: soft ? 32 : 'auto', justifyContent: 'center' }}><PlayingBars acc={accUI} playing={isPlaying} /></span>
                   : <span className="sth-lrow-num">{num}</span>}
@@ -616,17 +657,34 @@ export default function RecordPage({
     sc.addEventListener('scroll', check, { passive: true });
     return () => sc.removeEventListener('scroll', check);
   }, [layout, data.title]);
+  const detail = isAlbum
+    ? [data.by, year, `${(merged || data.tracks).length} songs`].filter(Boolean).join(' · ')
+    : [`${data.tracks.length} ${data.tracks.length === 1 ? 'song' : 'songs'}`, formatTotalMs(totalMs)].filter(Boolean).join(' · ');
   const topBar = (
     <div className={`rp-topbar${stuck ? ' is-stuck' : ''}`}>
       <button type="button" className="rp-back" onClick={onBack} title="Back" aria-label="Back"><Icon name="back" size={16} /></button>
       <div className="rp-topbar-id" aria-hidden={!stuck}>
-        <button type="button" className="rp-topbar-play" onClick={playAll} tabIndex={stuck ? 0 : -1} title="Play" aria-label={`Play ${data.title}`}><PlayIcon size={13} /></button>
         <span className="rp-topbar-art" style={blurStyle || undefined} />
-        <b>{data.title}</b>
+        <span className="rp-topbar-txt"><b>{data.title}</b>{detail ? <span>{detail}</span> : null}</span>
       </div>
-      {/* A playlist can run to thousands of songs: top and end are a click
-          away, up here where they're always in reach and never over a song. */}
-      {!isAlbum ? <span style={{ marginLeft: 'auto' }}><ScrollJump scrollRef={scrollRef} watch={`${layout}:${tracks.length}`} /></span> : null}
+      <div className="rp-topbar-acts" aria-hidden={!stuck}>
+        {/* A playlist can run to thousands of songs: top and end are a click
+            away, up here where they're always in reach and never over a song. */}
+        {!isAlbum ? <ScrollJump scrollRef={scrollRef} watch={`${layout}:${tracks.length}`} size={36} /> : null}
+        <button type="button" className="rp-topbar-play" onClick={playPause} tabIndex={stuck ? 0 : -1} aria-label={`${showPause ? 'Pause' : 'Play'} ${data.title}`}>
+          {showPause ? <PauseIcon size={13} /> : <PlayIcon size={13} />}{showPause ? 'Pause' : 'Play'}
+        </button>
+        <button type="button" className="rp-topbar-ib" tabIndex={stuck ? 0 : -1} title="Shuffle" aria-label={`Shuffle ${data.title}`} onClick={shuffle}><Icon name="shuffle" size={18} /></button>
+        {isAlbum && onEditAlbum ? (
+          <button type="button" className="rp-topbar-ib" tabIndex={stuck ? 0 : -1} title="Edit album details" aria-label="Edit album details" onClick={onEditAlbum}><Icon name="edit" size={16} /></button>
+        ) : null}
+        {menuItems.length ? (
+          <span style={{ position: 'relative' }}>
+            <button type="button" className="rp-topbar-ib" tabIndex={stuck ? 0 : -1} title="More" aria-label="More" aria-expanded={stuck && moreOpen} onClick={() => setMoreOpen((v) => !v)}><Icon name="more" size={18} /></button>
+            {stuck && moreOpen ? moreMenu({ left: 'auto', right: 0, top: 42 }) : null}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 
@@ -672,7 +730,7 @@ export default function RecordPage({
         {blurStyle ? <div className="rp-hero-bg" style={blurStyle} /> : null}
         <div className="rp-hero-dim" />
       </div>
-      <div className="rp-scroll sth-libscroll" ref={scrollRef}>
+      <div className={`rp-scroll sth-libscroll${stuck ? ' is-stuck' : ''}`} ref={scrollRef}>
         {topBar}
         <div className="rp-hero" ref={heroRef}>
           {cover()}
@@ -685,7 +743,7 @@ export default function RecordPage({
     );
   } else if (layout === 'centred') {
     body = (
-      <div className="rp-scroll sth-libscroll" ref={scrollRef}>
+      <div className={`rp-scroll sth-libscroll${stuck ? ' is-stuck' : ''}`} ref={scrollRef}>
         {topBar}
         <div className="rp-centre">
           {cover()}
@@ -702,7 +760,7 @@ export default function RecordPage({
   } else if (layout === 'sleeve') {
     const disc = isAlbum && data.art;
     body = (
-      <div className="rp-scroll sth-libscroll" ref={scrollRef}>
+      <div className={`rp-scroll sth-libscroll${stuck ? ' is-stuck' : ''}`} ref={scrollRef}>
         {topBar}
         <div className="rp-sleeve-head">
           <div className={`rp-sleeve${disc ? ' has-disc' : ''}`}>
@@ -716,7 +774,7 @@ export default function RecordPage({
     );
   } else if (layout === 'colour') {
     body = (
-      <div className="rp-scroll sth-libscroll" ref={scrollRef}>
+      <div className={`rp-scroll sth-libscroll${stuck ? ' is-stuck' : ''}`} ref={scrollRef}>
         {topBar}
         <div className="rp-colour-head">
           {cover()}

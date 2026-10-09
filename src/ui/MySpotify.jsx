@@ -235,7 +235,7 @@ const CSS = `
 .msp-cd-clock b { font-size: 20px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .msp-cd-clock small { margin-top: 1px; font-size: 9px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.58); }
 .msp-cd-date { margin-top: 9px; font-size: 12px; color: rgba(255,255,255,0.66); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.msp-cd-out { align-self: flex-start; margin-top: 12px; height: 30px; padding: 0 14px; border-radius: 999px; display: inline-flex; align-items: center; gap: 7px;
+.msp-cd-out { align-self: flex-start; margin-top: 12px; height: 30px; padding: 0 14px; border-radius: 8px; display: inline-flex; align-items: center; gap: 7px;
   background: #fff; color: #000; font-size: 13px; font-weight: 800; }
 .msp-cd-x { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); color: rgba(255,255,255,0.85);
@@ -287,6 +287,12 @@ const CSS = `
 .msp-row:hover { background: rgba(255,255,255,0.05); }
 .msp-row.on .t { color: var(--accent-line); }
 .msp-row.is-focus { background: rgba(255,255,255,0.08); }
+/* Listed but not out yet: shown so you can see the tracklist, but not
+   playable or saveable until Spotify releases it. */
+.msp-row.is-locked { cursor: default; }
+.msp-row.is-locked:hover { background: none; }
+.msp-row.is-locked .t, .msp-row.is-locked .a, .msp-row.is-locked .n, .msp-row.is-locked .m { opacity: 0.45; }
+.msp-row .msp-soon { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.4); }
 .msp-row .n { font-size: 12.5px; font-weight: 700; color: var(--text-faint); text-align: center; font-variant-numeric: tabular-nums; }
 .msp-row .msp-art { width: 40px; height: 40px; border-radius: 6px; }
 .msp-row .t { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -343,6 +349,15 @@ const CSS = `
 .msp-lhead-m { font-size: 12px; font-weight: 500; color: rgba(var(--st-sub-rgb, var(--st-fg-rgb)), 0.42); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .msp-lhead-r2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .msp-grow { flex: 1; }
+/* Compact: the same as the library pages, where the title goes and the
+   controls sit at the top of the card. The title and its 30px of air above
+   left a big empty band over everything. */
+.sth-root.is-compact .msp-scroll { padding-top: 14px; }
+.sth-root.is-compact .msp-lhead-tw { display: none; }
+.sth-root.is-compact .msp-lhead { gap: 0; padding-top: 0; }
+/* "Checked 2 hr ago" and its refresh button wrap as one, so a narrow window
+   can't leave the button alone on a line under the time. */
+.msp-refresh { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; }
 .msp-sep { width: 1px; height: 18px; margin: 0 6px; background: rgba(var(--st-fg-rgb), 0.1); flex-shrink: 0; }
 .msp-act { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: none; cursor: pointer; flex-shrink: 0;
   background: transparent; color: rgba(var(--st-sub-rgb, var(--st-fg-rgb)), 0.62); font-family: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap;
@@ -357,6 +372,8 @@ const CSS = `
 .msp-act .ct { font-size: 11px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.36); font-variant-numeric: tabular-nums; }
 .msp-act.is-on .ct { color: rgba(var(--st-fg-rgb), 0.55); }
 @media (max-width: 980px) { .msp-act-label { display: none; } }
+/* Narrower still, the time goes into the refresh button's tooltip. */
+@media (max-width: 900px) { .msp-updated { display: none; } }
 .msp-btn-glass { background: rgba(255,255,255,0.12); color: #fff; }
 .msp-btn-glass:hover { background: rgba(255,255,255,0.2); }
 
@@ -539,11 +556,26 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
     const box = focus ? el?.closest('.msp-panel-body') : null;
     if (box) box.scrollTop = el.offsetTop - box.offsetTop - (box.clientHeight - el.offsetHeight) / 2;
   }, [focus]);
+  if (row.notOut) {
+    return (
+      <div ref={ref} className={cx('msp-row', 'is-locked', !showArt && 'no-art')} aria-disabled title="Not out yet">
+        <span className="n">{n}</span>
+        {showArt ? <Art src={row.albumArtUrl} /> : null}
+        <span style={{ minWidth: 0 }}>
+          <span className="t" style={{ display: 'block' }}>{row.title}</span>
+          <span className="a" style={{ display: 'block' }}>{row.explicit ? <span className="e">E</span> : null}{row.artists}</span>
+        </span>
+        <span className="m">{meta}</span>
+        <span className="msp-soon" aria-label="Not out yet">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+        </span>
+      </div>
+    );
+  }
   return (
     <div ref={ref} className={cx('msp-row', on && 'on', !showArt && 'no-art', focus && 'is-focus')} role="button" tabIndex={0}
       onClick={() => bridge.playRows(list, index, { context })}
-      onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}
-      {...bridge.hoverProps(row)}>
+      onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}>
       <span className="n">{on && bridge.isPlaying ? <Bars /> : n}</span>
       {showArt ? <Art src={row.albumArtUrl} /> : null}
       <span style={{ minWidth: 0 }}>
@@ -608,12 +640,12 @@ function FeedError({ error, onRetry, onConnect }) {
 
 function RefreshButton({ loading, onClick, at, label = 'Updated' }) {
   return (
-    <>
+    <span className="msp-refresh">
       {at ? <span className="msp-updated">{label} {ago(at)}</span> : null}
-      <button type="button" className="st-icon-btn" onClick={onClick} disabled={loading} title="Refresh" aria-label="Refresh">
+      <button type="button" className="st-icon-btn" onClick={onClick} disabled={loading} title={at ? `${label} ${ago(at)}. Refresh` : 'Refresh'} aria-label="Refresh">
         <span className={loading ? 'st-spin' : ''} style={{ display: 'flex' }}>{Icon.refresh(15)}</span>
       </button>
-    </>
+    </span>
   );
 }
 
@@ -635,7 +667,10 @@ function CollectionPanel({ item, bridge, onClose }) {
   }, [onClose]);
 
   const total = (rows || []).reduce((n, r) => n + (r.durationMs || 0), 0);
-  const unsaved = (rows || []).filter((r) => !bridge.saveState(r));
+  // Songs not out yet (a countdown's tracklist) can't be played or saved.
+  const outRows = (rows || []).filter((r) => !r.notOut);
+  const notOut = (rows?.length || 0) - outRows.length;
+  const unsaved = outRows.filter((r) => !bridge.saveState(r));
   return (
     <>
       <div className="msp-scrim" onClick={onClose} />
@@ -651,13 +686,13 @@ function CollectionPanel({ item, bridge, onClose }) {
             <span className="sub">
               {item.kind === 'liked'
                 ? `${item.sub || ''}${rows?.length && item.count > rows.length ? ` · newest ${rows.length} here` : ''}`
-                : `${item.sub || ''}${rows?.length ? ` · ${rows.length} songs · ${Math.round(total / 60000)} min` : ''}`}
+                : `${item.sub || ''}${rows?.length ? ` · ${rows.length} songs${notOut ? ` · ${outRows.length} out` : ''} · ${Math.round(total / 60000)} min` : ''}`}
             </span>
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button type="button" className="st-btn st-btn-primary st-btn-sm" disabled={!rows?.length}
-                onClick={() => bridge.playRows(rows, 0, { context: item })}>{Icon.play(12)} Play</button>
-              <button type="button" className="st-btn st-btn-sm msp-btn-glass" disabled={!rows?.length}
-                onClick={() => bridge.playRows(rows, 0, { shuffle: true, context: item })}>{Icon.shuffle(13)} Shuffle</button>
+              <button type="button" className="st-btn st-btn-primary st-btn-sm" disabled={!outRows.length}
+                onClick={() => bridge.playRows(outRows, 0, { context: item })}>{Icon.play(12)} Play</button>
+              <button type="button" className="st-btn st-btn-sm msp-btn-glass" disabled={!outRows.length}
+                onClick={() => bridge.playRows(outRows, 0, { shuffle: true, context: item })}>{Icon.shuffle(13)} Shuffle</button>
               {unsaved.length > 1 ? (
                 <button type="button" className="st-btn st-btn-sm msp-btn-glass" onClick={() => unsaved.forEach((r) => bridge.saveRow(r))}
                   title="Add every song here to your library">{Icon.plus(12)} Save all</button>
@@ -718,7 +753,7 @@ const STUDIO_SECTIONS = [
   ['st:repeat', 'On Repeat', false],
   ['st:playlists', 'Your Playlists', false],
   ['st:albums', 'Albums in Your Library', true],
-  ['st:forever', 'Forever Favourites', false],
+  ['st:forever', 'Forever Favorites', false],
 ];
 const STUDIO_DEFAULT = Object.fromEntries(STUDIO_SECTIONS.map(([k, , on]) => [k, on]));
 
@@ -1348,12 +1383,11 @@ export function SpotifyHome({ bridge }) {
               {/* ---- All time ---- */}
               {prefs.shown('st:forever') && data.allTime.length ? (
                 <section className="msp-sec">
-                  <SectionHead title="Forever Favourites" meta="Your most played, all time" />
+                  <SectionHead title="Forever Favorites" meta="Your most played, all time" />
                   <div className="msp-grid is-small is-clip" style={{ '--rows': 2 }}>
                     {data.allTime.slice(0, 20).map((t, i) => (
                       <div key={t.spotifyId} className="msp-tile" role="button" tabIndex={0}
-                        onClick={() => bridge.playRows(data.allTime, i)} onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(data.allTime, i); }}
-                        {...bridge.hoverProps(t)}>
+                        onClick={() => bridge.playRows(data.allTime, i)} onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(data.allTime, i); }}>
                         <Art src={t.albumArtUrl}>
                           <span className="msp-rank">{i + 1}</span>
                           <span className={cx('msp-playfab', bridge.isCurrent(t) && 'is-on')}>{bridge.isCurrent(t) && bridge.isPlaying ? <Bars /> : Icon.play(14)}</span>
@@ -1485,8 +1519,7 @@ function ReleaseTracks({ release, bridge, context }) {
         return (
           <div key={`${r.spotifyId}:${i}`} className={cx('msp-trow', on && 'on')} role="button" tabIndex={0}
             onClick={() => bridge.playRows(rows, i, { context })}
-            onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}
-            {...bridge.hoverProps(r)}>
+            onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}>
             <span className="n">{on && bridge.isPlaying ? <Bars /> : <><span className="num">{i + 1}</span><span className="pl">{Icon.play(11)}</span></>}</span>
             <span className="tt">
               <span className="t">{r.explicit ? <span className="e">E</span> : null}{r.title}</span>

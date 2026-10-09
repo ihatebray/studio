@@ -190,7 +190,7 @@ const TOAST_POSITIONS = [
   { id: 'right', name: 'Bottom Right', note: 'Above the player, right corner' },
   { id: 'left', name: 'Bottom Left', note: 'Over the foot of the sidebar' },
   { id: 'top-right', name: 'Top Right', note: 'Top corner of the page' },
-  { id: 'top-center', name: 'Top Centre', note: 'Top middle of the page' },
+  { id: 'top-center', name: 'Top Center', note: 'Top middle of the page' },
 ];
 
 const DEFAULT_LAYOUT = {
@@ -377,13 +377,16 @@ const CSS = `
 .st-tcard-body { padding: 2px 14px 14px; }
 .st-tcard-body .st-tcard-sub { font-size: 12.5px; }
 .st-tcard-btns { display: flex; gap: 6px; margin-top: 12px; }
-.st-tcard-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border: none; border-radius: 999px; cursor: pointer;
+.st-tcard-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border: none; border-radius: 10px; cursor: pointer;
   font: inherit; font-size: 11.5px; font-weight: 700; white-space: nowrap; background: rgba(255, 255, 255, 0.13); color: #fff; transition: background 0.14s; }
 .st-tcard-btn:hover { background: rgba(255, 255, 255, 0.22); }
 .st-tcard-btn.is-primary { background: #fff; color: #0b0b0d; }
 .st-tcard-btn.is-primary:hover { background: rgba(255, 255, 255, 0.86); }
 .st-tcard-btn:disabled { cursor: default; opacity: 0.6; background: rgba(255, 255, 255, 0.13); }
 .st-tcard-btn svg { width: 11px; height: 11px; }
+.st-tcard-btn.is-icon { flex: 0 0 38px; padding: 0; }
+.st-tcard-btn.is-icon svg { width: 13px; height: 13px; }
+.st-tcard-btn.is-icon:disabled { opacity: 1; color: rgb(140, 220, 160); }
 .st-toast-life { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; transform-origin: 0 50%;
   background: rgba(var(--tk), 0.55); animation-name: stToastLife; animation-timing-function: linear; animation-fill-mode: forwards; }
 @keyframes stToastLife { from { transform: scaleX(1); } to { transform: scaleX(0); } }
@@ -408,6 +411,7 @@ const CARD_ICONS = {
   follow: <path d="M15 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19 8v6M22 11h-6" />,
 };
 export const CARD_STYLES = ['slim', 'strip', 'capsule', 'large'];
+const ICON_ONLY = new Set(['plus', 'check']);
 const CardIcon = ({ name }) => (CARD_ICONS[name] ? (
   <svg data-icon={name} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">{CARD_ICONS[name]}</svg>
 ) : null);
@@ -440,9 +444,17 @@ function ToastCard({ card, onButton, onDismiss }) {
           {card.meta ? <div className="st-tcard-meta">{card.meta}</div> : null}
           <div className="st-tcard-btns">
             {(card.buttons || []).map((b) => (
-              <button key={b.label} type="button" className={`st-tcard-btn${b.primary ? ' is-primary' : ''}`} disabled={!!b.disabled} onClick={() => onButton(b)}>
-                <CardIcon name={b.icon} />{b.label}
-              </button>
+              /* Save is a +, and saved a tick, here as everywhere else. */
+              ICON_ONLY.has(b.icon) ? (
+                <button key={b.label} type="button" className="st-tcard-btn is-icon" disabled={!!b.disabled}
+                  title={b.label} aria-label={b.label} onClick={() => onButton(b)}>
+                  <CardIcon name={b.icon} />
+                </button>
+              ) : (
+                <button key={b.label} type="button" className={`st-tcard-btn${b.primary ? ' is-primary' : ''}`} disabled={!!b.disabled} onClick={() => onButton(b)}>
+                  <CardIcon name={b.icon} />{b.label}
+                </button>
+              )
             ))}
           </div>
         </div>

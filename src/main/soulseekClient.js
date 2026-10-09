@@ -835,7 +835,7 @@ const inflight = new Map();
 export function soulseekCancelDownload(id) {
   const stream = inflight.get(String(id || ''));
   if (!stream) return false;
-  try { stream.destroy(new Error('Cancelled by user.')); } catch { /* ignore */ }
+  try { stream.destroy(new Error('Canceled by user.')); } catch { /* ignore */ }
   inflight.delete(String(id || ''));
   return true;
 }

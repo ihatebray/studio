@@ -29,9 +29,11 @@ export function spotifyIdOf(track) {
 /* ---- preloading ------------------------------------------------------
  * librespot holds one preloaded track. Loading that track afterwards skips
  * every network round-trip (metadata, key, file, first chunk), so playback
- * starts at once. Studio asks for it the way Sonora does: when the pointer
- * rests on a row for a moment, and for the next track in the queue near the
- * end of the current one. */
+ * starts at once. Studio asks for it for the next track in the queue near
+ * the end of the current one. (Not on hover any more, as Sonora does: every
+ * preload asks Spotify for a decryption key, and moving the pointer over a
+ * list asked for one every second or two, which is what tripped Spotify's
+ * "too many songs loaded close together" refusals.) */
 
 let preloaded = null;
 let currentId = null;
@@ -66,23 +68,6 @@ export function preloadStreamed(track) {
   preloaded = id;
   lastPreloadAt = now;
   api.spotifyPlayerPreload(id)?.catch?.(() => { if (preloaded === id) preloaded = null; });
-}
-
-const HOVER_PRELOAD_MS = 200;
-
-/** onMouseEnter / onMouseLeave for a row's play button / number cell (not
- *  the whole row, as in Sonora): preload after a short rest there, so moving
- *  the pointer around a list doesn't fetch anything. */
-let hoverTimer = null;
-const cancelHover = () => { clearTimeout(hoverTimer); hoverTimer = null; };
-/* One pointer, one pending hover: the timer lives here rather than per row,
-   so a row re-rendering mid-hover can't leave an orphaned timer behind. */
-export function hoverPreload(track) {
-  if (!spotifyIdOf(track)) return null;
-  return {
-    onMouseEnter: () => { cancelHover(); hoverTimer = setTimeout(() => preloadStreamed(track), HOVER_PRELOAD_MS); },
-    onMouseLeave: cancelHover,
-  };
 }
 
 const TICK_MS = 250;
@@ -390,7 +375,11 @@ export class SpotifyMediaElement extends EventTarget {
       this._stopTick();
       this._running = false;
       this._pending = { positionMs: Math.round(this._pos * 1000) };
-      if (this._throttles === 1) {
+      /* A refused key is first met with a fresh connection (the helper
+         renews it and the song picks up, see 'reconnected'), so only a
+         refusal that outlasts that is worth a word. Servers failing: say so
+         at once. */
+      if (this._throttles === (ev.throttled ? 2 : 1)) {
         this._notice(ev.throttled ? 'Spotify is slowing playback down, retrying…' : 'Spotify’s servers are busy, retrying…', 'retrying',
           ev.throttled
             ? 'Spotify refused the song for a moment because several were loaded close together. Studio waits and tries the same song again (2, 4, 8… seconds), without skipping it.'

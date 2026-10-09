@@ -208,7 +208,7 @@ export function listeningSummary({ liked = [] } = {}) {
       .filter((t) => t?.spotifyId && (seenA.has(t.spotifyId) ? false : (seenA.add(t.spotifyId), true)));
     if (rows.length < 6) continue;
     const seed = today * 31 + [...a.name].reduce((n, ch) => (n * 33 + ch.charCodeAt(0)) >>> 0, 5381);
-    mixes.push(mix(`artist:${a.id || a.name}`, `${a.name} Mix`, `Your favourites by ${a.name}, reshuffled daily`, daily(rows, seed).slice(0, 40)));
+    mixes.push(mix(`artist:${a.id || a.name}`, `${a.name} Mix`, `Your favorites by ${a.name}, reshuffled daily`, daily(rows, seed).slice(0, 40)));
   }
   if (rediscover.length >= 5) mixes.push(mix('rediscover', 'Rediscover', 'Big for you a while back', rediscover));
 

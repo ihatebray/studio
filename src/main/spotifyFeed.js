@@ -18,7 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
 import { webApiRateLimit, paged, partnerState, homeFeed, libraryItems, browseShelves, browseCards, MADE_FOR_YOU_PAGE } from './spotifyPartner.js';
-import { helperReleases, helperPlaylist, helperLiked } from './spotifyPlayer.js';
+import { helperReleases, helperPlaylist, helperLiked, helperTracks } from './spotifyPlayer.js';
 import { listeningSummary } from './listening.js';
 import { listFollows, onFollowsChange } from './follows.js';
 
@@ -305,6 +305,9 @@ export function registerSpotifyFeedIpc(ipcMain) {
     return (r.items || []).filter((i) => i.kind === 'playlist' || i.kind === 'liked');
   }));
   ipcMain.handle('spotifyFeed:liked', wrap((opts) => likedTracks(!!opts?.all)));
+  /* Songs by id, with their album and release date (the artist page's
+     Popular list, whose feed leaves both out). */
+  ipcMain.handle('spotifyFeed:tracks', wrap((ids) => helperTracks((Array.isArray(ids) ? ids : []).slice(0, 50))));
   /* Name and cover for a pasted playlist link, from Spotify's public link
      preview (oEmbed): no sign-in, and it works for any public playlist. */
   ipcMain.handle('spotifyFeed:playlistMeta', wrap(async (id) => {

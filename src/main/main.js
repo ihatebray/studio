@@ -60,7 +60,7 @@ import {
   ITUNES_ID_PREFIX,
 } from './itunesClient.js';
 import http from 'http';
-import { downloadYoutubeAudioById, searchCandidatesForPicker, resolvePreviewStream } from './ytdlpImport.js';
+import { downloadYoutubeAudioById, searchCandidatesForPicker } from './ytdlpImport.js';
 import { saveSoulseekCredentials, soulseekCredentialsConfigured, soulseekStatus, soulseekTestConnection, soulseekDisconnect, soulseekSearch, soulseekDownload, soulseekCancelDownload } from './soulseekClient.js';
 import { resolveCoverFilePath, mimeForCoverPath, storeCoverFromDataUri } from './coverArtStore.js';
 import * as discordPresence from './discordPresence.js';
@@ -258,20 +258,6 @@ ipcMain.handle('library:refetchTrackMetadata', async (_e, trackId) => {
   try {
     const track = (await loadAllTracks()).find((t) => t.id === trackId);
     return await refetchMetadata(track);
-  } catch (e) {
-    return { ok: false, error: String(e?.message || e) };
-  }
-});
-
-/* Preview before you get: resolves the YouTube match a download would use to
-   a stream URL. Nothing is saved. */
-ipcMain.handle('preview:resolve', async (_e, t) => {
-  try {
-    const data = await resolvePreviewStream({
-      artists: String(t?.artists || ''), title: String(t?.title || ''),
-      durationMs: Number(t?.durationMs) || 0, explicit: typeof t?.explicit === 'boolean' ? t.explicit : null,
-    });
-    return { ok: true, ...data };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
   }
@@ -2210,7 +2196,7 @@ ipcMain.handle('spotify:beginUserAuth', async () => {
         const code = url.searchParams.get('code');
         const errParam = url.searchParams.get('error');
         if (errParam) {
-          send(400, `<h1>Spotify auth cancelled</h1><p>${errParam}</p><p>You can close this tab.</p>`);
+          send(400, `<h1>Spotify auth canceled</h1><p>${errParam}</p><p>You can close this tab.</p>`);
           teardownPendingOAuth(`spotify returned error: ${errParam}`);
           mainWindow?.webContents.send('spotify:userAuthChanged', {
             connected: false, error: errParam,
@@ -2488,7 +2474,10 @@ ipcMain.handle('spotify:albumTracks', async (event, albumId) => {
     return itunesGetAlbumTracks(id.slice(ITUNES_ID_PREFIX.length));
   }
   const cached = getAlbumTracksCache(id);
-  if (cached) return cached;
+  // A copy saved before its release day can't say which songs are out now.
+  if (cached && albumIsOut(cached.releaseDate)) return cached;
+  const pre = preReleaseAlbums.get(id);
+  if (pre && Date.now() - pre.at < EMPTY_ALBUM_TTL_MS) return pre.data;
   /* An album with no songs yet (one still counting down) is remembered for
      a while too, or every open walks all three routes again to learn the
      same nothing. */
@@ -2513,12 +2502,35 @@ ipcMain.handle('spotify:albumTracks', async (event, albumId) => {
       if (!data) throw e;
     }
   }
+  if (data?.tracks?.length && !albumIsOut(data.releaseDate)) {
+    /* Not out yet. The helper marks the songs still held back (notOut) and
+       hands over the released copy of any that are already out as singles.
+       Kept only briefly, since songs get revealed on the way to release
+       day. (No Web API call here: its shared rate limit tripped, and its
+       is_playable said no to singles that were already out.) */
+    const held = data.tracks.filter((t) => t.notOut).length;
+    console.log(`[spotify:albumTracks] ${id} not out yet (${data.releaseDate || 'no date'}): ${data.tracks.length - held} of ${data.tracks.length} songs playable`);
+    preReleaseAlbums.set(id, { at: Date.now(), data });
+    return data;
+  }
+  // Out: every song plays, whatever a stale flag says.
+  if (data?.tracks?.some((t) => t.notOut)) data = { ...data, tracks: data.tracks.map((t) => ({ ...t, notOut: false })) };
   if (data?.tracks?.length) setAlbumTracksCache(id, data);
   else if (data) emptyAlbums.set(id, { at: Date.now(), data });
   return data;
 });
 const EMPTY_ALBUM_TTL_MS = 10 * 60 * 1000;
 const emptyAlbums = new Map();
+const preReleaseAlbums = new Map();
+/** Out for certain: a full release date that has come, or a year gone by.
+ *  Anything less sure (a date ahead, just a year, no date) keeps the
+ *  helper's per-song notOut marks and is checked again in 10 minutes. */
+function albumIsOut(date) {
+  const d = String(date || '');
+  const today = new Date().toISOString().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10) <= today;
+  return /^\d{4}/.test(d) && d.slice(0, 4) < today.slice(0, 4);
+}
 
 
 
@@ -3611,6 +3623,12 @@ const lyricsCache = new BoundedMap(300);
    either direction (the lyrics browser uses it to try Genius without
    replacing what's saved for the song). */
 async function fetchLyrics({ title, artist, album, duration, provider, force, peek = false } = {}) {
+  // Saved plain lyrics being re-checked: kept if nothing better turns up.
+  let stalePlain = null;
+  /* LRCLIB couldn't be asked properly (timed out, rate-limited, down,
+     offline), as opposed to having nothing for the song. Genius's words
+     found then aren't saved for good: the next launch asks LRCLIB again. */
+  let lrclibTrouble = false;
   try {
     const cacheKey = `${(artist || '').toLowerCase().trim()}|${(title || '').toLowerCase().trim()}`;
     // Placeholder metadata must be treated as ABSENT, not matched literally.
@@ -3674,13 +3692,24 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
          a miss so they're fetched again, clean. */
       const isGeniusBlurb = dbCached && !dbCached.syncedLyrics
         && dbCached.plainLyrics && String(dbCached.plainLyrics).split('\n').slice(0, 12).some((l) => /\bRead More\s*$/i.test(l));
-      if (dbCached && !isEmptyRow && !isGeniusBlurb) {
+      /* Synced lyrics always win, so saved words without timing get another
+         look at LRCLIB, at most once a day: Genius's (used when LRCLIB was
+         slow, down or missed the match), and older saves that don't say
+         where they came from. A version you picked yourself is left alone. */
+      const recheck = dbCached && !isEmptyRow && !isGeniusBlurb
+        && !dbCached.syncedLyrics && !dbCached.instrumental && dbCached.source !== 'user'
+        && (!dbCached.source || Date.now() / 1000 - (dbCached.fetchedAt || 0) > 24 * 3600);
+      if (dbCached && !isEmptyRow && !isGeniusBlurb && !recheck) {
         const hit = { ok: true, ...dbCached };
-        dbg('HIT db cache →', hit.syncedLyrics ? 'synced' : hit.plainLyrics ? 'plain' : 'instrumental');
+        dbg('HIT db cache →', hit.syncedLyrics ? 'synced' : hit.plainLyrics ? 'plain' : 'instrumental', `(${hit.source || 'unknown source'})`);
         lyricsCache.set(cacheKey, hit);
         return hit;
       }
-      dbg(dbCached ? (isGeniusBlurb ? 'db row is an old Genius blurb → refetching' : 'db row exists but is EMPTY (poisoned) → refetching') : 'no db row → fetching');
+      if (recheck) {
+        stalePlain = { ok: true, ...dbCached };
+        dbg(`db has plain lyrics (${dbCached.source || 'unknown source'}) → checking LRCLIB for synced`);
+      }
+      if (!stalePlain) dbg(dbCached ? (isGeniusBlurb ? 'db row is an old Genius blurb → refetching' : 'db row exists but is EMPTY (poisoned) → refetching') : 'no db row → fetching');
     }
 
     // 3) Network fetch — accuracy-first strategy
@@ -3823,7 +3852,11 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
         if (typeof duration === 'number' && duration > 0) p.set('duration', String(Math.round(duration)));
         dbg('STAGE /api/get params:', p.toString());
         const res = await fetchWithTimeout(`https://lrclib.net/api/get?${p}`, { headers }, 10000);
-        if (!res.ok) { dbg('  /api/get → no match (status not ok)'); return null; }
+        if (!res.ok) {
+          if (res.status !== 404) lrclibTrouble = true;
+          dbg(`  /api/get → no match (status ${res.status})`);
+          return null;
+        }
         const data = await res.json();
         if (data && (data.syncedLyrics || data.plainLyrics)) {
           dbg(`  /api/get → HIT (${data.syncedLyrics ? 'synced' : 'plain'})`);
@@ -3831,7 +3864,7 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
         }
         dbg('  /api/get → row found but no lyrics', JSON.stringify({ instrumental: data?.instrumental }));
         return null;
-      } catch (e) { dbg('  /api/get threw:', e?.message || e); return null; }
+      } catch (e) { lrclibTrouble = true; dbg('  /api/get threw:', e?.message || e); return null; }
     };
 
     /**
@@ -3843,7 +3876,7 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
       try {
         dbg('STAGE /api/search q=', JSON.stringify(q));
         const res = await fetchWithTimeout(`https://lrclib.net/api/search?${new URLSearchParams({ q })}`, { headers }, 10000);
-        if (!res.ok) { dbg('  /api/search → status not ok'); return null; }
+        if (!res.ok) { lrclibTrouble = true; dbg(`  /api/search → status ${res.status}`); return null; }
         const data = await res.json();
         if (!Array.isArray(data) || data.length === 0) { dbg('  /api/search → 0 results from LRClib'); return null; }
         dbg(`  /api/search → ${data.length} results, scoring (threshold 8):`);
@@ -3868,7 +3901,7 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
         }
         dbg(`  /api/search → picked "${best.r.trackName}" (score ${best.score})`);
         return { ...best.r, __source: 'lrclib' };
-      } catch (e) { dbg('  /api/search threw:', e?.message || e); return null; }
+      } catch (e) { lrclibTrouble = true; dbg('  /api/search threw:', e?.message || e); return null; }
     };
 
     /**
@@ -4069,7 +4102,10 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
     // 'genius' skips LRClib entirely (faster when the user knows they
     // want Genius for the genre they're listening to — e.g. game OSTs
     // that LRClib rarely has).
-    const selectedProvider = String(provider || 'lrclib').toLowerCase();
+    /* 'genius' alone (LRCLIB skipped) is only for the lyrics browser's own
+       Genius lookup (peek); a song's lyrics always ask LRCLIB first. */
+    let selectedProvider = String(provider || 'lrclib').toLowerCase();
+    if (selectedProvider === 'genius' && !peek) selectedProvider = 'lrclib+genius';
     const tryLrclibFirst = selectedProvider !== 'genius';
     const tryGeniusAfter = selectedProvider.includes('genius');
 
@@ -4127,6 +4163,32 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
       });
     }
 
+    /* No timing yet: search LRCLIB the way the lyrics browser does (the
+       title with "(feat. …)", "[…]" and "- Remastered" trimmed, three
+       searches at once) and take a synced version of this same song: same
+       title, same artist, length within 10 seconds. Synced lyrics come
+       before any plain ones, LRCLIB's or Genius's. */
+    if (tryLrclibFirst && !result?.syncedLyrics && (title || '').trim()) {
+      dbg('STAGE broad LRCLIB search (no synced lyrics yet)');
+      const broad = await lrclibCandidates({ title, artist, duration }).catch(() => null);
+      if (!broad || broad.anyFailed) lrclibTrouble = true;
+      /* A remix, live take or sped-up edit has other timing: only when the
+         song playing is one too. */
+      const VARIANT = /\b(remix|live|sped ?up|slowed|reverb|acoustic|instrumental|karaoke|cover|demo|edit|mix)\b/i;
+      const sameSong = (c) => c.titleExact && c.artistMatch && (c.durDiff == null || c.durDiff <= 10)
+        && (!VARIANT.test(c.trackName) || VARIANT.test(String(title || '')));
+      const synced = broad?.candidates.find((c) => c.hasSynced && sameSong(c));
+      const plain = !result ? broad?.candidates.find((c) => c.hasPlain && sameSong(c)) : null;
+      const pick = synced || plain;
+      dbg('  broad →', synced ? `synced: ${synced.trackName} — ${synced.artistName}` : plain ? 'plain only' : 'nothing new');
+      if (pick) {
+        result = {
+          trackName: pick.trackName, artistName: pick.artistName,
+          syncedLyrics: pick.syncedLyrics, plainLyrics: pick.plainLyrics, instrumental: false, __source: 'lrclib',
+        };
+      }
+    }
+
     // Genius fallback — only if user opted in AND LRClib found nothing
     // (or LRClib was skipped entirely via 'genius' provider).
     if (!result && tryGeniusAfter) {
@@ -4137,7 +4199,9 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
       dbg(`no result and Genius NOT enabled (provider="${selectedProvider}") — set provider to "lrclib+genius" to add the fallback`);
     }
 
-    const final = result ? fmt(result) : none;
+    /* A re-check that found nothing (or only Genius again, offline, LRCLIB
+       down) keeps what was saved and waits another day. */
+    const final = result ? fmt(result) : stalePlain ? { ...stalePlain } : none;
     dbg('RESULT',
       final.syncedLyrics ? `synced (${String(final.syncedLyrics).split('\n').length} lines)`
       : final.plainLyrics ? `plain (${String(final.plainLyrics).length} chars)`
@@ -4148,7 +4212,10 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
     // In-memory cache always gets the result (including misses) so we don't
     // hammer the network repeatedly within one session.
     if (peek) return final;
-    lyricsCache.set(cacheKey, final);
+    // A Genius stand-in (LRCLIB had trouble) isn't kept even for the session.
+    const standIn = final.source === 'genius' && lrclibTrouble;
+    if (standIn) final.temporary = true; // the window doesn't keep it either
+    if (!standIn) lyricsCache.set(cacheKey, final);
     if (lyricsCache.size > 500) lyricsCache.delete(lyricsCache.keys().next().value);
 
     // Only PERSIST real hits. Writing a miss to the DB was making every
@@ -4156,7 +4223,9 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
     // the row came back as a cache hit forever after and the track never
     // refetched. Misses now live only in memory, so they retry next launch.
     const isHit = !!(final.syncedLyrics || final.plainLyrics || final.instrumental);
-    if (isHit) saveCachedLyrics(cacheKey, final).catch(() => {});
+    const geniusStandIn = standIn;
+    if (geniusStandIn) dbg('LRCLIB had trouble → Genius shown for now, not saved; LRCLIB is asked again next launch');
+    if (isHit && !geniusStandIn) saveCachedLyrics(cacheKey, final).catch(() => {});
 
     return final;
   } catch (e) {
@@ -4174,6 +4243,8 @@ ipcMain.handle('lyrics:save', async (event, { title, artist, syncedLyrics, plain
       syncedLyrics: syncedLyrics || null,
       plainLyrics: plainLyrics || null,
       instrumental: false,
+      // Your pick: never swapped out by the daily check for synced lyrics.
+      source: 'user',
     };
     // Update in-memory hot cache
     lyricsCache.set(cacheKey, data);
@@ -4226,77 +4297,93 @@ async function lrclibSearch(params, ms = 15000) {
   }
 }
 
+/** Every version LRCLIB has for a song, scored against it, best first (at
+ *  most 30). Shared by the lyrics browser and the automatic lookup, so the
+ *  automatic one finds what the browser would. Each candidate also says how
+ *  it matched (titleExact, artistMatch, durDiff) for the lookup's stricter
+ *  pick. */
+async function lrclibCandidates({ title, artist, duration, customQuery } = {}) {
+  const typed = String(customQuery || '').trim();
+  const t = lyricTitle(title);
+  const a = lyricArtist(artist);
+  const searches = typed
+    ? [{ q: typed }, { track_name: typed }]
+    : [
+      ...(t && a ? [{ track_name: t, artist_name: a }] : []),
+      ...(t || a ? [{ q: `${a} ${t}`.trim() }] : []),
+      ...(t ? [{ q: t }] : []),
+    ];
+  if (!searches.length) return { typed, candidates: [], allFailed: false, error: '', query: '' };
+  console.log('[lyrics:searchAll]', searches.map((p) => JSON.stringify(p)).join(' | '));
+
+  const settled = await Promise.allSettled(searches.map((p) => lrclibSearch(p)));
+  const byId = new Map();
+  for (const r of settled) {
+    if (r.status !== 'fulfilled') continue;
+    for (const row of r.value) {
+      if (!row || !(row.syncedLyrics || row.plainLyrics)) continue;
+      const key = row.id != null ? `id:${row.id}` : `${row.trackName}|${row.artistName}|${row.albumName}|${row.duration}`;
+      if (!byId.has(key)) byId.set(key, row);
+    }
+  }
+  const failures = settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.message || r.reason));
+  console.log('[lyrics:searchAll]', byId.size, 'unique results', failures.length ? `(${failures.length} searches failed: ${failures[0]})` : '');
+
+  /* Scored against what was asked: the typed words if any, else the song. */
+  const norm = (s) => String(s || '').toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/feat\.?|featuring|ft\.?/gi, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const qTitle = norm(typed || t);
+  const qArtist = typed ? '' : norm(a);
+  const words = (s) => new Set(s.split(' ').filter((w) => w.length > 1));
+  const qWords = words(qTitle);
+  const candidates = [...byId.values()].map((r) => {
+    const rTitle = norm(r.trackName || r.name);
+    const rArtist = norm(r.artistName || r.artist);
+    let score = 0;
+    if (rTitle && rTitle === qTitle) score += 10;
+    else if (qWords.size) {
+      const hay = words(typed ? `${rTitle} ${rArtist}` : rTitle);
+      let hit = 0;
+      for (const w of qWords) if (hay.has(w)) hit += 1;
+      score += Math.round((hit / qWords.size) * 8);
+    }
+    if (qArtist && rArtist && (rArtist.includes(qArtist) || qArtist.includes(rArtist))) score += 4;
+    const rDur = Number(r.duration) || 0;
+    const qDur = Number(duration) || 0;
+    if (!typed && qDur > 0 && rDur > 0) {
+      const diff = Math.abs(rDur - qDur);
+      if (diff <= 3) score += 4;
+      else if (diff <= 10) score += 1;
+      else if (diff > 30) score -= 3;
+    }
+    if (r.syncedLyrics) score += 6;
+    return {
+      titleExact: !!rTitle && rTitle === qTitle,
+      artistMatch: !qArtist || (!!rArtist && (rArtist.includes(qArtist) || qArtist.includes(rArtist))),
+      durDiff: qDur > 0 && rDur > 0 ? Math.abs(rDur - qDur) : null,
+      id: r.id ?? null,
+      trackName: r.trackName || '',
+      artistName: r.artistName || '',
+      albumName: r.albumName || '',
+      duration: rDur,
+      hasSynced: !!r.syncedLyrics,
+      hasPlain: !!r.plainLyrics,
+      syncedLyrics: r.syncedLyrics || null,
+      plainLyrics: r.plainLyrics || null,
+      source: 'lrclib',
+      score,
+    };
+  }).sort((x, y) => y.score - x.score).slice(0, 30);
+  return { typed, candidates, anyFailed: failures.length > 0, allFailed: !!failures.length && failures.length === settled.length, error: failures[0] || '', query: typed || `${a} ${t}`.trim() };
+}
+
 ipcMain.handle('lyrics:searchAll', async (event, { title, artist, duration, customQuery } = {}) => {
   try {
-    const typed = String(customQuery || '').trim();
-    const t = lyricTitle(title);
-    const a = lyricArtist(artist);
-    const searches = typed
-      ? [{ q: typed }, { track_name: typed }]
-      : [
-        ...(t && a ? [{ track_name: t, artist_name: a }] : []),
-        ...(t || a ? [{ q: `${a} ${t}`.trim() }] : []),
-        ...(t ? [{ q: t }] : []),
-      ];
-    if (!searches.length) return { ok: true, candidates: [] };
-    console.log('[lyrics:searchAll]', searches.map((p) => JSON.stringify(p)).join(' | '));
-
-    const settled = await Promise.allSettled(searches.map((p) => lrclibSearch(p)));
-    const byId = new Map();
-    for (const r of settled) {
-      if (r.status !== 'fulfilled') continue;
-      for (const row of r.value) {
-        if (!row || !(row.syncedLyrics || row.plainLyrics)) continue;
-        const key = row.id != null ? `id:${row.id}` : `${row.trackName}|${row.artistName}|${row.albumName}|${row.duration}`;
-        if (!byId.has(key)) byId.set(key, row);
-      }
-    }
-    const failures = settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.message || r.reason));
-    console.log('[lyrics:searchAll]', byId.size, 'unique results', failures.length ? `(${failures.length} searches failed: ${failures[0]})` : '');
-
-    /* Scored against what was asked: the typed words if any, else the song. */
-    const norm = (s) => String(s || '').toLowerCase()
+    const { typed, candidates, allFailed, error, query } = await lrclibCandidates({ title, artist, duration, customQuery });
+    const norm = (x) => String(x || '').toLowerCase()
       .replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/feat\.?|featuring|ft\.?/gi, ' ')
       .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-    const qTitle = norm(typed || t);
-    const qArtist = typed ? '' : norm(a);
-    const words = (s) => new Set(s.split(' ').filter((w) => w.length > 1));
-    const qWords = words(qTitle);
-    const candidates = [...byId.values()].map((r) => {
-      const rTitle = norm(r.trackName || r.name);
-      const rArtist = norm(r.artistName || r.artist);
-      let score = 0;
-      if (rTitle && rTitle === qTitle) score += 10;
-      else if (qWords.size) {
-        const hay = words(typed ? `${rTitle} ${rArtist}` : rTitle);
-        let hit = 0;
-        for (const w of qWords) if (hay.has(w)) hit += 1;
-        score += Math.round((hit / qWords.size) * 8);
-      }
-      if (qArtist && rArtist && (rArtist.includes(qArtist) || qArtist.includes(rArtist))) score += 4;
-      const rDur = Number(r.duration) || 0;
-      const qDur = Number(duration) || 0;
-      if (!typed && qDur > 0 && rDur > 0) {
-        const diff = Math.abs(rDur - qDur);
-        if (diff <= 3) score += 4;
-        else if (diff <= 10) score += 1;
-        else if (diff > 30) score -= 3;
-      }
-      if (r.syncedLyrics) score += 6;
-      return {
-        id: r.id ?? null,
-        trackName: r.trackName || '',
-        artistName: r.artistName || '',
-        albumName: r.albumName || '',
-        duration: rDur,
-        hasSynced: !!r.syncedLyrics,
-        hasPlain: !!r.plainLyrics,
-        syncedLyrics: r.syncedLyrics || null,
-        plainLyrics: r.plainLyrics || null,
-        source: 'lrclib',
-        score,
-      };
-    }).sort((x, y) => y.score - x.score).slice(0, 30);
 
     /* Nothing on LRCLIB: Genius may have the words (plain, no timing). */
     if (!candidates.length) {
@@ -4319,8 +4406,8 @@ ipcMain.handle('lyrics:searchAll', async (event, { title, artist, duration, cust
       }
     }
 
-    if (!candidates.length && failures.length === settled.length) return { ok: false, error: failures[0], candidates: [] };
-    return { ok: true, candidates, query: typed || `${a} ${t}`.trim() };
+    if (!candidates.length && allFailed) return { ok: false, error, candidates: [] };
+    return { ok: true, candidates, query };
   } catch (e) {
     console.error('[lyrics:searchAll] error:', e);
     return { ok: false, error: String(e?.message || e), candidates: [] };

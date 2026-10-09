@@ -195,6 +195,19 @@ function initSchema() {
  * nothing to join to and that history is permanently anonymous — so this runs
  * at open, before any clear can happen.
  */
+/* Where saved lyrics came from: 'lrclib', 'genius', or 'user' (a version
+   picked in the lyrics browser). NULL on rows saved before this column. */
+function migrateLyricsSource() {
+  try {
+    const r = db.exec('PRAGMA table_info(lyrics_cache);');
+    if (!r[0]?.values?.length) return;
+    const cols = r[0].values.map((row) => row[1]);
+    if (!cols.includes('source')) db.run('ALTER TABLE lyrics_cache ADD COLUMN source TEXT;');
+  } catch (e) {
+    console.error('migrateLyricsSource failed', e);
+  }
+}
+
 function migratePlayEventsIdentity() {
   try {
     const r = db.exec('PRAGMA table_info(play_events);');
@@ -815,6 +828,7 @@ export async function ensureLibraryOpen() {
       migrateFollowedArtistsTable();
       migrateArtistReleasesCacheTable();
       migratePlayEventsIdentity();
+      migrateLyricsSource();
       migrateInlineCoversToDisk();
       migrateFromLegacyJsonIfNeeded();
       /* Deliberately NOT awaited. This one touches the network, and the
@@ -2347,14 +2361,16 @@ export async function loadCachedLyrics(cacheKey) {
   if (!db) return null;
   let stmt;
   try {
-    stmt = db.prepare('SELECT synced_lyrics, plain_lyrics, instrumental FROM lyrics_cache WHERE cache_key = ? LIMIT 1;');
+    stmt = db.prepare('SELECT synced_lyrics, plain_lyrics, instrumental, source, fetched_at FROM lyrics_cache WHERE cache_key = ? LIMIT 1;');
     stmt.bind([cacheKey]);
     if (!stmt.step()) return null; // no row
-    const row = stmt.get(); // returns [synced, plain, instrumental]
+    const row = stmt.get(); // returns [synced, plain, instrumental, source, fetched_at]
     return {
       syncedLyrics: row[0] || null,
       plainLyrics: row[1] || null,
       instrumental: !!row[2],
+      source: row[3] || null,
+      fetchedAt: Number(row[4]) || 0,
     };
   } catch {
     return null;
@@ -2366,14 +2382,14 @@ export async function loadCachedLyrics(cacheKey) {
 /**
  * Save lyrics to the persistent DB cache.
  */
-export async function saveCachedLyrics(cacheKey, { syncedLyrics, plainLyrics, instrumental }) {
+export async function saveCachedLyrics(cacheKey, { syncedLyrics, plainLyrics, instrumental, source }) {
   await ensureLibraryOpen();
   if (!db) return;
   try {
     db.run(
-      `INSERT OR REPLACE INTO lyrics_cache (cache_key, synced_lyrics, plain_lyrics, instrumental)
-       VALUES (?, ?, ?, ?);`,
-      [cacheKey, syncedLyrics || null, plainLyrics || null, instrumental ? 1 : 0],
+      `INSERT OR REPLACE INTO lyrics_cache (cache_key, synced_lyrics, plain_lyrics, instrumental, source, fetched_at)
+       VALUES (?, ?, ?, ?, ?, strftime('%s','now'));`,
+      [cacheKey, syncedLyrics || null, plainLyrics || null, instrumental ? 1 : 0, source || 'unknown'],
     );
     persistSoon();
   } catch (e) {

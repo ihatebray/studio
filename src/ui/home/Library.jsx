@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { formatTime } from '../../lib/mediaUtils.js';
-import { hoverPreload } from '../../lib/spotifyMediaElement.js';
 import { CompactVizSlot } from '../CompactVisualizer.jsx';
 import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
 import { PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
@@ -394,7 +393,7 @@ export const LibRow = React.memo(function LibRow({ t, index, playing, isPlaying,
       onDoubleClick={() => onPlay(t)}
       onContextMenu={canManage ? (e) => onMenu(e, t) : undefined}
     >
-      <div className="sth-lrow-n" {...hoverPreload(t)}>
+      <div className="sth-lrow-n">
         {playing
           ? <PlayingBars acc={acc} playing={isPlaying} />
           : <span className="sth-lrow-num">{index + 1}</span>}

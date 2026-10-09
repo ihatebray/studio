@@ -17,8 +17,7 @@ import { sampleCoverTheme, recordWashSource, washSourceFor, setColourIntensity, 
 import { titleCollator, parseGenres } from '../lib/mediaUtils.js';
 import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
-import { setPreviewHooks, isPreviewing, stop as stopPreview } from './previewPlayer.jsx';
-import { hoverPreload, spotifyIdOf } from '../lib/spotifyMediaElement.js';
+import { spotifyIdOf } from '../lib/spotifyMediaElement.js';
 import { CompactVizContext, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from '../lib/compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases, SpotifyLinkPanel } from './MySpotify.jsx';
@@ -36,6 +35,9 @@ import { MenuItem, Modal, albumKeyOf, primaryArtistOf } from './home/common.jsx'
 import SettingsPage from './home/SettingsPage.jsx';
 import LibraryPage from './home/LibraryPage.jsx';
 import { ImportMenuItem } from './home/Library.jsx';
+
+/** An album name for comparing: case and spacing don't count. */
+const normAlbum = (a) => String(a || '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 export default function StudioHome({
   library = [],
@@ -637,20 +639,28 @@ export default function StudioHome({
      songs already sitting on disk. songKey folds those labels away while
      KEEPING version qualifiers distinct, so a studio take never hides the Get
      on a live one. See instantSearch.js for why that asymmetry is deliberate. */
-  const owned = useMemo(() => {
-    const set = new Set();
-    for (const t of library) set.add(songKey(t.title, t.artist));
-    return set;
-  }, [library]);
-  const alreadyOwned = useCallback((title, artists) => owned.has(songKey(title, artists)), [owned]);
-  /* Same key, but returns the track — for surfaces that need to PLAY the copy
-     you own rather than just know it exists (the artist page's Popular list). */
+  /* Every copy you have of each song, by songKey. Several when the same
+     title is on more than one record (a studio album and a live set). */
   const ownedByKey = useMemo(() => {
     const m = new Map();
-    for (const t of library) { const k = songKey(t.title, t.artist); if (!m.has(k)) m.set(k, t); }
+    for (const t of library) {
+      const k = songKey(t.title, t.artist);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(t);
+    }
     return m;
   }, [library]);
-  const ownedTrackFor = useCallback((title, artists) => ownedByKey.get(songKey(title, artists)) || null, [ownedByKey]);
+  /* The copy you have of a song, or null. With an album, only a copy from
+     that same album counts: the same title on another record (a live set,
+     a deluxe, a single) is a different song to save. */
+  const ownedTrackFor = useCallback((title, artists, album) => {
+    const copies = ownedByKey.get(songKey(title, artists));
+    if (!copies) return null;
+    if (album === undefined) return copies[0];
+    const want = normAlbum(album);
+    return copies.find((t) => normAlbum(t.album) === want) || null;
+  }, [ownedByKey]);
+  const alreadyOwned = useCallback((title, artists, album) => !!ownedTrackFor(title, artists, album), [ownedTrackFor]);
 
   /* Resolve a track to the artwork the app should SHOW for it.
    *
@@ -739,39 +749,6 @@ export default function StudioHome({
      their own Esc, and closing the whole view underneath them would be the
      wrong thing to undo. `blockers` is read through a ref so the listener
      isn't re-bound on every state change. */
-  /* Track previews (previewPlayer.jsx) and the main player share the
-     speakers: a preview pauses what's playing and resumes it when it ends;
-     starting real playback ends the preview. `resumeAfterPreview` is only set
-     when the preview itself did the pausing, so a song you'd paused stays
-     paused. */
-  const playingRef = useRef(isPlaying);
-  const toggleRef = useRef(onTogglePlay);
-  const resumeAfterPreview = useRef(false);
-  const previewPausing = useRef(false);
-  useEffect(() => { playingRef.current = isPlaying; toggleRef.current = onTogglePlay; });
-  useEffect(() => {
-    setPreviewHooks({
-      onStart: () => {
-        if (playingRef.current && toggleRef.current) {
-          resumeAfterPreview.current = true;
-          previewPausing.current = true;
-          toggleRef.current();
-        }
-      },
-      onEnd: () => {
-        if (resumeAfterPreview.current && !playingRef.current && toggleRef.current) toggleRef.current();
-        resumeAfterPreview.current = false;
-      },
-    });
-  }, []);
-  useEffect(() => {
-    if (isPlaying && isPreviewing() && !previewPausing.current) {
-      resumeAfterPreview.current = false; // you chose to play something; don't toggle it back off
-      stopPreview();
-    }
-    if (!isPlaying) previewPausing.current = false;
-  }, [isPlaying, currentTrack?.id]);
-
   const npFullBlockers = useRef(false);
   // Nothing loaded, nothing to show: the view closes itself rather than
   // leaving an empty stage over the app.
@@ -2306,7 +2283,7 @@ export default function StudioHome({
     return m;
   }, [library]);
   const spotifyPlayable = useCallback((row) => libBySpotifyId.get(row.spotifyId)
-    || ownedTrackFor(row.title, row.artists)
+    || ownedTrackFor(row.title, row.artists, row.album || '')
     || {
       id: `spotify:track:${row.spotifyId}`,
       filePath: `spotify:track:${row.spotifyId}`,
@@ -2341,14 +2318,18 @@ export default function StudioHome({
   }, [downloadSpotifyRow, pushToast]);
   const mySpotifyBridge = useMemo(() => {
     const saveState = (row) => {
-      if (libBySpotifyId.has(row.spotifyId) || ownedTrackFor(row.title, row.artists)) return 'saved';
+      if (libBySpotifyId.has(row.spotifyId) || ownedTrackFor(row.title, row.artists, row.album || '')) return 'saved';
       const st = dlState[`s:${row.spotifyId}`];
       return st === 'busy' ? 'busy' : st === 'done' ? 'saved' : null;
     };
     const currentSid = spotifyIdOf(currentTrack);
     return {
       playRows(rows, index = 0, { shuffle = false, context = null } = {}) {
-        const spotifyRows = (rows || []).filter((r) => r?.spotifyId);
+        /* Songs Spotify lists but hasn't released (notOut) are skipped:
+           playing one only fails. Clicking one does nothing. */
+        const want = (rows || [])[index];
+        if (!shuffle && want?.notOut) return;
+        const spotifyRows = (rows || []).filter((r) => r?.spotifyId && !r.notOut);
         notePlayContext(spotifyRows, context);
         const list = spotifyRows.map(spotifyPlayable);
         if (!list.length) return;
@@ -2356,10 +2337,12 @@ export default function StudioHome({
           const mixed = [...list].sort(() => Math.random() - 0.5);
           onPlayTrack?.(mixed[0], mixed);
         } else {
-          onPlayTrack?.(list[Math.min(index, list.length - 1)] || list[0], list);
+          const at = spotifyRows.indexOf(want);
+          onPlayTrack?.(list[at >= 0 ? at : Math.min(index, list.length - 1)] || list[0], list);
         }
       },
-      saveRow(row) { if (!saveState(row)) downloadSpotifyRow(row, { noPicker: true }); },
+      // Not out yet: nothing to save.
+      saveRow(row) { if (!row?.notOut && !saveState(row)) downloadSpotifyRow(row, { noPicker: true }); },
       saveState,
       /* Shuffle Liked Songs: the songs you've hearted in Studio, not
          Spotify's Liked Songs. */
@@ -2371,7 +2354,6 @@ export default function StudioHome({
       },
       isCurrent: (row) => !!currentSid && currentSid === row.spotifyId,
       isPlaying: !!isPlaying,
-      hoverProps: (row) => hoverPreload(spotifyPlayable(row)) || {},
       onOpenArtist: openArtistAnywhere,
       onConnect: () => { pickSection('settings'); setSetCat('connections'); },
     };
@@ -2441,7 +2423,7 @@ export default function StudioHome({
     const year = String(info.date || '').slice(0, 4);
     const card = { style, image: info.image || '', title: info.name || 'Spotify link', sub: info.sub || '', buttons: [] };
     const saveBtn = (done, label, save) => (done
-      ? { label: 'In library', icon: 'check', disabled: true }
+      ? { label: 'In your library', icon: 'check', disabled: true }
       : { label, icon: 'plus', stay: true, again: { saved: true }, onClick: save });
     const open = { label: 'Open', icon: 'open', onClick: () => live().open(info) };
     if (info.kind === 'track') {
@@ -2884,6 +2866,9 @@ export default function StudioHome({
               library actually gets used for. */}
           {sec === 'library' ? (
             <LibraryPage
+              onPlayNext={onPlayNext ? (ts, name) => { onPlayNext(ts); pushToast?.({ message: `Playing next: ${name}` }); } : null}
+              onAddToQueue={onAddToQueue ? (ts, name) => { onAddToQueue(ts); pushToast?.({ message: `Added to queue: ${name}` }); } : null}
+              onAddToPlaylist={onAddTracksToPlaylist ? (ids) => setAddToPl({ trackIds: ids }) : null}
               LIB_OVERSCAN={LIB_OVERSCAN}
               LIB_ROW_H={LIB_ROW_H}
               accent={accent}
@@ -3158,7 +3143,7 @@ export default function StudioHome({
               {onToggleFavorite ? (
                 <MenuItem accentRgb={readableAccent(accent)} onClick={() => { onToggleFavorite(t.id); close(); }}
                   icon={<path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />}
-                  label={t?.isFavorite ? 'Remove from favourites' : 'Add to favourites'} />
+                  label={t?.isFavorite ? 'Remove from favorites' : 'Add to favorites'} />
               ) : null}
               <MenuItem accentRgb={readableAccent(accent)}
                 onClick={async () => { await copySpotifyLink(t); close(); }}
@@ -3187,7 +3172,7 @@ export default function StudioHome({
                   {!npFull ? (
                   <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); setColourTrayOpen(true); }}
                       icon={<><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" /></>}
-                      label="Colour for this record" sub={coverOverride ? 'Custom colour set' : 'Picked from the artwork'} />
+                      label="Color for this record" sub={coverOverride ? 'Custom color set' : 'Picked from the artwork'} />
                   ) : null}
                   <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); toggleCompactMode(); }}
                     icon={<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 15h18" /></>}
@@ -3852,14 +3837,18 @@ export default function StudioHome({
                       </div>
                       <button type="button" disabled={added}
                         onClick={() => onAddTracksToPlaylist?.(addSongsTo, [t.id])}
+                        title={added ? 'In this playlist' : 'Add to this playlist'} aria-label={added ? 'In this playlist' : 'Add to this playlist'}
                         style={{
-                          padding: '5px 13px', borderRadius: 8, flexShrink: 0,
-                          cursor: added ? 'default' : 'pointer', fontSize: 11, fontWeight: 650,
-                          border: `1px solid ${added ? 'rgba(var(--st-fg-rgb), 0.1)' : `rgba(${readableAccent(accent)},0.4)`}`,
+                          width: 28, height: 28, padding: 0, borderRadius: '50%', flexShrink: 0,
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: added ? 'default' : 'pointer',
+                          border: added ? 'none' : `1px solid rgba(${readableAccent(accent)},0.4)`,
                           background: added ? 'transparent' : `rgba(${readableAccent(accent)},0.16)`,
-                          color: added ? 'rgba(140,220,160,0.85)' : `rgb(${readableAccent(accent)})`,
+                          color: added ? 'rgba(140,220,160,0.9)' : `rgb(${readableAccent(accent)})`,
                         }}>
-                        {added ? 'Added' : 'Add'}
+                        {added
+                          ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                          : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>}
                       </button>
                     </div>
                   );
@@ -4332,6 +4321,7 @@ export default function StudioHome({
         dlState={dlState}
         dlProgress={dlProgress}
         onGetSpotifyTrack={downloadSpotifyRow}
+        onPlaySpotifyRows={(rows, i) => mySpotifyBridge.playRows(rows, i)}
         onGetSlskFile={downloadSoulseekRow}
         onGetSlskAlbum={downloadSsAlbum}
         onPlayTrack={(t) => onPlayTrack?.(t, library, 'list')}
@@ -4380,6 +4370,8 @@ export default function StudioHome({
               dlProgress={dlProgress}
               onGetTrack={downloadSpotifyRow}
               ownedTrackFor={ownedTrackFor}
+              // Popular plays here too, saved or not, the same as the full page.
+              spotifyBridge={mySpotifyBridge}
             />
           );
         }}

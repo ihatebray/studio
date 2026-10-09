@@ -218,9 +218,10 @@ export default function StudioShell({
 
     let cancelled = false;
     /* LRCLIB first (it has timing), then Genius for the words when LRCLIB
-       has nothing. Genius used to be opt-in through a setting that no
-       longer exists, so it was never asked. */
-    const lyricsProvider = (typeof window !== 'undefined' && localStorage.getItem('immerse:lyricsProvider')) || 'lrclib+genius';
+       has nothing. Always: the old provider setting (immerse:lyricsProvider)
+       no longer exists, and a leftover "genius" in it skipped LRCLIB
+       entirely, so synced lyrics never got a look in. */
+    const lyricsProvider = 'lrclib+genius';
     api.fetchLyrics({
       title: track.title || '',
       artist: track.artist || '',
@@ -237,7 +238,8 @@ export default function StudioShell({
           instrumental: !!res.instrumental,
         };
       }
-      lyricsCacheRef.current.set(track.id, data);
+      // A Genius stand-in while LRCLIB was unreachable: asked again next play.
+      if (!res?.temporary) lyricsCacheRef.current.set(track.id, data);
       setLyricsData(data);
       setLyricsTrackId(track.id);
     }).catch(() => {

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import StudioShell from './StudioShell.jsx';
+import { albumKeyOf } from './home/common.jsx';
 import {
   getStoredFontId,
   storeFontId,
@@ -1673,6 +1674,10 @@ export default function App() {
   // avoids re-hitting the network on replay. `''` means "looked up and
   // got nothing"; absence means "haven't tried yet".
   const discordArtworkCacheRef = useRef(new Map());
+  // imgbb uploads in progress (key → promise), and the song's newest activity.
+  const discordUploadsRef = useRef(new Map());
+  const discordPayloadRef = useRef(null);
+  const discordHoldUntilRef = useRef(0); // until when a new song waits for its cover
   useEffect(() => {
     const api = typeof window !== 'undefined' ? window.electronAPI : null;
     if (!api?.discordSetActivity) return;
@@ -1696,6 +1701,10 @@ export default function App() {
     const trackId = track.id;
     const trackChanged = discordLastTrackIdRef.current !== trackId;
     discordLastTrackIdRef.current = trackId;
+    /* A new song waits up to 2.5s for its cover (below). Started here, at
+       the change itself: the first run for a new song is usually before
+       playback starts, and with "hide when paused" it ends just below. */
+    if (trackChanged) discordHoldUntilRef.current = Date.now() + 2500;
     if (!isPlaying && discordHideWhenPaused) {
       api.discordSetActivity(null).catch(() => { /* ignore */ });
       return;
@@ -1704,47 +1713,35 @@ export default function App() {
       ? 0
       : (audioRef.current?.currentTime ?? getPlaybackTime());
     discordWallStartRef.current = Date.now() - (liveCurrentTime * 1000);
-    // Discord only fetches public http(s) URLs for cover art — embedded
-    // ID3 art (data: URLs) and our studio-cover:// custom protocol won't
-    // resolve from Discord's servers. We try every field on the track
-    // that might hold a public URL and pick the first one that qualifies.
+    /* The cover Discord shows. Its media proxy only fetches public http(s)
+       URLs, so local art (embedded, or a custom cover you set, both kept as
+       studio-cover:// files) goes up to imgbb first and is shown from there.
+       A custom album cover comes first: it's the one you chose. */
     const isPublicHttpUrl = (s) => typeof s === 'string' && /^https?:\/\/[^\s]+$/i.test(s);
-    const localCoverUrl = [
-      track.coverArtUrl,
-      track.coverArtRemote,
-      track.albumArtUrl,
-      track.spotifyAlbumImage,
-      // track.coverArt is usually a data: URL from embedded ID3 — but on
-      // Spotify-imported tracks it may also be a CDN URL, so try it last.
-      track.coverArt,
-    ].find(isPublicHttpUrl) || '';
-
-    // imgbb upload path — for local tracks whose only art is a
-    // studio-cover:// file, we upload it to imgbb once (cached on disk
-    // by image hash) and use the resulting public URL. The upload key is
-    // prefixed so it doesn't collide with the iTunes cache entries.
-    //
-    // Check coverArtLocal first: mergeCoverArt preserves the original
-    // studio-cover:// URL there when it overwrites coverArt with a
-    // freshly-parsed data: URI, so we don't lose the path mid-session.
-    const studioUrl = !localCoverUrl
-      ? [track.coverArtLocal, track.coverArt]
-          .find((s) => typeof s === 'string' && s.startsWith('studio-cover://')) || null
-      : null;
+    const isStudio = (s) => typeof s === 'string' && s.startsWith('studio-cover://');
+    const artFor = (t) => {
+      const custom = albumCoverOverrides[albumKeyOf(t)];
+      if (isStudio(custom)) return { studioUrl: custom, publicUrl: '' };
+      const publicUrl = (isPublicHttpUrl(custom) && custom) || [
+        t.coverArtUrl, t.coverArtRemote, t.albumArtUrl, t.spotifyAlbumImage,
+        // usually a data: URL from embedded tags, but a CDN URL on Spotify rows
+        t.coverArt,
+      ].find(isPublicHttpUrl) || '';
+      if (publicUrl) return { studioUrl: null, publicUrl };
+      // mergeCoverArt keeps the studio-cover:// path in coverArtLocal when it
+      // swaps coverArt for a freshly parsed data: URI.
+      return { studioUrl: [t.coverArtLocal, t.coverArt].find(isStudio) || null, publicUrl: '' };
+    };
+    const effectiveImgbbApiKey = (imgbbApiKey || '').trim();
+    const { studioUrl, publicUrl: localCoverUrl } = artFor(track);
     const imgurKey = studioUrl ? `imgur:${studioUrl}` : null;
-    const cachedImgur = imgurKey && discordArtworkCacheRef.current.has(imgurKey)
-      ? (discordArtworkCacheRef.current.get(imgurKey) || '') : '';
+    const cachedImgur = imgurKey ? (discordArtworkCacheRef.current.get(imgurKey) || '') : '';
 
-    // Some tracks have no public URL anywhere (Spotify search row
-    // didn't carry one, or the track was imported back when that field
-    // wasn't being persisted). For those, check the iTunes cache — if
-    // we've already looked up this song, use the cached URL
-    // immediately; otherwise queue an async lookup and re-push when it
-    // returns. Key by artist+album+title (not just album) because the
-    // main-process lookup matches on all three; an album-wide cache key
-    // would falsely share a URL between tracks where only one matched.
+    // Songs with no art of their own at all: the cover lookup (by artist,
+    // album and title). Never for local or custom art: those only ever go
+    // through imgbb.
     const cacheKey = `${(track.artist || '').trim()}|${(track.album || '').trim()}|${(track.title || '').trim()}`.toLowerCase();
-    const cachedRemote = discordArtworkCacheRef.current.get(cacheKey);
+    const cachedRemote = studioUrl ? '' : discordArtworkCacheRef.current.get(cacheKey);
     const coverArtUrl = localCoverUrl || cachedImgur || cachedRemote || '';
     const payload = {
       title: track.title || 'Unknown track',
@@ -1756,87 +1753,88 @@ export default function App() {
       duration: track.duration || 0,
       startedAtMs: discordWallStartRef.current,
     };
-    api.discordSetActivity(payload).catch(() => { /* ignore */ });
+    // What a late cover is added to: always the newest state of this song
+    // (a pause while the upload ran must not be undone by it).
+    discordPayloadRef.current = { trackId, payload };
+    const pushLate = (url) => {
+      const cur = discordPayloadRef.current;
+      if (!url || cur?.trackId !== trackId) return; // moved on
+      api.discordSetActivity({ ...cur.payload, coverArtUrl: url }).catch(() => { /* ignore */ });
+    };
 
-    const effectiveImgbbApiKey = (imgbbApiKey || '').trim();
-
-    // Path A — imgbb upload for local studio-cover:// art.
-    // When the track has no public URL but has local embedded art,
-    // upload it once to imgbb and re-push when the URL comes back.
-    // The main process caches the result on disk by image hash so the
-    // same art is never uploaded twice across restarts.
-    if (
-      !localCoverUrl && !cachedImgur
-      && imgurKey && effectiveImgbbApiKey
-      && api.discordResolveCoverUrl
-      && !discordArtworkCacheRef.current.has(imgurKey)
-    ) {
-      discordArtworkCacheRef.current.set(imgurKey, null); // mark in-flight
-      api.discordResolveCoverUrl({ studioUrl, clientId: effectiveImgbbApiKey })
-        .then((res) => {
-          const url = res?.url || '';
-          discordArtworkCacheRef.current.set(imgurKey, url);
-          if (!url) return;
-          if (discordLastTrackIdRef.current !== trackId) return; // user moved on
-          api.discordSetActivity({
-            ...payload,
-            coverArtUrl: url,
-            isPlaying,
-            startedAtMs: discordWallStartRef.current,
-          }).catch(() => { /* ignore */ });
-        })
-        .catch(() => {
-          // Network error — remove so next play can retry
-          discordArtworkCacheRef.current.delete(imgurKey);
-        });
+    const uploading = !!(studioUrl && !cachedImgur && effectiveImgbbApiKey && api.discordResolveCoverUrl);
+    /* A new song whose cover is still uploading: give the upload up to 2.5s
+       from the song change before telling Discord, so it goes straight to
+       the right cover instead of a blank one first. Measured from the song
+       change (set above), not from this run: a song change runs this more
+       than once (the song, then playback starting). */
+    const holdFor = discordHoldUntilRef.current - Date.now();
+    let holdTimer = null;
+    if (uploading && holdFor > 0) {
+      holdTimer = setTimeout(() => { holdTimer = null; api.discordSetActivity(discordPayloadRef.current?.payload || payload).catch(() => { /* ignore */ }); }, holdFor);
+    } else {
+      api.discordSetActivity(payload).catch(() => { /* ignore */ });
     }
 
-    // Path B — iTunes metadata lookup, fallback when no Imgur Client-ID
-    // is configured or when the track has no studio-cover:// art at all.
-    // If we sent no URL and don't have a cached lookup yet, kick off an
-    // iTunes lookup. When it returns, if the user is still on this same
-    // track, re-push the activity with the resolved URL. We guard on
-    // trackId so that an old lookup for a previous track doesn't
-    // overwrite presence for whatever the user has skipped to.
+    /* Upload to imgbb: once per image (main keeps the result on disk by the
+       image's hash); a failure is tried again on a later play. */
+    const upload = (url) => {
+      const key = `imgur:${url}`;
+      const known = discordArtworkCacheRef.current.get(key);
+      if (known) return Promise.resolve(known);
+      if (discordUploadsRef.current.has(key)) return discordUploadsRef.current.get(key);
+      const p = api.discordResolveCoverUrl({ studioUrl: url, clientId: effectiveImgbbApiKey })
+        .then((res) => {
+          const u = res?.url || '';
+          if (u) discordArtworkCacheRef.current.set(key, u);
+          return u;
+        })
+        .catch(() => '')
+        .finally(() => { discordUploadsRef.current.delete(key); });
+      discordUploadsRef.current.set(key, p);
+      return p;
+    };
+    if (uploading) {
+      upload(studioUrl).then((url) => {
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        const cur = discordPayloadRef.current;
+        if (cur?.trackId !== trackId) return;
+        // In time: one update with the cover. Late, or failed: the song goes
+        // up without it (if it hasn't already) and the cover follows.
+        api.discordSetActivity(url ? { ...cur.payload, coverArtUrl: url } : cur.payload).catch(() => { /* ignore */ });
+      });
+    }
+    // The next song's cover, uploaded ahead so it's ready when it starts.
+    const next = queue[currentIndex + 1];
+    if (next && effectiveImgbbApiKey && api.discordResolveCoverUrl) {
+      const n = artFor(next);
+      if (n.studioUrl) upload(n.studioUrl);
+    }
+
+    /* The cover lookup: only for a song with no art of its own and no
+       custom cover. */
     if (
-      !localCoverUrl && !cachedImgur
-      && !(imgurKey && effectiveImgbbApiKey) // skip when imgbb path is active
+      !studioUrl && !localCoverUrl
       && !discordArtworkCacheRef.current.has(cacheKey)
       && api.discordLookupArtwork
       && (track.artist || track.album || track.title)
     ) {
-      // Mark as "in flight" with `null` so we don't fire duplicate
-      // lookups for the same album while the first request is pending.
-      discordArtworkCacheRef.current.set(cacheKey, null);
-      api.discordLookupArtwork({
-        title: track.title || '',
-        artist: track.artist || '',
-        album: track.album || '',
-      }).then((res) => {
-        const url = res?.url || '';
-        discordArtworkCacheRef.current.set(cacheKey, url || '');
-        if (!url) return;
-        if (discordLastTrackIdRef.current !== trackId) return; // user moved on
-        const isStillPlaying = isPlaying;
-        api.discordSetActivity({
-          ...payload,
-          coverArtUrl: url,
-          isPlaying: isStillPlaying,
-          // The wall-start was anchored above; reuse it so the elapsed-
-          // time bar doesn't jump when the second activity arrives.
-          startedAtMs: discordWallStartRef.current,
-        }).catch(() => { /* ignore */ });
-      }).catch(() => {
-        // Mark as known-miss so we don't retry on replay.
-        discordArtworkCacheRef.current.set(cacheKey, '');
-      });
+      discordArtworkCacheRef.current.set(cacheKey, null); // in flight
+      api.discordLookupArtwork({ title: track.title || '', artist: track.artist || '', album: track.album || '' })
+        .then((res) => {
+          const url = res?.url || '';
+          discordArtworkCacheRef.current.set(cacheKey, url);
+          pushLate(url);
+        })
+        .catch(() => { discordArtworkCacheRef.current.set(cacheKey, ''); });
     }
+    return () => { if (holdTimer) clearTimeout(holdTimer); };
     // Note: we deliberately depend on currentTrack identity + isPlaying
     // + seekNonce only, NOT currentTime. currentTime ticks every audio
     // frame and would spam Discord. Track changes and play/pause both
     // re-anchor on their own; seekNonce covers user seeks within a song.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue[currentIndex]?.id, isPlaying, seekNonce, discordPresenceEnabled, effectiveDiscordAppId, discordPresenceDetail, discordHideWhenPaused]);
+  }, [queue[currentIndex]?.id, isPlaying, seekNonce, discordPresenceEnabled, effectiveDiscordAppId, discordPresenceDetail, discordHideWhenPaused, albumCoverOverrides, imgbbApiKey]);
 
   /**
    * Clear the entire library. `deleteFiles=true` also trashes audio files the

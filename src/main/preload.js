@@ -146,7 +146,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyPartnerArtist: (id) => ipcRenderer.invoke('spotifyPartner:artist', id),
   spotifyPartnerFindArtist: (name) => ipcRenderer.invoke('spotifyPartner:findArtist', name),
   spotifyPartnerDiscography: (id) => ipcRenderer.invoke('spotifyPartner:discography', id),
-  previewResolve: (track) => ipcRenderer.invoke('preview:resolve', track),
   /* Spotify playback (studio-spotify helper). Control only — audio never
      comes through here; the helper plays to the sound card itself. */
   spotifyPlayerState: () => ipcRenderer.invoke('spotifyPlayer:state'),
@@ -193,6 +192,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyFeedPlaylist: (id, opts) => ipcRenderer.invoke('spotifyFeed:playlist', id, opts),
   spotifyFeedMyPlaylists: () => ipcRenderer.invoke('spotifyFeed:myPlaylists'),
   spotifyFeedPlaylistMeta: (id) => ipcRenderer.invoke('spotifyFeed:playlistMeta', id),
+  spotifyFeedTracks: (ids) => ipcRenderer.invoke('spotifyFeed:tracks', ids),
   saveSpotifyMany: (metas) => ipcRenderer.invoke('library:saveSpotifyMany', metas),
   spotifyFeedLiked: (opts) => ipcRenderer.invoke('spotifyFeed:liked', opts),
   /* Spotify links (spotifyLinks.js). fromClipboard: the clipboard's link,

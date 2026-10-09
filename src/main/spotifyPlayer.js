@@ -87,6 +87,15 @@ function onLine(line) {
       /* The helper's session stopped working (a dropped connection, or
          Spotify no longer handing out decryption keys on it) and it let the
          session go. What a restart used to fix: sign in again. */
+      /* A refused key: the helper let this connection go for a fresh one,
+         which gets the key. Routine, so no notice, and the helper limits it
+         to once in 30 seconds itself, so it doesn't count toward "keeps
+         dropping" below. */
+      if (String(ev.why || '').startsWith('refused')) {
+        reconnecting = true;
+        signIn();
+        return;
+      }
       const now = Date.now();
       staleAt = staleAt.filter((t) => now - t < 2 * 60 * 1000);
       staleAt.push(now);

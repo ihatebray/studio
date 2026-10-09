@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { PreviewButton, stop as stopPreview } from './previewPlayer.jsx';
 import {
   parseQuery, providerQuery, passesScopes, scoreEntity,
   slskQuality, groupSlskFiles, matchFilesToTracks, trackKey,
@@ -10,6 +9,7 @@ import {
 } from '../lib/instantSearch.js';
 import { api, fmtMs, fmtSec } from '../lib/format.js';
 import { parseSpotifyLink } from '../lib/spotifyLink.js';
+import { PlayIcon } from './sharedUI.jsx';
 
 /* =========================================================================
  *  studio — instant search
@@ -102,7 +102,6 @@ const Ico = {
   note: <path d="M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm12-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />,
   check: <path d="M20 6L9 17l-5-5" />,
   spark: <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z" />,
-  play: <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />,
   x: <path d="M6 6l12 12M18 6L6 18" />,
   clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
 };
@@ -210,9 +209,19 @@ function SlotTag({ free }) {
   );
 }
 
+/** In your library: a green tick, the same one the artist page uses. */
+function OwnedMark() {
+  return (
+    <span className="isx-owned is-mark" title="In your library" aria-label="In your library">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+    </span>
+  );
+}
+
 /** Download affordance for one row. Mirrors FindGetBtn's states exactly so a
- *  download looks the same wherever you started it. */
-function GetBtn({ dl, progress, label = 'Save', solid = false, big = false, onGrab, width = 92 }) {
+ *  download looks the same wherever you started it. With no label it's a
+ *  round + (↻ after a failure); a label ("Save all") keeps its words. */
+function GetBtn({ dl, progress, label = null, solid = false, big = false, onGrab, width = 92 }) {
   if (dl === 'busy') {
     const pct = typeof progress?.pct === 'number' ? progress.pct : null;
     const text = progress?.phase === 'processing' ? 'Processing…' : pct != null ? `${Math.round(pct * 100)}%` : 'Saving…';
@@ -223,15 +232,33 @@ function GetBtn({ dl, progress, label = 'Save', solid = false, big = false, onGr
       </div>
     );
   }
-  if (dl === 'done') return <span className="isx-owned">Added</span>;
+  if (dl === 'done') return <OwnedMark />;
+  const retry = dl === 'failed';
+  if (!label) {
+    return (
+      <button type="button" className="isx-get is-icon"
+        title={retry ? 'Try again' : 'Save to your library'} aria-label={retry ? 'Try saving again' : 'Save to your library'}
+        onClick={(e) => { e.stopPropagation(); onGrab?.(); }}>
+        {retry ? (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" /></svg>
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+        )}
+      </button>
+    );
+  }
   return (
     <button type="button"
       className={`isx-get${solid ? ' is-solid' : ''}${big ? ' is-big' : ''}`}
       onClick={(e) => { e.stopPropagation(); onGrab?.(); }}>
-      {dl === 'failed' ? 'Retry' : label}
+      {retry ? 'Retry' : label}
     </button>
   );
 }
+
+/* A song row's cover on hover (or keyboard focus): the play icon, so it's
+   clear a click plays the song rather than saving it. */
+const playOver = <span className="isx-artplay" aria-hidden><PlayIcon size={15} /></span>;
 
 /* ========================================================================= */
 
@@ -250,6 +277,7 @@ export default function InstantSearch({
   onGetSlskAlbum,         // (folder)     — a whole folder
   /* Navigation out of the palette. */
   onPlayTrack,            // (libraryTrack)
+  onPlaySpotifyRows,      // (spotifyRows, index) → play them, saved or not (your copies from the library)
   onOpenArtist,           // (artist)  → push the full profile page
   /* (artistRef, nav) → the artist view, rendered INSIDE the panel as the
      artist frame. StudioHome supplies it (it owns the library and download
@@ -264,7 +292,6 @@ export default function InstantSearch({
 }) {
   /* ---------------------------------------------------------------- state */
   // A preview started from the panel ends with the panel.
-  useEffect(() => { if (!open) stopPreview(); }, [open]);
   const [chips, setChips] = useState([]);
   const [text, setText] = useState('');
   const raw = useMemo(() => (chips.length ? `${chips.join(' ')} ${text}` : text), [chips, text]);
@@ -835,7 +862,7 @@ export default function InstantSearch({
        states, so they belong in one list where each row offers the verb
        that fits it. Splitting them into "your library" and "to download"
        is what made a song you own appear twice — once as a row you can
-       play, once as a row wearing an "In library" badge telling you not to
+       play, once as a row wearing a tick telling you not to
        press it. The badge was an apology for the duplicate. */
     const rows = new Map();   // dedupe key → row
     const keyOf = (title, artist) => `${normTitle(title)}|${normLoose(artist).slice(0, 24)}`;
@@ -851,7 +878,7 @@ export default function InstantSearch({
       if (!passesScopes(parsed, { artist: t.artist, album: t.album, title: t.title })) continue;
       const s = scoreEntity(parsed, 'track', { title: t.title, artists: t.artist });
       if (s < 40) continue;
-      ownedRows.push({ title: t.title, artist: t.artist });
+      ownedRows.push({ title: t.title, artist: t.artist, album: t.album });
       rows.set(keyOf(t.title, t.artist), {
         kind: 'song',
         id: `lib:${t.id}`,
@@ -865,12 +892,21 @@ export default function InstantSearch({
       });
     }
 
+    /* Your copy and a catalogue row are one song only on the same album: the
+       same title from a live set or another record is a different song, and
+       both show. (No album on the catalogue row: same song, as before.) */
+    const albumOf = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const sameAlbum = (libAlbum, r) => !r.album || albumOf(libAlbum) === albumOf(r.album);
     for (const r of spotify.songs) {
       if (!passesScopes(parsed, { artist: r.artists, album: r.album, title: r.title })) continue;
       const s = scoreEntity(parsed, 'track', r);
       if (s < 40) continue;
-      const k = keyOf(r.title, r.artists);
-      const existing = rows.get(k);
+      let k = keyOf(r.title, r.artists);
+      let existing = rows.get(k);
+      if (existing?.libTrack && !sameAlbum(existing.libTrack.album, r)) {
+        k = `${k}|${albumOf(r.album)}`;
+        existing = rows.get(k);
+      }
       if (existing) {
         // Same recording — attach the catalogue metadata to the owned row.
         existing.spotify = r;
@@ -880,14 +916,14 @@ export default function InstantSearch({
       /* You already own this song — same base title, same lead credit.
          One row is the answer; a shelf of streaming duplicates isn't
          options, it's noise. */
-      if (ownedRows.some((o) => sameSongFamily(o.title, o.artist, r.title, r.artists))) continue;
+      if (ownedRows.some((o) => sameSongFamily(o.title, o.artist, r.title, r.artists) && sameAlbum(o.album, r))) continue;
       rows.set(k, {
         kind: 'song',
         id: r.spotifyId,
         libTrack: null,
         spotify: r,
         slsk: byTitle.get(normLoose(r.title)) || null,
-        owned: alreadyOwned?.(r.title, r.artists) || false,
+        owned: alreadyOwned?.(r.title, r.artists, r.album || undefined) || false,
         /* Same lock as the albums above: on a bare artist-name query, a song
            BY them beats a song merely CALLED their name. Demoted rather than
            dropped — a guest credit that didn't make it into the artists
@@ -1098,7 +1134,7 @@ export default function InstantSearch({
              well-covered artist showed four top songs and a thin one showed
              ten — the section silently became "top songs you're missing" and
              stopped being a recognisable list of their hits. The row already
-             renders "In library" instead of a Get button, so an owned track
+             renders a tick instead of a Get button, so an owned track
              costs nothing to show and its absence was the confusing part. */
           const k = normLoose(t.title);
           if (!k || seenTop.has(k)) return false;
@@ -1572,7 +1608,7 @@ export default function InstantSearch({
     const d = albumData[album.albumId];
     if (!d?.tracks) return;
     for (const [i, t] of d.tracks.entries()) {
-      if (alreadyOwned?.(t.title, t.artists || album.artists)) continue;
+      if (t.notOut || alreadyOwned?.(t.title, t.artists || album.artists, album.name || undefined)) continue;
       getTrack(t, trackKey(t, i));
     }
   }, [albumData, alreadyOwned, getTrack]);
@@ -1609,6 +1645,15 @@ export default function InstantSearch({
   }, [push, renderArtist, onOpenArtist, onClose]);
 
   /** A CLICK — do the obvious thing for the row that was clicked. */
+  /* A search result's + : saved through Spotify when it's there (streamed,
+     nothing downloaded), else a peer's file. */
+  const saveSong = useCallback((data) => {
+    const probed = songProbes[data.id]?.sources?.[0];
+    if (data.spotify) onGetSpotifyTrack?.(data.spotify);
+    else if (probed) onGetSlskFile?.(probed);
+    else if (data.slsk?.best) onGetSlskFile?.(data.slsk.best);
+  }, [songProbes, onGetSpotifyTrack, onGetSlskFile]);
+
   const activate = useCallback((item, mod = false) => {
     if (!item) return;
     const { kind, data } = item;
@@ -1637,29 +1682,34 @@ export default function InstantSearch({
       push({ kind: 'album', album: data });
       return;
     }
+    /* Songs play, saved or not, and the panel stays open so you can keep
+       looking. Saving is the + (saveSong). */
     if (kind === 'song') {
-      /* Owned rows play. This is the whole payoff of merging the lists:
-         the same search that collects music also starts it. */
-      if (data.owned) {
-        if (data.libTrack) { onPlayTrack?.(data.libTrack); onClose?.(); }
-        return;
-      }
-      /* Save through Spotify when the song is on it — streamed, nothing
-         downloaded. A peer's file only when Spotify has no copy. */
-      const probed = songProbes[data.id]?.sources?.[0];
-      if (data.spotify) onGetSpotifyTrack?.(data.spotify);
-      else if (probed) onGetSlskFile?.(probed);
-      else if (data.slsk?.best) onGetSlskFile?.(data.slsk.best);
+      if (data.libTrack) { onPlayTrack?.(data.libTrack); return; }
+      if (data.spotify && onPlaySpotifyRows) { onPlaySpotifyRows([data.spotify], 0); return; }
+      // Only a peer's file to be had: there's nothing to play until it's got.
+      saveSong(data);
       return;
     }
     if (kind === 'folder') { onGetSlskAlbum?.(data); return; }
+    // Listed but not out yet: nothing to play or save.
+    if (kind === 'albumtrack' && data?.track?.notOut) return;
     if (kind === 'albumtrack') {
-      const owned = alreadyOwned?.(data.track.title, data.track.artists || frame?.album?.artists);
+      /* The album from this song on, the way an album page plays. */
+      const a = frame?.album || {};
+      const tracks = (albumData[a.albumId]?.tracks || []).map((t) => ({
+        ...t, album: t.album || a.name || '', albumId: t.albumId || a.albumId, albumArtUrl: t.albumArtUrl || a.albumArtUrl || '',
+      }));
+      if (data.track.spotifyId && onPlaySpotifyRows) { onPlaySpotifyRows(tracks, data.index); return; }
+      const owned = alreadyOwned?.(data.track.title, data.track.artists || a.artists, a.name || undefined);
       if (!owned) getTrack(data.track, data.tKey);
       return;
     }
     if (kind === 'toptrack') {
-      const owned = alreadyOwned?.(data.title, data.artists);
+      // The artist's top songs, from this one on.
+      const tops = items.filter((x) => x.kind === 'toptrack').map((x) => x.data);
+      if (onPlaySpotifyRows) { onPlaySpotifyRows(tops, Math.max(0, tops.indexOf(data))); return; }
+      const owned = alreadyOwned?.(data.title, data.artists, data.album || undefined);
       if (!owned) onGetSpotifyTrack?.(data);
       return;
     }
@@ -1676,8 +1726,8 @@ export default function InstantSearch({
         onClose?.();
       }
     }
-  }, [push, onOpenArtist, onOpenAlbum, onClose, onPlayTrack, onGetSlskFile, onGetSpotifyTrack,
-    onGetSlskAlbum, alreadyOwned, getTrack, frame, parsed, raw, onFilterLibrary, hasQuery, rememberQuery, setRaw, renderArtist]);
+  }, [push, onOpenArtist, onOpenAlbum, onClose, onPlayTrack, onPlaySpotifyRows, onGetSlskFile, onGetSpotifyTrack, saveSong,
+    onGetSlskAlbum, alreadyOwned, getTrack, frame, albumData, items, parsed, raw, onFilterLibrary, hasQuery, rememberQuery, setRaw, renderArtist]);
 
   /** Right arrow — go deeper, when there is a deeper. */
   const drill = useCallback((item) => {
@@ -1801,8 +1851,8 @@ export default function InstantSearch({
       case 'recent': return 'search';
       case 'artist': case 'album': case 'release': return 'open';
       case 'song': return c.data.owned ? 'play' : 'get';
-      case 'albumtrack': return alreadyOwned?.(c.data.track.title, c.data.track.artists || frame?.album?.artists) ? null : 'get';
-      case 'toptrack': return alreadyOwned?.(c.data.title, c.data.artists) ? null : 'get';
+      case 'albumtrack': return alreadyOwned?.(c.data.track.title, c.data.track.artists || frame?.album?.artists, frame?.album?.name || undefined) ? null : 'get';
+      case 'toptrack': return alreadyOwned?.(c.data.title, c.data.artists, c.data.album || undefined) ? null : 'get';
       case 'folder': return 'get all';
       case 'source': return 'get this file';
       case 'action': return c.data.action === 'filter' ? 'filter' : 'search';
@@ -1925,11 +1975,13 @@ export default function InstantSearch({
       const key = best ? `t:${best.id}` : `s:${s.spotify?.spotifyId}`;
       const isOpen = expandedSong === s.id;
       const dur = s.libTrack?.duration ? fmtSec(s.libTrack.duration) : fmtMs(s.spotify?.durationMs);
+      // Plays (your copy, or streamed); only a peer's file has to be got first.
+      const canPlay = !!(s.libTrack || (s.spotify && onPlaySpotifyRows));
       return (
         <button {...common} onClick={(e) => { e.stopPropagation(); activate(item); }}>
           {art
-            ? <div className={`isx-art${s.owned ? ' is-owned' : ''}`} style={{ backgroundImage: `url("${art}")` }} />
-            : <div className="isx-glyph"><Svg d={Ico.note} size={17} w={1.8} /></div>}
+            ? <div className={`isx-art${s.owned ? ' is-owned' : ''}`} style={{ backgroundImage: `url("${art}")` }}>{canPlay ? playOver : null}</div>
+            : <div className="isx-glyph"><Svg d={Ico.note} size={17} w={1.8} />{canPlay ? playOver : null}</div>}
           <div className="isx-mid">
             <div className="isx-nm">{title}</div>
             <div className="isx-meta">
@@ -1964,7 +2016,7 @@ export default function InstantSearch({
                   <Svg d={Ico.chevron} size={11} w={2.4} />
                 </span>
               ) : null}
-              <span className="isx-playtag"><Svg d={Ico.play} size={11} w={0} /> Play</span>
+              <span className="isx-playtag"><PlayIcon size={11} /> Play</span>
             </>
           ) : (
             <>
@@ -1976,11 +2028,7 @@ export default function InstantSearch({
                   better?
                 </span>
               ) : null}
-              {s.spotify ? (
-                <PreviewButton pkey={`pv:${s.spotify.spotifyId || s.id}`} accent="var(--st-acc-rgb)"
-                  track={{ title: s.spotify.title, artists: s.spotify.artists, durationMs: s.spotify.durationMs, explicit: s.spotify.explicit }} />
-              ) : null}
-              <GetBtn dl={dlState[key]} progress={dlProgress[key]} onGrab={() => activate(item)} />
+              <GetBtn dl={dlState[key]} progress={dlProgress[key]} onGrab={() => saveSong(s)} />
             </>
           )}
           {isOpen ? <Svg d={Ico.chevron} size={13} w={2.2} style={{ flexShrink: 0, color: 'rgba(var(--st-acc-rgb),0.7)', transform: 'rotate(90deg)' }} /> : null}
@@ -2013,12 +2061,16 @@ export default function InstantSearch({
       const { track, tKey } = item.data;
       const srcs = sourcesFor(tKey);
       const best = srcs[0];
-      const owned = alreadyOwned?.(track.title, track.artists || frame?.album?.artists);
+      const owned = alreadyOwned?.(track.title, track.artists || frame?.album?.artists, frame?.album?.name || undefined);
       const key = dlKeyFor(track, best);
       const isOpen = expandedTrack === tKey;
       return (
-        <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}`}>
-          <span className="isx-n">{track.trackNumber || item.data.index + 1}</span>
+        <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}${track.notOut ? ' is-locked' : ''}`}
+          {...(track.notOut ? { onClick: undefined, 'aria-disabled': true, title: 'Not out yet' } : null)}>
+          <span className={`isx-n${track.spotifyId && !track.notOut && onPlaySpotifyRows ? ' can-play' : ''}`}>
+            <span className="num">{track.trackNumber || item.data.index + 1}</span>
+            <span className="pl"><PlayIcon size={11} /></span>
+          </span>
           {/* Title over credits: the lead artist, then anyone featured. Each
               name opens that artist in the panel. */}
           <span className="isx-tcell">
@@ -2062,16 +2114,18 @@ export default function InstantSearch({
           </span>
           <span className="isx-dur">{fmtMs(track.durationMs)}</span>
           <span className="isx-ta">
-            {owned
-              ? <span className="isx-owned">In library</span>
+            {track.notOut
+              ? (
+                <span className="isx-owned is-mark" style={{ color: 'rgba(var(--st-fg-rgb), 0.4)' }} aria-label="Not out yet">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+                </span>
+              )
+              : owned
+              ? <OwnedMark />
               : (best || track.spotifyId)
                 ? (
-                  <>
-                    <PreviewButton pkey={`pv:${track.spotifyId || tKey}`} accent="var(--st-acc-rgb)"
-                      track={{ title: track.title, artists: track.artists || frame?.album?.artists || '', durationMs: track.durationMs, explicit: track.explicit }} />
-                    <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Save"
-                      onGrab={() => getTrack(track, tKey)} />
-                  </>
+                  <GetBtn dl={dlState[key]} progress={dlProgress[key]}
+                    onGrab={() => getTrack(track, tKey)} />
                 )
                 : null}
           </span>
@@ -2109,18 +2163,18 @@ export default function InstantSearch({
 
     if (item.kind === 'toptrack') {
       const t = item.data;
-      const owned = alreadyOwned?.(t.title, t.artists);
+      const owned = alreadyOwned?.(t.title, t.artists, t.album || undefined);
       const key = `s:${t.spotifyId}`;
       return (
         <button {...common}>
-          <div className="isx-art" style={{ backgroundImage: t.albumArtUrl ? `url("${t.albumArtUrl}")` : 'none' }} />
+          <div className="isx-art" style={{ backgroundImage: t.albumArtUrl ? `url("${t.albumArtUrl}")` : 'none' }}>{onPlaySpotifyRows ? playOver : null}</div>
           <div className="isx-mid">
             <div className="isx-nm">{t.title}</div>
             <div className="isx-meta"><span className="isx-mi">{t.album}</span></div>
           </div>
           <span className="isx-dur">{fmtMs(t.durationMs)}</span>
           {owned
-            ? <span className="isx-owned">In library</span>
+            ? <OwnedMark />
             : <GetBtn dl={dlState[key]} progress={dlProgress[key]} onGrab={() => onGetSpotifyTrack?.(t)} />}
         </button>
       );
@@ -2272,8 +2326,10 @@ export default function InstantSearch({
          for is not a count worth printing. */
       const noTracks = Array.isArray(d.tracks) && d.tracks.length === 0 && !d.busy;
       const total = noTracks ? 0 : (d.tracks?.length || a.totalTracks || 0);
-      const ownedCount = (d.tracks || []).filter((t) => alreadyOwned?.(t.title, t.artists || a.artists)).length;
-      const missing = total - ownedCount;
+      // Songs not out yet can't be got, so they don't count as missing.
+      const notOutCount = (d.tracks || []).filter((t) => t.notOut).length;
+      const ownedCount = (d.tracks || []).filter((t) => !t.notOut && alreadyOwned?.(t.title, t.artists || a.artists, a.name || undefined)).length;
+      const missing = total - notOutCount - ownedCount;
       const year = String(a.releaseDate || '').slice(0, 4);
       const unmatched = probe.match?.unmatched?.length || 0;
       return (
@@ -2290,7 +2346,7 @@ export default function InstantSearch({
                 {noTracks ? (
                   <span className="isx-owned" style={{ fontSize: 12, opacity: 0.72 }}>
                     This release has no playable tracks — it&apos;s a video or
-                    compilation entry the catalogue lists without audio.
+                    compilation entry the catalog lists without audio.
                   </span>
                 ) : missing > 0 ? (
                   <GetBtn big solid width={190} label={`Get the ${missing} you're missing`} onGrab={() => getAlbumMissing(a)} />
@@ -2352,7 +2408,7 @@ export default function InstantSearch({
          your library" is the same fact the removed section spelled out over
          twelve rows you couldn't press. */
       const known = (ex.tracks || []).length;
-      const owned = (ex.tracks || []).filter((t) => alreadyOwned?.(t.title, t.artists)).length;
+      const owned = (ex.tracks || []).filter((t) => alreadyOwned?.(t.title, t.artists, t.album || undefined)).length;
       const missing = known - owned;
       /* Only claimed when the expansion pass actually ran. It's opt-in now, so
          the default frame says how many releases there are and stops — a count
@@ -2531,7 +2587,7 @@ export default function InstantSearch({
             <div className="isx-start">
               {items.length ? renderList() : (
                 <div className="isx-intro">
-                  <div className="isx-emptytitle">Search your library and the catalogue</div>
+                  <div className="isx-emptytitle">Search your library and the catalog</div>
                   <div className="isx-emptyhint">Songs you own play straight away. Everything else can be fetched from here.</div>
                 </div>
               )}
@@ -2594,13 +2650,13 @@ export default function InstantSearch({
           <div style={{ flex: 1 }} />
           {phase.slsk === 'busy' ? <span className="isx-footnote"><span className="isx-spin" />checking Soulseek</span> : null}
           {/* The one global setting worth having in reach. Fast is the default
-              and the honest one: Spotify's catalogue, YouTube's files, no
+              and the honest one: Spotify's catalog, YouTube's files, no
               waiting. Best is for people who'd rather wait than re-encode. */}
           <span className="isx-footnote" style={{ marginRight: 6 }}>Quality</span>
           <div className="isx-qtoggle" role="radiogroup" aria-label="Download quality">
             <button type="button" role="radio" aria-checked={quality === 'fast'}
               className={quality === 'fast' ? 'on' : ''}
-              title="Spotify catalogue, downloaded through YouTube. Instant."
+              title="Spotify catalog, downloaded through YouTube. Instant."
               onClick={() => setQualityMode('fast')}>Fast</button>
             <button type="button" role="radio" aria-checked={quality === 'best'}
               className={quality === 'best' ? 'on' : ''}
@@ -2778,6 +2834,8 @@ const STYLES = `
 .isx-mi + .isx-mi::before { content: '·'; margin-right: 7px; color: rgba(var(--st-sub-rgb), 0.3); font-weight: 700; }
 .isx-kb { flex-shrink: 0; font-size: 10px; font-weight: 700; color: rgba(var(--st-fg-rgb), 0.32); }
 .isx-dur { flex-shrink: 0; font-size: 11.5px; color: rgba(var(--st-sub-rgb), 0.45); font-variant-numeric: tabular-nums; }
+.isx-trk.is-locked { cursor: default; }
+.isx-trk.is-locked > .isx-n, .isx-trk.is-locked > .isx-tcell, .isx-trk.is-locked > .isx-dur { opacity: 0.45; }
 .isx-owned { flex-shrink: 0; font-size: 10.5px; font-weight: 650; color: rgba(140,220,160,0.85); white-space: nowrap; }
 
 .isx-badge { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; font-size: 9.5px; font-weight: 800;
@@ -2791,6 +2849,8 @@ const STYLES = `
 .isx-get:hover { background: rgba(var(--st-acc-rgb), 0.26); }
 .isx-get.is-solid { background: rgb(var(--st-acc-rgb)); border-color: transparent; color: var(--st-acc-ink, #0d0f1c); }
 .isx-get.is-big { padding: 9px 16px; border-radius: 10px; font-size: 12px; }
+.isx-get.is-icon { width: 28px; height: 28px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.isx-owned.is-mark { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: rgba(140,220,160,0.9); }
 .isx-ghost { flex-shrink: 0; cursor: pointer; white-space: nowrap; font-family: inherit; padding: 5px 12px; border-radius: 8px;
   font-size: 11px; font-weight: 700; border: 1px solid rgba(var(--st-fg-rgb), 0.14);
   background: rgba(var(--st-fg-rgb), 0.05); color: rgba(var(--st-fg-rgb), 0.8); }
@@ -2902,6 +2962,17 @@ const STYLES = `
 .isx-row.is-on .isx-playtag { display: inline-flex; }
 /* A hairline in the "owned" green, so the split is legible while scanning
    without every second row carrying a text badge. */
+.isx-art, .isx-glyph { position: relative; }
+.isx-artplay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; border-radius: inherit;
+  background: rgba(0, 0, 0, 0.5); color: #fff; opacity: 0; transition: opacity 0.12s ease; }
+.isx-row:hover .isx-artplay, .isx-row.is-on .isx-artplay { opacity: 1; }
+/* No cover: the play icon takes the note's place rather than sitting on it. */
+.isx-glyph .isx-artplay { background: none; }
+.isx-row:hover .isx-glyph:has(.isx-artplay) > svg, .isx-row.is-on .isx-glyph:has(.isx-artplay) > svg { opacity: 0; }
+.isx-n .pl { display: none; color: var(--st-text); }
+.isx-n.can-play .pl { justify-content: center; }
+.isx-trk:hover .isx-n.can-play .num, .isx-trk.is-on .isx-n.can-play .num { display: none; }
+.isx-trk:hover .isx-n.can-play .pl, .isx-trk.is-on .isx-n.can-play .pl { display: inline-flex; }
 .isx-art.is-owned { box-shadow: 0 0 0 1px rgba(123,224,176,0.35); }
 
 .isx-spin { width: 11px; height: 11px; flex-shrink: 0; border-radius: 50%; display: inline-block;

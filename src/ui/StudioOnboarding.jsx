@@ -854,7 +854,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
               {[
                 { hue: HUES.peach, delay: 0.9, title: 'One library', body: 'Your Spotify songs, playlists and own files, together in one place.',
                   icon: <><path d="M9 18V5.5l11-2V16" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="17.5" cy="16" r="2.5" /></> },
-                { hue: HUES.violet, delay: 1.0, title: 'Make it yours', body: 'Colours drawn from the artwork, with layouts and fonts to suit you.',
+                { hue: HUES.violet, delay: 1.0, title: 'Make it yours', body: 'Colors drawn from the artwork, with layouts and fonts to suit you.',
                   icon: <><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></> },
                 { hue: HUES.mint, delay: 1.1, title: 'Live in it', body: 'Synced lyrics you can fix yourself, credits and the artist behind every song.',
                   icon: <><path d="M6.6 4.5h10.8a3 3 0 0 1 3 3v6.6a3 3 0 0 1-3 3H12l-3.9 3.4v-3.4H6.6a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3z" /><path fill="currentColor" stroke="none" d="M9.90 8.30A1.30 1.30 0 0 1 11.20 9.60C11.20 11.20 10.30 12.40 8.80 13.00L8.50 12.50C9.40 12.00 9.80 11.40 9.90 10.90A1.30 1.30 0 0 1 9.90 8.30Z M14.30 8.30A1.30 1.30 0 0 1 15.60 9.60C15.60 11.20 14.70 12.40 13.20 13.00L12.90 12.50C13.80 12.00 14.20 11.40 14.30 10.90A1.30 1.30 0 0 1 14.30 8.30Z" /></> },

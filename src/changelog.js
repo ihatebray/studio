@@ -8,6 +8,38 @@
 
 export const CHANGELOG = [
   {
+    version: '0.0.4',
+    date: '2026-10-09',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Playback', text: 'Songs on artist pages and in search can now be played without being saved to your library.' },
+          { lead: 'Unreleased Songs', text: 'Songs that aren\'t out yet are shown but locked. They can\'t be played or saved until their release date.' },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Artist Pages and Albums', text: 'Slightly redesigned to match the rest of Studio.' },
+          { lead: 'Previews', text: 'Song previews have been removed. Songs now play in full.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed Genius lyrics taking priority over synced lyrics from LRCLIB (i hope).',
+          'Fixed slow Discord status updates and custom covers not loading.',
+          'Fixed Discord covers that failed to upload never being retried.',
+          'Fixed songs pausing for long stretches with a "slowing playback" notice. Studio now reconnects to Spotify right away.',
+          'Fixed songs with the same title on different albums, such as live versions, being marked as saved. Search now shows both versions instead of one.',
+          'Fixed artist pages stuttering when you start to scroll.',
+          'Fixed many more UI inconsistencies.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.3',
     date: '2026-10-07',
     sections: [
@@ -58,7 +90,7 @@ export const CHANGELOG = [
       'Synced lyrics, with a built-in editor for timing them yourself',
       'New releases and album countdowns for the artists you follow',
       'Bring your Spotify playlists over in a couple of clicks',
-      'Lots of ways to make it look how you want: layouts, colours, fonts',
+      'Lots of ways to make it look how you want: layouts, colors, fonts',
       'Studio now updates itself when a new version is out',
     ],
   },

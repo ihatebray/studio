@@ -209,7 +209,7 @@ function beginSignIn() {
       const err = url.searchParams.get('error');
       const code = url.searchParams.get('code');
       if (err || !code || url.searchParams.get('state') !== state) {
-        page(err === 'access_denied' ? 'Sign-in cancelled' : 'Sign-in failed');
+        page(err === 'access_denied' ? 'Sign-in canceled' : 'Sign-in failed');
         teardown();
         broadcast('spotifyPartner:changed', { connected: false, error: err || 'bad callback' });
         return;
@@ -759,6 +759,8 @@ function shapeRelease(r, group) {
     type: String(r.type || group || '').toLowerCase(),
     group,
     releaseDate: iso.slice(0, 10),
+    // 'day', 'month' or 'year': how much of releaseDate Spotify actually knows.
+    datePrecision: String(d.precision || (d.day ? 'day' : d.month ? 'month' : d.year ? 'year' : '')).toLowerCase(),
     year: d.year || (iso ? Number(iso.slice(0, 4)) : null),
     albumArtUrl: img(r.coverArt?.sources, 2000),
     totalTracks: r.tracks?.totalCount || null,
@@ -973,7 +975,7 @@ export async function albumTracks(albumId) {
     page = page.next ? await webApi(page.next) : null;
   }
   tracks.sort((x, y) => (x.discNumber - y.discNumber) || (x.trackNumber - y.trackNumber));
-  return { album, artists: albumArtists, albumArtUrl, tracks };
+  return { album, artists: albumArtists, albumArtUrl, tracks, releaseDate: a.release_date || '' };
 }
 
 

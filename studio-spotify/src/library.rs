@@ -204,8 +204,10 @@ fn track_row(uri: &str, t: &TrackMessage, added_at: Option<i64>) -> Option<Value
         .filter_map(|a| Some((base62(a.gid())?, a.name().to_owned())).filter(|(_, n)| !n.is_empty()))
         .collect();
     let album = t.album.as_ref();
+    // Single songs: no album-mates to tell whether files are listed at all.
+    let (play_id, not_out) = crate::search::playable_id(id, t, false);
     Some(json!({
-        "spotifyId": id,
+        "spotifyId": play_id,
         "title": t.name(),
         "artists": artists.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", "),
         "artistIds": artists.iter().map(|(i, _)| i).collect::<Vec<_>>(),
@@ -217,6 +219,7 @@ fn track_row(uri: &str, t: &TrackMessage, added_at: Option<i64>) -> Option<Value
         "trackNumber": if t.number() > 0 { json!(t.number()) } else { Value::Null },
         "discNumber": if t.disc_number() > 0 { json!(t.disc_number()) } else { Value::Null },
         "releaseDate": album.map(date_of).unwrap_or_default(),
+        "notOut": not_out,
         "addedAt": added_at.filter(|a| *a > 0).map(|a| a * 1000),
     }))
 }

@@ -17,19 +17,29 @@
  * imgbb API key: https://api.imgbb.com — sign up and copy the key shown
  * on the dashboard. No OAuth, no callback URL, just a plain string.
  *
+ *   - Shrink to 512px JPEG first: Discord shows it small anyway, and a
+ *     full-size cover (often several MB, a third bigger again as base64)
+ *     made the upload, and so the cover on Discord, take a long time
+ *
  * Failures:
  *   - Missing/invalid key    → returns null (falls back to immerse_logo)
- *   - Network error          → not cached, retried on next play
- *   - imgbb error response   → cached as empty string, not retried until
- *     app restart, to avoid hammering the API on every track change
+ *   - Any failed upload      → not kept on disk; tried again a minute later
+ *     (a failure used to be saved for good, so that cover never uploaded)
+ *   - An upload that hangs   → given up on after 20 seconds
  */
 
 import path from 'path';
 import fs from 'fs';
-import { app, net } from 'electron';
+import { app, nativeImage, net } from 'electron';
 import { resolveCoverFilePath } from './coverArtStore.js';
 
 const CACHE_FILE = 'imgbb-cover-cache.json';
+const MAX_SIDE = 512;
+const UPLOAD_TIMEOUT_MS = 20_000;
+const RETRY_AFTER_MS = 60_000;
+/* cacheKey → when it last failed (memory only), so a bad moment is retried
+   soon, but not on every track change. */
+const failedAt = new Map();
 
 let cacheLoaded = false;
 let cache = {};
@@ -44,7 +54,10 @@ function loadCache() {
   try {
     const raw = fs.readFileSync(cacheFilePath(), 'utf8');
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') cache = parsed;
+    if (parsed && typeof parsed === 'object') {
+      // Failures saved by older versions ('') blocked those covers for good.
+      cache = Object.fromEntries(Object.entries(parsed).filter(([, v]) => typeof v === 'string' && v));
+    }
   } catch {
     cache = {};
   }
@@ -66,6 +79,23 @@ function hashFromStudioUrl(url) {
   return m ? m[1] : null;
 }
 
+/** The cover as a JPEG at most MAX_SIDE across; the original when it's
+ *  already small or isn't something nativeImage can read. */
+function shrink(buf) {
+  try {
+    const img = nativeImage.createFromBuffer(buf);
+    if (img.isEmpty()) return buf;
+    const { width, height } = img.getSize();
+    const side = Math.max(width, height);
+    if (side <= MAX_SIDE && buf.length < 300 * 1024) return buf;
+    const scale = Math.min(1, MAX_SIDE / side);
+    const out = img.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'best' }).toJPEG(88);
+    return out.length ? out : buf;
+  } catch {
+    return buf;
+  }
+}
+
 /** Deduplicate concurrent uploads — maps cacheKey → Promise<string|null>. */
 const inFlight = new Map();
 
@@ -85,10 +115,8 @@ export async function resolveForDiscord(studioUrl, apiKey) {
   const hash = hashFromStudioUrl(studioUrl);
   const cacheKey = hash || studioUrl;
 
-  // Persistent cache hit — '' means a known failure (imgbb rejected it)
-  if (cache[cacheKey] !== undefined) {
-    return cache[cacheKey] || null;
-  }
+  if (cache[cacheKey]) return cache[cacheKey];
+  if (Date.now() - (failedAt.get(cacheKey) || 0) < RETRY_AFTER_MS) return null;
 
   // Already uploading — wait for the same promise instead of double-uploading
   if (inFlight.has(cacheKey)) {
@@ -98,11 +126,7 @@ export async function resolveForDiscord(studioUrl, apiKey) {
   const uploadPromise = (async () => {
     try {
       const filePath = resolveCoverFilePath(studioUrl);
-      if (!filePath) {
-        cache[cacheKey] = '';
-        persistCache();
-        return null;
-      }
+      if (!filePath) { failedAt.set(cacheKey, Date.now()); return null; }
 
       let buf;
       try {
@@ -111,51 +135,56 @@ export async function resolveForDiscord(studioUrl, apiKey) {
         // File unreadable — don't cache; might be transient
         return null;
       }
-      if (!buf || buf.length === 0) {
-        cache[cacheKey] = '';
-        persistCache();
-        return null;
-      }
+      if (!buf || buf.length === 0) { failedAt.set(cacheKey, Date.now()); return null; }
+      buf = shrink(buf);
 
       // imgbb expects a URL-encoded POST body with the base64 image.
       // The API key goes in the query string.
       const body = new URLSearchParams();
       body.set('image', buf.toString('base64'));
 
-      const res = await net.fetch(
-        `https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey.trim())}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        },
-      );
-
+      // The limit covers the whole exchange, the reply's body included.
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), UPLOAD_TIMEOUT_MS);
       let json;
       try {
-        json = await res.json();
-      } catch {
-        console.log('[discord] imgbb response not JSON for', cacheKey);
-        return null;
+        const res = await net.fetch(
+          `https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey.trim())}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+            signal: abort.signal,
+          },
+        );
+        try {
+          json = await res.json();
+        } catch (e) {
+          if (abort.signal.aborted) throw e;
+          console.log('[discord] imgbb response not JSON for', cacheKey);
+          failedAt.set(cacheKey, Date.now());
+          return null;
+        }
+      } finally {
+        clearTimeout(timer);
       }
 
       if (json?.success && typeof json?.data?.url === 'string') {
         const url = json.data.url;
         cache[cacheKey] = url;
+        failedAt.delete(cacheKey);
         persistCache();
         console.log(`[discord] imgbb upload OK: ${cacheKey} → ${url}`);
         return url;
       }
 
-      // imgbb returned a structured error — cache as failure to avoid retry spam
       console.log(`[discord] imgbb upload rejected for ${cacheKey}:`,
         JSON.stringify({ status: json?.status, error: json?.error }).slice(0, 200));
-      cache[cacheKey] = '';
-      persistCache();
+      failedAt.set(cacheKey, Date.now());
       return null;
     } catch (e) {
-      // Network or unexpected error — don't cache so it can retry later
       console.log(`[discord] imgbb upload error for ${cacheKey}:`, String(e?.message || e));
+      failedAt.set(cacheKey, Date.now());
       return null;
     } finally {
       inFlight.delete(cacheKey);

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { PreviewButton, stop as stopPreview } from './previewPlayer.jsx';
 import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent } from '../lib/coverTheme.js';
-import { PlayIcon } from './sharedUI.jsx';
+import { PauseIcon, PlayIcon } from './sharedUI.jsx';
 import { formatTotalMs } from '../lib/mediaUtils.js';
 import { api, fmtMs } from '../lib/format.js';
 import { coverLayers } from '../lib/coverUrl.js';
@@ -79,11 +78,13 @@ function storeProfile(key, data) {
 }
 
 /* Hero framing. A square source in a wide band is always a crop, so these are
-   the only two dials that matter: HERO_H is how tall a slice survives, and
+   the only two dials that matter: the band's height (heroH: 30% of its
+   width, between HERO_MIN and HERO_MAX, about Spotify's) is how tall a slice survives, and
    HERO_FOCUS is where in the image that slice is taken from (0% = top of the
    frame, 50% = middle). Both are here rather than inline so they're one edit,
    not a hunt through JSX. Dialled in against a real photo at full width. */
-const HERO_H = 260;
+const HERO_MIN = 320;
+const HERO_MAX = 440;
 /* Discography cards shown before "Show all". Two rows at typical widths. */
 const DISC_PAGE = 12;
 const HERO_FOCUS = '40%';
@@ -98,15 +99,6 @@ function normRelease(name) {
     .trim();
 }
 
-/* Song-level match between a Spotify title and a library title. Featured
-   credits and "- 2011 Remaster" tails are how the same recording ends up
-   with two names, so both are dropped before comparing. */
-function normSong(title) {
-  return normRelease(String(title || '')
-    .replace(/[([](feat|ft|with)\.?\s[^)\]]*[)\]]/gi, '')
-    .replace(/\s-\s.*\b(remaster(ed)?|version|edit|mix|live)\b.*$/i, ''));
-}
-
 function Note({ children }) {
   return (
     <div style={{ padding: '2px 0 4px', fontSize: 12.5, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.38)' }}>
@@ -116,26 +108,6 @@ function Note({ children }) {
 }
 
 /* ---- Small shared pieces ------------------------------------------------ */
-
-function ActionBtn({ title, onClick, active = false, children }) {
-  const [hot, setHot] = useState(false);
-  return (
-    <button
-      type="button" onClick={onClick} title={title} aria-label={title}
-      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
-      style={{
-        width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-        background: hot ? 'rgba(var(--st-fg-rgb), 0.12)' : 'transparent',
-        color: active ? 'var(--st-text)' : `rgba(var(--st-sub-rgb), ${hot ? 0.9 : 0.6})`,
-        transition: 'background 0.15s ease, color 0.15s ease',
-      }}>
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        {children}
-      </svg>
-    </button>
-  );
-}
 
 function PillBtn({ onClick, on = false, children }) {
   const [hot, setHot] = useState(false);
@@ -252,25 +224,70 @@ function CardGrid({ children }) {
 
 const fmtCount = (n) => (Number.isFinite(n) && n > 0 ? Math.round(n).toLocaleString() : '');
 
-/* Column layout shared by the header and every row, so the labels sit
-   exactly over the values they name. */
-const POP_COLS = '28px 44px minmax(0, 1fr) 128px 52px 138px';
+/* spotifyId → { album, releaseDate }: the Popular list's details, kept for
+   the session so going back to an artist doesn't ask again. */
+const trackInfoCache = new Map();
 
-function PopularHeader({ plays = true }) {
+/* The Popular table. Header and rows share one grid, so the labels sit
+   exactly over the values they name. Album and Released fill the middle of a
+   wide page and are the first to go as it narrows (Released, then Album);
+   Spotify plays goes when there are none to show. Named areas, so a cell
+   that's hidden doesn't shift the rest along. */
+const POP_CSS = `
+.app-pop { container-type: inline-size; }
+.app-pop-row { display: grid; align-items: center; column-gap: 16px; padding: 6px 12px; border-radius: 9px;
+  grid-template-columns: 28px 44px minmax(0, 1.4fr) minmax(0, 1fr) 100px 108px 72px 44px;
+  grid-template-areas: "n art title album rel plays act dur"; }
+.app-pop.no-plays .app-pop-row { grid-template-columns: 28px 44px minmax(0, 1.4fr) minmax(0, 1fr) 100px 72px 44px;
+  grid-template-areas: "n art title album rel act dur"; }
+.app-pop-head { padding: 0 12px 9px; margin-bottom: 6px; box-shadow: inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.08); }
+.app-pop-row > .c-n { grid-area: n; } .app-pop-row > .c-art { grid-area: art; } .app-pop-row > .c-title { grid-area: title; }
+.app-pop-row > .c-album { grid-area: album; } .app-pop-row > .c-rel { grid-area: rel; } .app-pop-row > .c-plays { grid-area: plays; }
+.app-pop-row > .c-dur { grid-area: dur; } .app-pop-row > .c-act { grid-area: act; }
+.app-pop.no-plays .c-plays { display: none; }
+.app-pop .c-album, .app-pop .c-rel { min-width: 0; font-size: 12.5px; font-weight: 600; color: rgba(var(--st-sub-rgb), 0.55);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-pop-head .c-album, .app-pop-head .c-rel { font-size: 10.5px; font-weight: 800; color: rgba(var(--st-sub-rgb), 0.42); }
+/* Like Spotify's: Title and Album are text and start at their headings;
+   the date is centred under its heading; plays are right-aligned so the
+   digits line up by place; then the save state (tick, or + to save), and
+   the length last, flush with the right edge under the clock. */
+.app-pop .c-rel { font-variant-numeric: tabular-nums; text-align: center; }
+/* Every row is its own grid, so this column is a fixed width, and the tick
+   and the + both sit at its right end: in the same spot on every row, with
+   a song's preview button just before the +. */
+.app-pop .c-act { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.app-pop .c-dur { text-align: right; justify-content: flex-end; }
+@container (max-width: 900px) {
+  .app-pop-row { grid-template-columns: 28px 44px minmax(0, 1.4fr) minmax(0, 1fr) 108px 72px 44px;
+    grid-template-areas: "n art title album plays act dur"; }
+  .app-pop.no-plays .app-pop-row { grid-template-columns: 28px 44px minmax(0, 1.4fr) minmax(0, 1fr) 72px 44px;
+    grid-template-areas: "n art title album act dur"; }
+  .app-pop .c-rel { display: none; }
+}
+@container (max-width: 640px) {
+  .app-pop-row { column-gap: 12px; grid-template-columns: 24px 44px minmax(0, 1fr) auto 64px 40px;
+    grid-template-areas: "n art title plays act dur"; }
+  .app-pop.no-plays .app-pop-row { grid-template-columns: 24px 44px minmax(0, 1fr) 64px 40px;
+    grid-template-areas: "n art title act dur"; }
+  .app-pop .c-album { display: none; }
+}
+`;
+
+function PopularHeader() {
   const cell = { fontSize: 10.5, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.42)' };
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: POP_COLS, gap: 14, alignItems: 'center',
-      padding: '0 12px 9px', marginBottom: 6, boxShadow: 'inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.08)',
-    }}>
-      <span style={{ ...cell, textAlign: 'right' }}>#</span>
-      <span />
-      <span style={cell}>Title</span>
-      <span style={{ ...cell, textAlign: 'right' }} title="All-time streams on Spotify">{plays ? 'Spotify plays' : ''}</span>
-      <span style={{ ...cell, textAlign: 'right', display: 'flex', justifyContent: 'flex-end' }} title="Length">
+    <div className="app-pop-row app-pop-head">
+      <span className="c-n" style={{ ...cell, textAlign: 'right' }}>#</span>
+      <span className="c-art" />
+      <span className="c-title" style={cell}>Title</span>
+      <span className="c-album" style={cell}>Album</span>
+      <span className="c-rel" style={cell}>Released</span>
+      <span className="c-plays" style={{ ...cell, textAlign: 'right' }} title="All-time streams on Spotify">Spotify plays</span>
+      <span className="c-dur" style={{ ...cell, textAlign: 'right', display: 'flex', justifyContent: 'flex-end' }} title="Length">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
       </span>
-      <span />
+      <span className="c-act" />
     </div>
   );
 }
@@ -278,14 +295,12 @@ function PopularHeader({ plays = true }) {
 /** The action cell. Owned rows say so; everything else downloads in place,
  *  with the same busy / done / retry states the search panel uses. */
 function GetCell({ owned, dl, progress, accent, onGet }) {
-  if (owned) {
-    return (
-      <span title="In your library" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 700, color: 'rgba(140,220,160,0.9)' }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-        In library
-      </span>
-    );
-  }
+  const tick = (
+    <span title="In your library" aria-label="In your library" style={{ width: 28, height: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(140,220,160,0.9)' }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+    </span>
+  );
+  if (owned) return tick;
   if (dl === 'busy') {
     const pct = typeof progress?.pct === 'number' ? Math.round(progress.pct * 100) : null;
     return (
@@ -299,54 +314,68 @@ function GetCell({ owned, dl, progress, accent, onGet }) {
       </span>
     );
   }
-  if (dl === 'done') {
-    return <span style={{ fontSize: 11.5, fontWeight: 700, color: 'rgba(140,220,160,0.9)' }}>Added</span>;
-  }
+  if (dl === 'done') return tick;
+  const retry = dl === 'failed';
   return (
     <button type="button" onClick={(e) => { e.stopPropagation(); onGet?.(); }}
+      title={retry ? 'Try again' : 'Save to your library'} aria-label={retry ? 'Try saving again' : 'Save to your library'}
       style={{
-        height: 26, padding: '0 13px', borderRadius: 999, cursor: 'pointer', font: 'inherit',
-        fontSize: 11.5, fontWeight: 750, border: `1px solid rgba(${accent}, 0.45)`,
-        background: `rgba(${accent}, 0.14)`, color: 'var(--st-text)',
+        width: 28, height: 28, padding: 0, borderRadius: '50%', cursor: 'pointer',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        border: '1px solid rgba(var(--st-fg-rgb), 0.18)', background: 'transparent', color: 'var(--st-text)',
       }}>
-      {dl === 'failed' ? 'Retry' : 'Save'}
+      {retry ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" /></svg>
+      ) : (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+      )}
     </button>
   );
 }
 
-/** One row of the artist's Popular list: rank, cover, title over album,
- *  all-time Spotify plays, length, and what you can do with it. */
-function PopularRow({ n, t, owned, playing, isPlaying, accent, dl, progress, onPlay, onGet }) {
+/** "Mar 14, 2024" from a full date, the year alone from just a year (or a
+ *  date Spotify only knows the year of). */
+function releaseText(d, precision = '') {
+  const s = String(d || '');
+  if (/^\d{4}-\d{2}-\d{2}/.test(s) && (!precision || precision === 'day')) {
+    const at = new Date(`${s.slice(0, 10)}T12:00:00`);
+    if (!Number.isNaN(at.getTime())) return at.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  return /^\d{4}/.test(s) ? s.slice(0, 4) : '';
+}
+
+/** One row of the artist's Popular list: rank, cover, title, album, release
+ *  date, all-time Spotify plays, length, and what you can do with it.
+ *  `rel` is the song's release from the artist's discography; `info` the
+ *  song's own details, for one that isn't in it (a feature, say). */
+function PopularRow({ n, t, rel = null, info = null, owned, canPlay = owned, playing, isPlaying, accent, dl, progress, onPlay, onGet }) {
+  const albumName = t.album || rel?.name || info?.album || '';
+  const released = rel?.releaseDate ? releaseText(rel.releaseDate, rel.datePrecision) : releaseText(info?.releaseDate || t.releaseDate);
   const [hot, setHot] = useState(false);
-  const act = () => (owned ? onPlay() : onGet?.());
+  // Saved or not, a song plays when Spotify can stream it; saving is the +.
+  const act = () => (canPlay ? onPlay() : onGet?.());
   return (
     <div role="button" tabIndex={0} onClick={act}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } }}
       onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      className="app-pop-row"
       style={{
-        display: 'grid', gridTemplateColumns: POP_COLS, gap: 14, alignItems: 'center',
-        padding: '6px 12px', borderRadius: 9, cursor: 'pointer',
+        cursor: 'pointer',
         background: hot ? 'rgba(var(--st-fg-rgb), 0.055)' : 'transparent',
         transition: 'background 0.13s ease',
       }}>
-      <span style={{
+      <span className="c-n" style={{
         textAlign: 'right', fontSize: 13, fontWeight: 650, fontVariantNumeric: 'tabular-nums',
         color: playing ? `rgb(${accent})` : `rgba(var(--st-sub-rgb), ${hot ? 0.85 : 0.4})`,
         display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
       }}>
-        {hot && owned ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-            {playing && isPlaying
-              ? <><rect x="6.5" y="5" width="3.6" height="14" rx="1.1" /><rect x="13.9" y="5" width="3.6" height="14" rx="1.1" /></>
-              : <path d="M8 6.5v11l9.5-5.5z" />}
-          </svg>
-        ) : n}
+        {hot && canPlay ? (playing && isPlaying ? <PauseIcon size={12} /> : <PlayIcon size={12} />) : n}
       </span>
-      <span style={{
+      <span className="c-art" style={{
         width: 44, height: 44, borderRadius: 6, flexShrink: 0,
         background: t.albumArtUrl ? `url("${String(t.albumArtUrl).replace(/"/g, '%22')}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
       }} />
-      <span style={{ minWidth: 0 }}>
+      <span className="c-title" style={{ minWidth: 0 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
           <span style={{
             fontSize: 13.5, fontWeight: 650, minWidth: 0,
@@ -360,26 +389,18 @@ function PopularRow({ n, t, owned, playing, isPlaying, accent, dl, progress, onP
             }}>E</span>
           ) : null}
         </span>
-        {t.album ? (
-          <span style={{
-            display: 'block', marginTop: 3, fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.48)',
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>{t.album}</span>
-        ) : null}
       </span>
-      <span style={{
+      <span className="c-album" title={albumName || undefined}>{albumName}</span>
+      <span className="c-rel">{released}</span>
+      <span className="c-plays" style={{
         textAlign: 'right', fontSize: 12.5, fontWeight: 650, fontVariantNumeric: 'tabular-nums',
         color: 'rgba(var(--st-text-rgb), 0.7)',
       }}>{fmtCount(t.playcount)}</span>
-      <span style={{
+      <span className="c-dur" style={{
         textAlign: 'right', fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
         color: 'rgba(var(--st-sub-rgb), 0.45)',
       }}>{fmtMs(t.durationMs)}</span>
-      <span style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
-        {!owned && dl !== 'busy' && dl !== 'done' ? (
-          <PreviewButton pkey={`pv:${t.spotifyId || t.title}`} accent={accent}
-            track={{ title: t.title, artists: t.artists, durationMs: t.durationMs, explicit: t.explicit }} />
-        ) : null}
+      <span className="c-act">
         <GetCell owned={owned} dl={dl} progress={progress} accent={accent} onGet={onGet} />
       </span>
     </div>
@@ -388,7 +409,7 @@ function PopularRow({ n, t, owned, playing, isPlaying, accent, dl, progress, onP
 
 /** A release in the discography grid. Every release looks like a record —
  *  the page is the artist's catalogue, not a list of gaps — and the ones you
- *  already have carry a small "In library" mark. */
+ *  already have carry a small tick. */
 function DiscCard({ r, owned, accent, onClick, opensTracklist = false, open = false }) {
   const [hot, setHot] = useState(false);
   const kind = r.group === 'appears_on' ? (r.artists || 'Appears on')
@@ -411,13 +432,12 @@ function DiscCard({ r, owned, accent, onClick, opensTracklist = false, open = fa
         transition: 'transform 0.22s cubic-bezier(0.22,0.9,0.3,1), box-shadow 0.22s ease',
       }}>
         {owned ? (
-          <span title="In your library" style={{
-            position: 'absolute', left: 8, top: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
-            padding: '4px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 750,
+          <span title="In your library" aria-label="In your library" style={{
+            position: 'absolute', left: 8, top: 8, width: 22, height: 22, borderRadius: '50%',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             background: 'rgba(0,0,0,0.62)', color: 'rgba(160,235,180,0.95)', backdropFilter: 'blur(8px)',
           }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-            In library
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
           </span>
         ) : null}
         <span style={{
@@ -623,6 +643,9 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
   const [rows, setRows] = useState(() => releaseTracksCache.get(id) || null);
   const [err, setErr] = useState('');
   const boxRef = useRef(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreOpenRef = useRef(false);
+  moreOpenRef.current = moreOpen;
 
   useEffect(() => {
     setRows(releaseTracksCache.get(id) || null);
@@ -646,55 +669,73 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
     return () => clearTimeout(t);
   }, [id]);
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !moreOpenRef.current) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   const context = { kind: 'album', id, name: release.name, sub: `${relKind(release)} · ${release.artists || artistName}`, image: release.albumArtUrl || null };
   const totalMs = (rows || []).reduce((n, t) => n + (t.durationMs || 0), 0);
-  const unsaved = (rows || []).filter((t) => !bridge.saveState(t));
+  // Songs listed but not out yet can't be played or saved.
+  const outRows = (rows || []).filter((t) => !t.notOut);
+  const unsaved = outRows.filter((t) => !bridge.saveState(t));
   const year = release.year || String(release.releaseDate || '').slice(0, 4);
-  const haveCount = (rows || []).filter((t) => bridge.saveState(t) === 'saved').length;
+  /* A band across the top (a small cover, the title and details, the
+     buttons) and the songs the full width underneath, in two columns from
+     10. Nothing sits beside the songs, so nothing can leave a gap beside or
+     under them, whatever the album's length. */
   const two = (rows?.length || 0) >= 10;
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    const close = (e) => {
+      if (e.type === 'keydown') { if (e.key === 'Escape') setMoreOpen(false); return; }
+      if (!e.target.closest?.('.apx-rel-menu, .apx-rel-more')) setMoreOpen(false);
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('keydown', close); };
+  }, [moreOpen]);
+  const moreItems = [
+    onOpenLibrary ? { label: 'Open your copy', run: onOpenLibrary } : null,
+    unsaved.length > 1 ? { label: `Save all ${unsaved.length} songs`, run: () => unsaved.forEach((t) => bridge.saveRow(t)) } : null,
+  ].filter(Boolean);
 
   return (
     <div className="apx-rel" ref={boxRef} style={{ '--apx-notch': notch, '--apx-acc': accent }}>
       <div className="apx-rel-card">
-        <div className="apx-rel-side">
+        <div className="apx-rel-band">
           <div className="apx-rel-cover" style={{ backgroundImage: release.albumArtUrl ? coverLayers(String(release.albumArtUrl).replace(/"/g, '%22')) : 'none' }} />
-          <div className="apx-rel-eyebrow">{[relKind(release), year].filter(Boolean).join(' · ')}</div>
-          <div className="apx-rel-title">{release.name}</div>
-          <div className="apx-rel-meta">
-            {release.artists || artistName}
-            {rows?.length ? ` · ${rows.length} song${rows.length === 1 ? '' : 's'} · ${Math.max(1, Math.round(totalMs / 60000))} min` : ''}
-          </div>
-          {haveCount ? (
-            <div className="apx-rel-have">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
-              {haveCount === rows.length ? 'All in your library' : `${haveCount} of ${rows.length} in your library`}
+          <div className="apx-rel-info">
+            <div className="apx-rel-eyebrow">{[relKind(release), year].filter(Boolean).join(' · ')}</div>
+            <div className="apx-rel-title">{release.name}</div>
+            <div className="apx-rel-meta">
+              {release.artists || artistName}
+              {rows?.length ? ` · ${rows.length} song${rows.length === 1 ? '' : 's'} · ${Math.max(1, Math.round(totalMs / 60000))} min` : ''}
             </div>
-          ) : null}
+          </div>
           <div className="apx-rel-actions">
-            <button type="button" className="apx-btn is-primary" disabled={!rows?.length}
-              onClick={() => bridge.playRows(rows, 0, { context })}>
+            <button type="button" className="apx-rel-play" disabled={!outRows.length}
+              onClick={() => bridge.playRows(outRows, 0, { context })}>
               <PlayIcon size={12} /> Play
             </button>
-            <button type="button" className="apx-btn" disabled={!rows?.length} title="Shuffle"
-              onClick={() => bridge.playRows(rows, 0, { shuffle: true, context })}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
+            <button type="button" className="apx-rel-ib" disabled={!outRows.length} title="Shuffle" aria-label={`Shuffle ${release.name}`}
+              onClick={() => bridge.playRows(outRows, 0, { shuffle: true, context })}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
             </button>
-            {onOpenLibrary ? (
-              <button type="button" className="apx-btn" onClick={onOpenLibrary} title="Open your copy of this album">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 19V5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z" /><path d="M8 7h6" /></svg>
-                In library
-              </button>
-            ) : null}
-            {unsaved.length > 1 ? (
-              <button type="button" className="apx-btn" onClick={() => unsaved.forEach((t) => bridge.saveRow(t))} title="Add every song here to your library">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
-                Save all
-              </button>
+            {moreItems.length ? (
+              <span style={{ position: 'relative' }}>
+                <button type="button" className="apx-rel-ib apx-rel-more" title="More" aria-label={`More options for ${release.name}`} aria-expanded={moreOpen}
+                  onClick={() => setMoreOpen((v) => !v)}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden><circle cx="5" cy="12" r="1.9" /><circle cx="12" cy="12" r="1.9" /><circle cx="19" cy="12" r="1.9" /></svg>
+                </button>
+                {moreOpen ? (
+                  <span className="apx-rel-menu" role="menu">
+                    {moreItems.map((it) => (
+                      <button key={it.label} type="button" role="menuitem" className="sth-mi" onClick={() => { setMoreOpen(false); it.run(); }}>{it.label}</button>
+                    ))}
+                  </span>
+                ) : null}
+              </span>
             ) : null}
           </div>
         </div>
@@ -707,11 +748,25 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
             const on = bridge.isCurrent(t);
             const st = bridge.saveState(t);
             const feat = t.artists && t.artists !== (release.artists || artistName) ? t.artists : '';
+            if (t.notOut) {
+              return (
+                <div key={`${t.spotifyId}:${i}`} className="apx-trk is-locked" aria-disabled title="Not out yet">
+                  <span className="n"><span className="num">{i + 1}</span></span>
+                  <span className="tt">
+                    <span className="t">{t.explicit ? <span className="e">E</span> : null}{t.title}</span>
+                    {feat ? <span className="a">{feat}</span> : null}
+                  </span>
+                  <span className="d">{fmtMs(t.durationMs)}</span>
+                  <span className="sv is-soon" aria-label="Not out yet">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+                  </span>
+                </div>
+              );
+            }
             return (
               <div key={`${t.spotifyId}:${i}`} className={`apx-trk${on ? ' is-on' : ''}`} role="button" tabIndex={0}
                 onClick={() => bridge.playRows(rows, i, { context })}
-                onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}
-                {...(bridge.hoverProps?.(t) || {})}>
+                onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}>
                 <span className="n">
                   {on && bridge.isPlaying ? <span className="apx-eq"><i /><i /><i /></span> : <span className="num">{i + 1}</span>}
                   <span className="pl"><PlayIcon size={11} /></span>
@@ -754,35 +809,35 @@ const RELEASE_INLINE_CSS = `
   transform: rotate(45deg); border-radius: 3px 0 0 0; background: rgb(var(--st-bg-rgb));
   background-image: linear-gradient(135deg, rgba(var(--apx-acc), 0.2), rgba(var(--apx-acc), 0.2));
   box-shadow: -1px -1px 0 rgba(var(--st-fg-rgb), 0.1); transition: left 0.24s cubic-bezier(0.22,1,0.36,1); }
-.apx-rel-card { position: relative; container-type: inline-size; display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 28px;
-  padding: 22px 22px 18px; border-radius: 16px; overflow: hidden;
+.apx-rel-card { position: relative; container-type: inline-size;
+  padding: 18px 52px 14px 18px; border-radius: 16px; overflow: hidden;
   background: linear-gradient(135deg, rgba(var(--apx-acc), 0.2) 0%, rgba(var(--apx-acc), 0.05) 45%, rgba(var(--st-fg-rgb), 0.025) 100%);
   box-shadow: inset 0 0 0 1px rgba(var(--st-fg-rgb), 0.1), 0 18px 40px rgba(0,0,0,0.28); }
-.apx-rel-side { display: flex; flex-direction: column; min-width: 0; }
-.apx-rel-cover { width: 100%; aspect-ratio: 1; border-radius: 10px; background: rgba(var(--st-fg-rgb), 0.07) center/cover no-repeat;
-  box-shadow: 0 14px 34px rgba(0,0,0,0.45); margin-bottom: 14px; }
+/* The band: cover, title and details, buttons at the right. */
+.apx-rel-band { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; margin-bottom: 8px;
+  box-shadow: inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.08); }
+.apx-rel-cover { width: 72px; height: 72px; flex-shrink: 0; border-radius: 8px; background: rgba(var(--st-fg-rgb), 0.07) center/cover no-repeat;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.4); }
+.apx-rel-info { flex: 1; min-width: 0; }
 .apx-rel-eyebrow { font-size: 10.5px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; color: rgba(var(--st-sub-rgb), 0.55); }
-.apx-rel-title { margin-top: 4px; font-size: 19px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.15; color: var(--st-text);
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.apx-rel-meta { margin-top: 5px; font-size: 12px; color: rgba(var(--st-sub-rgb), 0.55); line-height: 1.45; }
-.apx-rel-have { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; width: fit-content; padding: 3px 9px; border-radius: 999px;
-  font-size: 11px; font-weight: 700; background: rgba(123,224,176,0.12); color: rgb(123,224,176); }
-.apx-rel-actions { display: flex; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
-.apx-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; min-width: 32px; padding: 0 12px; border-radius: 8px;
-  border: none; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap;
-  background: rgba(var(--st-fg-rgb), 0.08); color: var(--st-text); transition: background 0.15s ease, filter 0.15s ease; }
-.apx-btn:hover { background: rgba(var(--st-fg-rgb), 0.14); }
-.apx-btn.is-primary { background: rgb(var(--apx-acc)); color: #0b0b0c; }
-.apx-btn.is-primary:hover { filter: brightness(1.08); background: rgb(var(--apx-acc)); }
-.apx-btn:disabled { opacity: 0.45; cursor: default; }
-.apx-rel-list { min-width: 0; align-self: start; }
-@container (min-width: 760px) {
+.apx-rel-title { margin-top: 3px; font-size: 20px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.15; color: var(--st-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.apx-rel-meta { margin-top: 3px; font-size: 12.5px; color: rgba(var(--st-sub-rgb), 0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.apx-rel-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.apx-rel-play { height: 34px; padding: 0 15px 0 12px; border-radius: 9px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+  font-family: inherit; font-size: 13px; font-weight: 800; background: #fff; color: #000; }
+.apx-rel-play:disabled { cursor: default; background: rgba(var(--st-fg-rgb), 0.14); color: rgba(var(--st-fg-rgb), 0.4); }
+.apx-rel-ib { width: 34px; height: 34px; border: none; border-radius: 9px; padding: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: rgba(var(--st-fg-rgb), 0.72); transition: color 0.14s ease, background 0.14s ease; }
+.apx-rel-ib:hover:not(:disabled), .apx-rel-ib[aria-expanded="true"] { color: var(--st-text); background: rgba(var(--st-fg-rgb), 0.1); }
+.apx-rel-ib:disabled { opacity: 0.4; cursor: default; }
+.apx-rel-menu { position: absolute; top: 40px; right: 0; z-index: 20; width: 200px; padding: 5px; border-radius: 12px; display: flex; flex-direction: column;
+  --mi-accent: 255,255,255; background: #0d0d0e; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
+.apx-rel-list { min-width: 0; }
+/* Two columns from 10 songs, where the card has room for them. */
+@container (min-width: 600px) {
   .apx-rel-list.is-two { display: grid; grid-auto-flow: column; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-rows: repeat(var(--apx-rows), auto); column-gap: 18px; }
-}
-@container (max-width: 560px) {
-  .apx-rel-card { grid-template-columns: minmax(0, 1fr); }
-  .apx-rel-cover { width: 132px; }
+    grid-template-rows: repeat(var(--apx-rows), auto); column-gap: 22px; }
 }
 .apx-trk { display: grid; grid-template-columns: 26px minmax(0, 1fr) 42px 28px; align-items: center; gap: 10px; height: 40px; padding: 0 6px 0 8px;
   border-radius: 8px; cursor: pointer; transition: background 0.12s ease; }
@@ -802,7 +857,11 @@ const RELEASE_INLINE_CSS = `
   border: 1px solid rgba(var(--st-fg-rgb), 0.16); background: transparent; color: rgba(var(--st-fg-rgb), 0.6); opacity: 0; transition: opacity 0.12s ease, background 0.12s ease; }
 .apx-trk:hover .sv, .apx-trk .sv.is-saved, .apx-trk .sv.is-busy { opacity: 1; }
 .apx-trk .sv:hover { background: rgba(var(--st-fg-rgb), 0.1); color: var(--st-text); }
-.apx-trk .sv.is-saved { border-color: transparent; background: rgba(123,224,176,0.12); color: rgb(123,224,176); cursor: default; }
+.apx-trk.is-locked { cursor: default; }
+.apx-trk.is-locked:hover { background: none; }
+.apx-trk.is-locked .n, .apx-trk.is-locked .tt, .apx-trk.is-locked .d { opacity: 0.45; }
+.apx-trk .sv.is-soon { opacity: 1; border-color: transparent; cursor: default; color: rgba(var(--st-fg-rgb), 0.4); }
+.apx-trk .sv.is-saved { border-color: transparent; background: transparent; color: rgb(123,224,176); cursor: default; }
 .apx-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; color: rgb(var(--apx-acc)); }
 .apx-eq i { width: 2.5px; border-radius: 1px; background: currentColor; animation: apxEq 0.9s ease-in-out infinite; }
 .apx-eq i:nth-child(2) { animation-delay: -0.3s; } .apx-eq i:nth-child(3) { animation-delay: -0.6s; }
@@ -846,7 +905,7 @@ export default function ArtistPage({
   dlState = {},           // download state by key (`s:<spotifyId>`), shared with search
   dlProgress = {},
   onGetTrack,             // (spotifyRow) → download it
-  ownedTrackFor,          // (title, artists) → the library track, or null
+  ownedTrackFor,          // (title, artists, album?) → the library track, or null
   embedded = false,       // rendered inside the search panel: no back button, no header editing
   onOpenRelease,          // (spotifyRelease) → open it in place (the panel's album frame)
   onOpenFullPage,         // () → leave the panel for the full artist page
@@ -880,7 +939,6 @@ export default function ArtistPage({
   const [sp, setSp] = useState({ status: 'off', data: null, error: '' });
   const [showAllPopular, setShowAllPopular] = useState(false);
   const [retry, setRetry] = useState(0);
-  useEffect(() => () => stopPreview(), []);
   const [disc, setDisc] = useState({ status: 'idle', list: null });
   const [discTab, setDiscTab] = useState('album');
   const [discAll, setDiscAll] = useState(false);
@@ -904,6 +962,35 @@ export default function ArtistPage({
    * be abandoned without having written anything. */
   const [override, setOverride] = useState(null);   // { image, focusX, focusY, zoom } | null
   const [editing, setEditing] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  /* A big letter carries empty space on its left (its side bearing), so at
+     96px the name started visibly right of the listener count under it.
+     Measured from the font itself, then pulled back by exactly that much. */
+  const nameRef = useRef(null);
+  const [nameNudge, setNameNudge] = useState(0);
+  useEffect(() => {
+    const el = nameRef.current;
+    if (!el) return undefined;
+    let dead = false;
+    const measure = () => {
+      if (dead || !el.isConnected) return;
+      const cs = getComputedStyle(el);
+      const ctx = document.createElement('canvas').getContext('2d');
+      if (!ctx) return;
+      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const m = ctx.measureText(String(el.textContent || '').charAt(0));
+      // Negative actualBoundingBoxLeft = ink starts right of the pen.
+      const lsb = -m.actualBoundingBoxLeft;
+      setNameNudge(Number.isFinite(lsb) && lsb > 0 && lsb < 40 ? -Math.round(lsb) : 0);
+    };
+    measure();
+    document.fonts?.ready?.then(measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => { dead = true; ro.disconnect(); };
+  }, [name]);
   const [draft, setDraft] = useState(null);
   const dragRef = useRef(null);
   const fileRef = useRef(null);
@@ -1022,7 +1109,8 @@ export default function ArtistPage({
      vertically. Wider than the band fills the HEIGHT and spills sideways.
      Picking wrong doesn't just misplace the drag — it letterboxes, leaving a
      gap of page wash inside the header. */
-  const bandAspect = heroW ? heroW / HERO_H : null;
+  const heroH = heroW ? Math.round(Math.min(HERO_MAX, Math.max(HERO_MIN, heroW * 0.3))) : HERO_MIN;
+  const bandAspect = heroW ? heroW / heroH : null;
   const sizeByWidth = !imgAspect || !bandAspect || imgAspect <= bandAspect;
 
   /* Drag to reposition, 1:1 with the cursor.
@@ -1311,21 +1399,23 @@ export default function ArtistPage({
 
 
 
-  /* Spotify's Popular list, each row matched to a library track if you have
-     it — a match plays, a miss goes to search. */
+  /* Spotify's Popular list, each row matched to the copy you have: the same
+     Spotify song, or the same title and artist on the same album. A title
+     you have from another record (a live set, a deluxe) isn't this song. */
   const popular = useMemo(() => {
-    const byTitle = new Map();
+    const bySid = new Map();
     for (const t of artist?.tracks || []) {
-      const k = normSong(t.title);
-      if (k && !byTitle.has(k)) byTitle.set(k, t);
+      const sid = String(t.filePath || '').startsWith('spotify:track:') ? t.filePath.slice(14) : null;
+      if (sid && !bySid.has(sid)) bySid.set(sid, t);
     }
     const src = spData?.topTracks || (sp.status === 'error' ? fbTop : null) || [];
     return src.map((t) => ({
       t,
-      lib: ownedTrackFor?.(t.title, t.artists || name) || byTitle.get(normSong(t.title)) || null,
+      lib: bySid.get(t.spotifyId) || ownedTrackFor?.(t.title, t.artists || name, t.album || undefined) || null,
     }));
   }, [spData, fbTop, sp.status, artist, ownedTrackFor, name]);
   const hasPlays = popular.some((p) => p.t.playcount);
+
 
   const popularOwned = useMemo(() => popular.filter((p) => p.lib).map((p) => p.lib), [popular]);
 
@@ -1341,16 +1431,23 @@ export default function ArtistPage({
     }
     return out;
   }, [popularOwned, artist]);
+  // Playing one of theirs: the play button is Pause, and pauses.
+  /* With Spotify streaming, Play plays the artist's popular songs whether
+     you've saved them or not (yours from the library); without it, your
+     own songs by them. */
+  const streamList = spotifyBridge ? popular.map((p) => p.t).filter((t) => t.spotifyId && !t.notOut) : [];
+  const artistContext = { kind: 'artist', id: spId || null, name, image: spData?.avatar || profile?.image || null };
+  const canPlayAll = streamList.length > 0 || playable.length > 0;
+  const playingHere = !!currentTrack && (playable.some((t) => t.id === currentTrack.id)
+    || streamList.some((t) => spotifyBridge?.isCurrent?.(t)));
+  const showPause = playingHere && isPlaying;
   const playQueue = (shuffle) => {
+    if (streamList.length) { spotifyBridge.playRows(streamList, 0, { shuffle, context: artistContext }); return; }
     if (!playable.length) return;
     const list = shuffle ? [...playable].sort(() => Math.random() - 0.5) : playable;
     onPlayTrack?.(list[0], list);
   };
   const getTrack = onGetTrack || null;
-  const missingPopular = useMemo(
-    () => popular.filter((p) => !p.lib && dlState?.[`s:${p.t.spotifyId}`] !== 'busy' && dlState?.[`s:${p.t.spotifyId}`] !== 'done').map((p) => p.t),
-    [popular, dlState],
-  );
 
   /* ---- Discography ---------------------------------------------------- */
   /* Account discography → the overview's releases → the Client ID route
@@ -1368,6 +1465,36 @@ export default function ArtistPage({
     }
     return [];
   }, [disc.list, spData, remote]);
+
+  /* Each Popular song's release (album name and date) from the artist's own
+     discography, which the page loads anyway. A song that isn't in it (a
+     feature, an appearance) is looked up: one request for those few, and the
+     answer kept for the session. */
+  const relById = useMemo(() => {
+    const m = new Map();
+    for (const r of discSource || []) if (r?.albumId && !m.has(r.albumId)) m.set(r.albumId, r);
+    return m;
+  }, [discSource]);
+  const [trackInfo, setTrackInfo] = useState({});
+  const lookupIds = popular
+    .filter((p) => p.t.spotifyId && !(p.t.albumId && relById.get(p.t.albumId)?.releaseDate))
+    .map((p) => p.t.spotifyId).join(',');
+  useEffect(() => {
+    const ids = lookupIds ? lookupIds.split(',') : [];
+    const known = () => Object.fromEntries(ids.filter((id) => trackInfoCache.has(id)).map((id) => [id, trackInfoCache.get(id)]));
+    setTrackInfo(known());
+    const need = ids.filter((id) => !trackInfoCache.has(id));
+    const a = api();
+    if (!need.length || !a?.spotifyFeedTracks) return undefined;
+    let dead = false;
+    a.spotifyFeedTracks(need).then((r) => {
+      for (const row of (r?.ok ? r.data : null) || []) {
+        if (row?.spotifyId) trackInfoCache.set(row.spotifyId, { album: row.album || '', releaseDate: row.releaseDate || '' });
+      }
+      if (!dead) setTrackInfo(known());
+    }).catch(() => {});
+    return () => { dead = true; };
+  }, [lookupIds]);
   const discGroups = useMemo(() => {
     const g = { album: [], single: [], compilation: [], appears_on: [] };
     for (const r of discSource) {
@@ -1407,8 +1534,52 @@ export default function ArtistPage({
 
   /* ---- Header condenses once the hero scrolls past --------------------- */
   const onScroll = useCallback((e) => {
-    setStuck(e.currentTarget.scrollTop > HERO_H - 72);
-  }, []);
+    // Compact only once the bar has actually reached the top.
+    setStuck(e.currentTarget.scrollTop >= heroH);
+  }, [heroH]);
+
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    const close = (e) => { if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest?.('.apx-bar-menu, [aria-expanded]')) setMoreOpen(false); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('keydown', close); };
+  }, [moreOpen]);
+
+  /* The bar's "…": what you can do with the page itself. */
+  const moreItems = [
+    !embedded ? { label: 'Edit header', run: () => { heroRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); setEditing(true); } } : null,
+    spId ? { label: copied ? 'Link copied' : 'Copy link', run: () => {
+      navigator.clipboard?.writeText(`https://open.spotify.com/artist/${spId}`).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }, () => {});
+    } } : null,
+    spId && api()?.openExternal ? { label: 'Open in Spotify', run: () => api().openExternal(`https://open.spotify.com/artist/${spId}`) } : null,
+  ].filter(Boolean);
+
+  const avatarSrc = spData?.avatar || profile?.image || artist?.art || heroSrc;
+  const playOrPause = () => (playingHere && onTogglePlay ? onTogglePlay() : playQueue(false));
+  const shuffleGlyph = (n) => (
+    <svg width={n} height={n} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
+  );
+  const followBtn = onToggleFollow ? (
+    <button type="button" className={`apx-bar-follow${following ? ' is-on' : ''}${stuck ? ' is-sm' : ''}`} onClick={() => onToggleFollow(name)}>
+      {following ? 'Following' : 'Follow'}
+    </button>
+  ) : null;
+  const moreControl = moreItems.length ? (
+    <span style={{ position: 'relative', flexShrink: 0 }}>
+      <button type="button" className={`apx-bar-glyph${stuck ? ' is-sm' : ''}`} title="More" aria-label={`More options for ${name}`} aria-expanded={moreOpen}
+        onClick={() => setMoreOpen((v) => !v)}>
+        <svg width={stuck ? 20 : 24} height={stuck ? 20 : 24} viewBox="0 0 24 24" fill="currentColor" aria-hidden><circle cx="5" cy="12" r="1.9" /><circle cx="12" cy="12" r="1.9" /><circle cx="19" cy="12" r="1.9" /></svg>
+      </button>
+      {moreOpen ? (
+        <span className="apx-bar-menu" role="menu" style={stuck ? { left: 'auto', right: 0, top: 42 } : undefined}>
+          {moreItems.map((it) => (
+            <button key={it.label} type="button" role="menuitem" className="sth-mi" onClick={() => { setMoreOpen(false); it.run(); }}>{it.label}</button>
+          ))}
+        </span>
+      ) : null}
+    </span>
+  ) : null;
 
   if (!artist) return null;
 
@@ -1431,16 +1602,44 @@ export default function ArtistPage({
       position: 'relative', flex: 1, minWidth: 0, minHeight: 0, height: '100%',
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
-      <style>{RELEASE_INLINE_CSS}</style>
+      <style>{RELEASE_INLINE_CSS}{POP_CSS}</style>
       <style>{`
         @keyframes sthArtistIn { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: none; } }
         /* Full-bleed means full-bleed: a scrollbar gutter would hold the hero
            off the right edge by its own width. The app's main scroller
            (.sth-scroll) already hides its bar for the same reason, so this
            matches rather than invents. */
-        .sth-artistscroll { scrollbar-width: none; -ms-overflow-style: none; }
+        .sth-artistscroll { scrollbar-width: none; -ms-overflow-style: none;
+          /* No scroll anchoring: when the bar sticks its buttons swap for the
+             compact set, and the browser read that as content moving and
+             pulled the scroll back, un-sticking the bar, over and over. The
+             header here is a fixed height, so there's nothing to anchor for. */
+          overflow-anchor: none; }
         .sth-artistscroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
         /* Header tools stay out of the way until you go looking for them. */
+        .apx-bar-play { flex-shrink: 0; border-radius: 50%; border: none; cursor: pointer; padding: 0;
+          width: 56px; height: 56px; display: inline-flex; align-items: center; justify-content: center; background: #fff; color: #000; }
+        .apx-bar-play:disabled { cursor: default; background: rgba(var(--st-fg-rgb), 0.14); color: rgba(var(--st-fg-rgb), 0.4); }
+        .apx-bar-glyph { flex-shrink: 0; width: 40px; height: 40px; border: none; border-radius: 50%; padding: 0; cursor: pointer;
+          display: inline-flex; align-items: center; justify-content: center; background: none; color: rgba(255,255,255,0.7);
+          transition: color 0.14s ease; }
+        .apx-bar-glyph:hover, .apx-bar-glyph[aria-expanded="true"] { color: #fff; }
+        .apx-bar-follow { flex-shrink: 0; height: 32px; padding: 0 15px; border-radius: 999px; cursor: pointer; background: none;
+          border: 1px solid rgba(255,255,255,0.45); color: #fff; font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap;
+          transition: border-color 0.14s ease; }
+        .apx-bar-follow:hover { border-color: #fff; }
+        .apx-bar-follow.is-sm { height: 30px; padding: 0 13px; font-size: 12.5px; margin: 0 4px; }
+        .apx-bar-glyph.is-sm { width: 36px; height: 36px; border-radius: var(--r-ctl-s, 8px); }
+        .apx-bar-glyph.is-sm:hover, .apx-bar-glyph.is-sm[aria-expanded="true"] { background: rgba(255,255,255,0.1); }
+        .apx-bar-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; margin-left: 4px; }
+        .apx-bar-txt b { font-size: 15px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
+        .apx-bar-txt span { margin-top: 2px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .apx-bar-rect { height: 36px; padding: 0 16px 0 13px; margin-right: 6px; flex-shrink: 0; border-radius: 10px; border: none; cursor: pointer;
+          display: inline-flex; align-items: center; gap: 7px; background: #fff; color: #000; font: inherit; font-size: 13.5px; font-weight: 800; }
+        .apx-bar-rect:disabled { cursor: default; background: rgba(var(--st-fg-rgb), 0.14); color: rgba(var(--st-fg-rgb), 0.4); }
+        .apx-bar-menu { position: absolute; top: 46px; left: 0; z-index: 20; width: 190px; padding: 5px; border-radius: 12px;
+          display: flex; flex-direction: column; --mi-accent: 255,255,255;
+          background: #0d0d0e; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
         .sth-artist-hero-tools { opacity: 0; transition: opacity 0.16s ease; }
         .sth-artist:hover .sth-artist-hero-tools,
         .sth-artist-hero-tools:focus-within { opacity: 1; }
@@ -1472,7 +1671,7 @@ export default function ArtistPage({
             most press shots, which are framed with the head high.
 
             No photo → the newest cover, blurred, as a colour field. */}
-        <header ref={heroRef} style={{ position: 'relative', height: HERO_H, flexShrink: 0, overflow: 'hidden' }}>
+        <header ref={heroRef} style={{ position: 'relative', height: heroH, flexShrink: 0, overflow: 'hidden' }}>
           {/* Back, top-left in the photo: it scrolls away with the hero, so
               nothing passes under it. The sticking action bar carries its
               own once the hero has gone. The search panel has its own back
@@ -1500,7 +1699,10 @@ export default function ArtistPage({
           }} />
           <div aria-hidden style={{
             position: 'absolute', inset: 0,
-            background: `linear-gradient(180deg, rgba(${deep},0.10) 0%, rgba(${deep},0.28) 40%, rgba(${wash},0.58) 76%, rgba(${wash},0.88) 100%)`,
+            /* Shade only, no page colour: the photo stays the photo, with
+               just enough dark at the top (for back and Edit header) and the
+               bottom (for the name) to read on. */
+            background: 'linear-gradient(180deg, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 48%, rgba(0,0,0,0.5) 100%)',
             opacity: editing ? 0.35 : 1,
             transition: 'opacity 0.2s ease',
           }} />
@@ -1513,17 +1715,13 @@ export default function ArtistPage({
               title="Drag to reposition" />
           ) : null}
 
-          {/* Edit affordance — appears on hover, like the playlist cover. */}
+          {/* The header's editing tools. "Edit header" itself is in the
+              action bar's More menu; these show while editing. */}
           <div className="sth-artist-hero-tools" style={{
             position: 'absolute', top: 14, right: 16, zIndex: 3,
-            display: embedded ? 'none' : 'flex', alignItems: 'center', gap: 8,
+            display: embedded || !editing ? 'none' : 'flex', alignItems: 'center', gap: 8, opacity: 1,
           }}>
-            {!editing ? (
-              <button type="button" className="sth-artist-editbtn" onClick={() => setEditing(true)}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" /></svg>
-                Edit header
-              </button>
-            ) : (
+            {!editing ? null : (
               <>
                 <button type="button" className="sth-artist-editbtn is-on" onClick={() => fileRef.current?.click()}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 20h16" /></svg>
@@ -1561,98 +1759,91 @@ export default function ArtistPage({
           </div>
 
           <div style={{ position: 'absolute', left: 30, right: 30, bottom: 26, zIndex: 1, animation: 'sthArtistIn 0.42s cubic-bezier(0.22,0.9,0.3,1) both' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.13em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.6)' }}>
-              {spData?.verified ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
-                  <path fill={`rgb(${pageAccUI})`} d="M12 2l2.4 2.1 3.2-.3.9 3.1 2.8 1.6-1.1 3 1.1 3-2.8 1.6-.9 3.1-3.2-.3L12 22l-2.4-2.1-3.2.3-.9-3.1-2.8-1.6 1.1-3-1.1-3 2.8-1.6.9-3.1 3.2.3z" />
-                  <path d="M8 12.2l2.7 2.6L16.2 9.4" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              ) : null}
-              {spData?.verified ? 'Verified artist' : 'Artist'}
-            </div>
-            <h1 style={{
-              fontSize: 'clamp(38px, 5.2vw, 66px)', fontWeight: 900, letterSpacing: '-0.035em',
-              lineHeight: 0.94, margin: '10px 0 0', color: 'var(--st-text)',
+            <h1 ref={nameRef} style={{
+              fontSize: 'clamp(48px, 7vw, 96px)', fontWeight: 900, letterSpacing: '-0.04em',
+              lineHeight: 0.94, margin: 0, marginLeft: nameNudge, color: '#fff',
               textShadow: '0 4px 30px rgba(0,0,0,0.5)',
             }}>{name}</h1>
             {spData?.monthlyListeners ? (
-              <div style={{ marginTop: 14, fontSize: 15, fontWeight: 750, color: 'var(--st-text)', textShadow: '0 2px 16px rgba(0,0,0,0.45)', fontVariantNumeric: 'tabular-nums' }}>
+              <div style={{ marginTop: 14, fontSize: 15, fontWeight: 750, color: '#fff', textShadow: '0 2px 16px rgba(0,0,0,0.45)', fontVariantNumeric: 'tabular-nums' }}>
                 {fmtCount(spData.monthlyListeners)} monthly listeners
               </div>
             ) : null}
-            <div style={{ marginTop: spData?.monthlyListeners ? 5 : 14, fontSize: 13.5, fontWeight: 650, color: 'rgba(var(--st-text-rgb), 0.78)' }}>
-              {spConnected
-                ? (artist.tracks.length
-                  ? `${artist.tracks.length} song${artist.tracks.length === 1 ? '' : 's'} in your library`
-                  : 'Nothing in your library yet')
-                : statLine}
-            </div>
+            {/* Signed out there are no listeners to show, so your own numbers
+                stand in. */}
+            {!spConnected ? (
+              <div style={{ marginTop: 14, fontSize: 13.5, fontWeight: 650, color: 'rgba(255,255,255,0.82)', textShadow: '0 2px 16px rgba(0,0,0,0.45)' }}>
+                {statLine}
+              </div>
+            ) : null}
           </div>
         </header>
 
         {/* ---- Body ---- */}
         <div style={{
-          position: 'relative', paddingBottom: 60, minHeight: `calc(100% - ${HERO_H}px)`,
+          position: 'relative', paddingBottom: 60, minHeight: `calc(100% - ${heroH}px)`,
           background: `linear-gradient(180deg, rgba(${wash},0.88) 0%, rgba(${wash},0.5) 16%, rgba(${wash},0.3) 44%, rgba(${wash},0.24) 100%), rgba(${deep},0.78)`,
         }}>
 
           {/* Action bar. Sticks once the hero is gone and takes the name. */}
           <div style={{
             position: 'sticky', top: 0, zIndex: 4,
-            display: 'flex', alignItems: 'center', gap: 14, padding: '16px 30px',
-            background: stuck ? `rgba(${deep},0.82)` : 'transparent',
-            backdropFilter: stuck ? 'blur(18px) saturate(1.3)' : 'none',
+            display: 'flex', alignItems: 'center', gap: stuck ? 8 : 20, padding: stuck ? '0 30px 0 14px' : '0 30px',
+            /* Exact heights, padding included: the compact bar is 56px, the
+               full one 100px, and the margin keeps the 44px between them so
+               the page below stays exactly where it was. Any mismatch here
+               and the browser nudges the scroll back when the bar sticks,
+               which then un-sticks it: the stutter. */
+            boxSizing: 'border-box', height: stuck ? 56 : 100, marginBottom: stuck ? 44 : 0,
+            background: stuck ? `rgb(${deep})` : 'transparent',
             boxShadow: stuck ? 'inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.07)' : 'none',
             transition: 'background 0.2s ease, box-shadow 0.2s ease',
           }}>
-            {!embedded && stuck ? <BackBtn onClick={onBack} style={{ marginRight: 2 }} /> : null}
-            <button type="button" onClick={() => playQueue(false)} disabled={!playable.length}
-              title={playable.length ? 'Play' : 'None of their songs are in your library yet'}
-              aria-label="Play"
-              /* The same white Play pill as album and playlist pages. */
-              style={{
-                height: 46, padding: '0 24px 0 20px', borderRadius: 999, border: 'none', flexShrink: 0,
-                cursor: playable.length ? 'pointer' : 'default',
-                display: 'inline-flex', alignItems: 'center', gap: 9, font: 'inherit', fontWeight: 800, fontSize: 15,
-                background: playable.length ? '#fff' : 'rgba(var(--st-fg-rgb), 0.12)',
-                color: playable.length ? '#000' : 'rgba(var(--st-fg-rgb), 0.4)',
-                transition: 'transform 0.12s ease',
-              }}
-              onMouseEnter={(e) => { if (playable.length) e.currentTarget.style.transform = 'scale(1.03)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
-              <PlayIcon size={15} />Play
-            </button>
-
-            {playable.length > 1 ? (
-              <ActionBtn title="Shuffle" onClick={() => playQueue(true)}>
-                <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
-              </ActionBtn>
-            ) : null}
-
-            {onToggleFollow ? (
-              <PillBtn on={following} onClick={() => onToggleFollow(name)}>
-                {following ? 'Following' : 'Follow'}
-              </PillBtn>
-            ) : null}
-
-            {/* One click for every popular song you don't have yet. */}
-            {getTrack && missingPopular.length ? (
-              <PillBtn onClick={() => missingPopular.forEach((t) => getTrack(t))}>
-                {`Save ${missingPopular.length} popular song${missingPopular.length === 1 ? '' : 's'}`}
-              </PillBtn>
-            ) : null}
-
-            <div style={{ flex: 1 }} />
-            {embedded && onOpenFullPage ? (
-              <PillBtn onClick={onOpenFullPage}>Open full page</PillBtn>
-            ) : null}
-            <span style={{
-              display: embedded ? 'none' : undefined,
-              fontSize: 17, fontWeight: 850, letterSpacing: '-0.02em', color: 'var(--st-text)',
-              opacity: stuck ? 1 : 0, transform: stuck ? 'none' : 'translateY(4px)',
-              transition: 'opacity 0.2s ease, transform 0.2s ease', pointerEvents: 'none',
-              marginRight: 34, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '40%',
-            }}>{name}</span>
+            {stuck ? (
+              <>
+                {/* Scrolled: who this is on the left, what you can do on the
+                   right, ending in Play. The same bar the album pages use. */}
+                {/* A plain glyph here, like the album bar's: the bar is its own backdrop. */}
+                {!embedded ? <BackBtn onClick={onBack} style={{ width: 34, height: 34, background: 'transparent', color: 'rgba(255,255,255,0.85)', marginRight: 4 }} /> : null}
+                <span aria-hidden style={{
+                  width: 36, height: 36, borderRadius: '50%', flexShrink: 0, backgroundColor: 'rgba(var(--st-fg-rgb), 0.1)',
+                  backgroundImage: avatarSrc ? `url("${String(avatarSrc).replace(/"/g, '%22')}")` : 'none', backgroundSize: 'cover', backgroundPosition: 'center',
+                }} />
+                <span className="apx-bar-txt">
+                  <b>{name}</b>
+                  {spData?.monthlyListeners ? <span>{fmtCount(spData.monthlyListeners)} monthly listeners</span> : null}
+                </span>
+                <span style={{ flex: 1 }} />
+                {embedded && onOpenFullPage ? <PillBtn onClick={onOpenFullPage}>Open full page</PillBtn> : null}
+                <button type="button" className="apx-bar-rect" onClick={playOrPause} disabled={!canPlayAll}
+                  title={canPlayAll ? undefined : 'None of their songs are in your library yet'}
+                  aria-label={showPause ? 'Pause' : `Play ${name}`}>
+                  {showPause ? <PauseIcon size={13} /> : <PlayIcon size={13} />}{showPause ? 'Pause' : 'Play'}
+                </button>
+                {streamList.length + playable.length > 1 ? (
+                  <button type="button" className="apx-bar-glyph is-sm" title="Shuffle" aria-label={`Shuffle ${name}`} onClick={() => playQueue(true)}>{shuffleGlyph(20)}</button>
+                ) : null}
+                {followBtn}
+                {moreControl}
+              </>
+            ) : (
+              <>
+                {/* Spotify's bar: a white play circle, then quiet glyphs, Follow
+                   as a small outlined pill, and the rest under "…". */}
+                <button type="button" className="apx-bar-play" onClick={playOrPause} disabled={!canPlayAll}
+                  title={canPlayAll ? (showPause ? 'Pause' : 'Play') : 'None of their songs are in your library yet'}
+                  aria-label={showPause ? 'Pause' : `Play ${name}`}>
+                  {showPause ? <PauseIcon size={22} /> : <PlayIcon size={22} />}
+                </button>
+                {streamList.length + playable.length > 1 ? (
+                  <button type="button" className="apx-bar-glyph" title="Shuffle" aria-label={`Shuffle ${name}`} onClick={() => playQueue(true)}>{shuffleGlyph(24)}</button>
+                ) : null}
+                {followBtn}
+                {moreControl}
+                <span style={{ flex: 1 }} />
+                {embedded && onOpenFullPage ? <PillBtn onClick={onOpenFullPage}>Open full page</PillBtn> : null}
+              </>
+            )}
           </div>
 
           <div style={{ padding: '0 30px' }}>
@@ -1678,16 +1869,13 @@ export default function ArtistPage({
             {spConnected && sp.status === 'loading' ? (
               <>
                 <SectionHead title="Popular" />
-                <div aria-hidden>
+                <div aria-hidden className="app-pop">
                   {[0, 1, 2, 3, 4].map((i) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: POP_COLS, gap: 14, alignItems: 'center', padding: '6px 12px' }}>
-                      <span />
-                      <span style={{ width: 44, height: 44, borderRadius: 6, background: 'rgba(var(--st-fg-rgb), 0.07)' }} />
-                      <span style={{ display: 'grid', gap: 6 }}>
-                        <span style={{ height: 11, width: `${58 - i * 7}%`, borderRadius: 4, background: 'rgba(var(--st-fg-rgb), 0.08)' }} />
-                        <span style={{ height: 9, width: '30%', borderRadius: 4, background: 'rgba(var(--st-fg-rgb), 0.05)' }} />
-                      </span>
-                      <span /><span /><span />
+                    <div key={i} className="app-pop-row">
+                      <span className="c-n" />
+                      <span className="c-art" style={{ width: 44, height: 44, borderRadius: 6, background: 'rgba(var(--st-fg-rgb), 0.07)' }} />
+                      <span className="c-title" style={{ height: 11, width: `${78 - i * 9}%`, borderRadius: 4, background: 'rgba(var(--st-fg-rgb), 0.08)' }} />
+                      <span className="c-album" style={{ height: 9, width: '60%', borderRadius: 4, background: 'rgba(var(--st-fg-rgb), 0.05)' }} />
                     </div>
                   ))}
                 </div>
@@ -1719,21 +1907,23 @@ export default function ArtistPage({
               <>
                 <SectionHead
                   title="Popular"
-                  sub={[
-                    popularOwned.length ? `${popularOwned.length} of ${popular.length} in your library` : '',
-                    !hasPlays ? 'play counts unavailable right now' : '',
-                  ].filter(Boolean).join(' \u00b7 ') || undefined}
+                  sub={!hasPlays ? 'play counts unavailable right now' : undefined}
                 />
-                <PopularHeader plays={hasPlays} />
-                <div>
+                <div className={`app-pop${hasPlays ? '' : ' no-plays'}`}>
+                  <PopularHeader />
                   {(showAllPopular ? popular : popular.slice(0, 5)).map(({ t, lib }, i) => (
                     <PopularRow
-                      key={t.spotifyId || i} n={i + 1} t={t} owned={!!lib}
-                      playing={!!lib && currentId === lib.id} isPlaying={isPlaying}
+                      key={t.spotifyId || i} n={i + 1} t={t} rel={relById.get(t.albumId) || null} info={trackInfo[t.spotifyId] || null} owned={!!lib}
+                      canPlay={!!lib || (!!spotifyBridge && !!t.spotifyId)}
+                      playing={lib ? currentId === lib.id : !!spotifyBridge?.isCurrent?.(t)} isPlaying={isPlaying}
                       accent={pageAccUI}
                       dl={dlState?.[`s:${t.spotifyId}`]} progress={dlProgress?.[`s:${t.spotifyId}`]}
                       onPlay={() => {
-                        if (currentId === lib.id && onTogglePlay) onTogglePlay();
+                        const here = lib ? currentId === lib.id : !!spotifyBridge?.isCurrent?.(t);
+                        if (here && onTogglePlay) onTogglePlay();
+                        /* The whole list, saved or not: your copies play from the
+                           library, the rest stream from Spotify. */
+                        else if (spotifyBridge) spotifyBridge.playRows(popular.map((p) => p.t), i, { context: artistContext });
                         else onPlayTrack?.(lib, popularOwned);
                       }}
                       onGet={getTrack ? () => getTrack(t) : () => onJumpToFind?.(`${name} ${t.title}`, 'spotify')}
@@ -1763,7 +1953,7 @@ export default function ArtistPage({
                     ))}
                   </div>
                   {disc.status === 'loading' ? (
-                    <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.42)' }}>loading the full catalogue…</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.42)' }}>loading the full catalog…</span>
                   ) : null}
                 </div>
                 <DiscGrid

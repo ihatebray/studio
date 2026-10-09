@@ -282,7 +282,7 @@ export async function refetchMetadata(track) {
     }).catch(() => null);
     m = hit ? { ...hit, album: itunesAlbum(hit.album) } : {};
   }
-  if (blank(m.title) && blank(m.album)) return { ok: false, error: 'No catalogue match found for this track.' };
+  if (blank(m.title) && blank(m.album)) return { ok: false, error: 'No catalog match found for this track.' };
   const year = Number(String(m.releaseDate || '').slice(0, 4)) || null;
   return {
     ok: true,

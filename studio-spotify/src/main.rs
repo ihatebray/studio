@@ -168,6 +168,8 @@ static PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 /// When key requests failed recently, for telling a dead connection (they
 /// keep failing) from a one-off refusal.
 static KEY_FAILS: std::sync::Mutex<Vec<std::time::Instant>> = std::sync::Mutex::new(Vec::new());
+/// When a refused key last renewed the connection (see the log hook).
+static REFUSAL_RENEWED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 /// The command loop's ear for "this session has stopped working".
 static STALE: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<String>> = std::sync::OnceLock::new();
 
@@ -217,6 +219,25 @@ impl log::Log for StderrLog {
                 report_stale("Spotify stopped handing out decryption keys on this connection");
             }
         }
+        /* Spotify refused a song's key "for now" (code 0x0002). The refusal
+           is this connection's, not the account's or the song's: a fresh
+           connection is handed the key at once, which is why a restart always
+           fixed it. Waiting it out on the same connection could take a
+           minute or more. So renew straight away, as for a stale session,
+           and Studio picks the song back up. Not while a song is playing
+           (that refusal is the next song's preload; the song you're hearing
+           shouldn't stop for it), and not more than once in 30 seconds, so a
+           refusal on the new connection too falls back to waiting. */
+        if r.level() == log::Level::Error && msg.contains("audio key refused")
+            && !PLAYING.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            let now = std::time::Instant::now();
+            let mut last = REFUSAL_RENEWED.lock().unwrap_or_else(|e| e.into_inner());
+            if last.map_or(true, |t| now.duration_since(t) > Duration::from_secs(30)) {
+                *last = Some(now);
+                report_stale("refused: Spotify refused a decryption key on this connection");
+            }
+        }
         let line = format!("{} {}: {}", r.level(), r.target(), msg);
         eprintln!("{line}");
         if r.level() == log::Level::Error {
@@ -244,6 +265,15 @@ fn is_transient(reason: &str) -> bool {
     r.contains("statuscode(5") || r.contains("statuscode(429") || r.contains("deadlineexceeded")
         || r.contains("timed out") || r.contains("connection")
         || r.contains("deadline expired") || r.contains("timeout exceeded")
+}
+
+/// A load that failed because of the song itself: no audio of its own and
+/// no other copy to play, or held back until a later date. Not worth asking
+/// again, and nothing to do with Spotify's key limit.
+fn is_song_problem(reason: &str) -> bool {
+    let r = reason.to_lowercase();
+    r.contains("no alternatives") || r.contains("track is unavailable") || r.contains("is not available")
+        || r.contains("embargo") || r.contains("invalidduration") || r.contains("explicitcontentfiltered")
 }
 
 #[tokio::main]
@@ -560,8 +590,10 @@ fn start_player(session: Session, volume: f32, boost: f32) -> Engine {
             match &ev {
                 PlayerEvent::Playing { .. } => PLAYING.store(true, std::sync::atomic::Ordering::SeqCst),
                 // Not Unavailable: a failed preload reports that while the
-                // current song carries on playing.
-                PlayerEvent::Paused { .. } | PlayerEvent::Stopped { .. } => {
+                // current song carries on playing. Loading is a song you
+                // asked for (a preload says Preloading), so a key refused
+                // now is that song's, even if another was playing a moment ago.
+                PlayerEvent::Paused { .. } | PlayerEvent::Stopped { .. } | PlayerEvent::Loading { .. } => {
                     PLAYING.store(false, std::sync::atomic::Ordering::SeqCst)
                 }
                 _ => {}
@@ -604,6 +636,14 @@ fn translate(ev: PlayerEvent) -> Option<Value> {
         // transient: Spotify's servers failed (503, timeout); also retry.
         PlayerEvent::Unavailable { track_id, denied, throttled, .. } => {
             let reason = last_error();
+            /* librespot's throttled and denied flags stay up from the last
+               refused key until a key is served, so on their own they blame
+               every later failure on Spotify's key limit, including a song
+               that can never play (no audio, held back until release day).
+               Studio then retried that song again and again. A failure that
+               says it's about the song isn't about keys. */
+            let song = is_song_problem(&reason);
+            let (denied, throttled) = (denied && !song, throttled && !song);
             // Failed for want of a key from a stale session: the song is fine.
             let key_trouble = KEY_TROUBLE.swap(false, std::sync::atomic::Ordering::SeqCst);
             json!({
@@ -619,7 +659,16 @@ fn translate(ev: PlayerEvent) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_transient;
+    use super::{is_song_problem, is_transient};
+
+    #[test]
+    fn song_problems_are_not_key_limits() {
+        assert!(is_song_problem("Track should be available, but no alternatives found."));
+        assert!(is_song_problem("Track is unavailable: Embargo"));
+        assert!(!is_song_problem("error audio key 12: 2"));
+        assert!(!is_song_problem("Unable to load audio item: Error { kind: Unavailable, error: StatusCode(503) }"));
+        assert!(!is_song_problem(""));
+    }
 
     #[test]
     fn server_failures_are_transient() {

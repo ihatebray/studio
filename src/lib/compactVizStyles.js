@@ -23,11 +23,11 @@
 import { BANDS, demoLevelSource } from './vizLevels.js';
 
 export const VIZ_STYLES = [
-  { id: 'neon', name: 'Neon capsules', note: 'Glowing bars, mirrored from the centre', soft: true },
+  { id: 'neon', name: 'Neon capsules', note: 'Glowing bars, mirrored from the center', soft: true },
   { id: 'capsuleq', name: 'Capsule EQ', note: 'Capsules on a floor, with a reflection', soft: true },
   { id: 'strings', name: 'Neon strings', note: 'Thin glowing lines, mirrored', soft: true },
   { id: 'dots', name: 'Dot matrix', note: 'An LED equalizer, in dots', soft: true },
-  { id: 'proq', name: 'Pro-Q curve', note: 'An analyser curve over the spectrum', soft: true },
+  { id: 'proq', name: 'Pro-Q curve', note: 'An analyzer curve over the spectrum', soft: true },
   { id: 'peakcurve', name: 'Peak curve', note: 'Pro-Q with a falling peak line', soft: true },
   { id: 'layers', name: 'Layered curves', note: 'Three curves at three speeds', soft: true },
   { id: 'ribbon', name: 'Progress ribbon', note: 'The song end to end; click to seek' },

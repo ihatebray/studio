@@ -994,8 +994,8 @@ function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFai
     <>
       {onToggleFavorite ? (
         <button type="button" className={`sth-npbtn${t.isFavorite ? ' is-on' : ''}${arrive ? ' sth-lib-arrive' : ''}`} onClick={() => onToggleFavorite(t.id)}
-          title={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
-          aria-label={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'} aria-pressed={!!t.isFavorite}>
+          title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+          aria-label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={!!t.isFavorite}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
           </svg>

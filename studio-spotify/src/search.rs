@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use librespot_core::{Session, SpotifyId};
+use librespot_core::{Session, SpotifyId, SpotifyUri};
 use librespot_protocol::extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery};
 use librespot_protocol::extension_kind::ExtensionKind;
 use librespot_protocol::metadata::image::Size as ImageSize;
@@ -196,14 +196,17 @@ pub async fn album(session: &Session, id: &str) -> Result<Value, String> {
         .into_iter()
         .filter_map(|(u, b)| Some((u, TrackMessage::parse_from_bytes(&b).ok()?)))
         .collect();
+    // Whether this metadata lists audio files at all (see release_of).
+    let files_known = found.values().any(|t| !t.file.is_empty());
     let tracks: Vec<Value> = order
         .iter()
         .filter_map(|(u, disc, n)| {
             let t = found.get(u)?;
             let id = u.strip_prefix(TRACK_PREFIX)?;
             let names = t.artist.iter().map(|x| x.name().to_owned()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join(", ");
+            let (play_id, not_out) = playable_id(id, t, files_known);
             Some(json!({
-                "spotifyId": id, "title": t.name(), "artists": names,
+                "spotifyId": play_id, "title": t.name(), "artists": names,
                 "artistIds": t.artist.iter().filter_map(|x| base62(x.gid())).collect::<Vec<_>>(),
                 "albumId": id_of_album,
                 "album": name, "albumArtUrl": cover, "albumArtists": artists,
@@ -212,10 +215,54 @@ pub async fn album(session: &Session, id: &str) -> Result<Value, String> {
                 "discNumber": if t.disc_number() > 0 { t.disc_number() } else { *disc },
                 "spotifyUrl": format!("https://open.spotify.com/track/{id}"),
                 "explicit": t.explicit(),
+                "notOut": not_out,
             }))
         })
         .collect();
+    let mut tracks = tracks;
+    /* An album not out yet: ask about each song the way the player will when
+       it's played (see player_can_play), all at once. Its tracklist mixes
+       songs already out with ones still held back, and the batch metadata
+       above can't tell them apart. */
+    if album_ahead(&a) {
+        let mut checks = tokio::task::JoinSet::new();
+        for (i, row) in tracks.iter().enumerate() {
+            let Some(id) = row["spotifyId"].as_str() else { continue };
+            let Ok(uri) = SpotifyUri::from_uri(&format!("{TRACK_PREFIX}{id}")) else { continue };
+            let s = session.clone();
+            checks.spawn(async move { (i, player_can_play(&s, uri).await) });
+        }
+        while let Some(done) = checks.join_next().await {
+            if let Ok((i, plays)) = done {
+                tracks[i]["notOut"] = json!(!plays);
+            }
+        }
+    }
     Ok(json!({ "album": name, "artists": artists, "albumArtUrl": cover, "tracks": tracks, "releaseDate": date_of(&a) }))
+}
+
+/// The album's release date is still ahead.
+fn album_ahead(a: &AlbumMessage) -> bool {
+    let Some(d) = a.date.as_ref() else { return false };
+    if d.year() <= 0 {
+        return false;
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.as_secs() as i64).unwrap_or(0);
+    // The end of that day, so a release "today" counts as out.
+    epoch_secs(d.year(), d.month().max(1), d.day().max(1), 23, 59) > now
+}
+
+/// Whether the player will play this song: the same lookup it makes first
+/// (AudioItem::get_file) and the same tests it then applies
+/// (find_available_alternative). A song still held back fails both; asking
+/// costs a metadata request, never a decryption key. If Spotify can't be
+/// asked (a network error), the song is left playable rather than hidden.
+async fn player_can_play(session: &Session, uri: SpotifyUri) -> bool {
+    match librespot_metadata::audio::AudioItem::get_file(session, uri).await {
+        Ok(item) => item.availability.is_ok()
+            && (!item.files.is_empty() || item.alternatives.as_ref().is_some_and(|a| !a.is_empty())),
+        Err(e) => e.kind != librespot_core::error::ErrorKind::Unavailable,
+    }
 }
 
 /// An artist's albums and singles (newest first) and top songs:
@@ -314,6 +361,66 @@ pub async fn artist(session: &Session, id: &str, country: &str) -> Result<Value,
     Ok(json!({ "albums": albums, "topTracks": top_tracks }))
 }
 
+/// Whether a song plays yet, by the same tests librespot's player makes before
+/// it plays one (find_available_alternative): an availability window that has
+/// started (or none at all), then audio files of its own or an alternative
+/// copy to play instead. (Not `earliest_live_timestamp`: on a pre-release
+/// album that's the album's release time, even for songs already out.)
+/// `files_known`: whether this metadata lists files at all; when nothing in
+/// the batch has any, a song without them proves nothing.
+pub(crate) enum Release {
+    Out,
+    /// Held back here, but another copy is out (the single it came out as
+    /// first). The player won't fall back to it by itself, so Studio plays
+    /// and saves that copy instead.
+    As(String),
+    /// Listed, not released yet: playing it only fails.
+    NotOut,
+}
+
+pub(crate) fn release_of(t: &TrackMessage, files_known: bool) -> Release {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let started = now == 0
+        || t.availability.is_empty()
+        || t.availability.iter().any(|a| match a.start.as_ref() {
+            Some(d) if d.year() > 0 => epoch_secs(d.year(), d.month().max(1), d.day().max(1), d.hour(), d.minute()) <= now,
+            // A window with no start date is open.
+            _ => true,
+        });
+    // Started, and something to play: its own audio (or we can't tell).
+    if started && (!files_known || !t.file.is_empty()) {
+        return Release::Out;
+    }
+    match t.alternative.iter().find_map(|a| base62(a.gid())) {
+        Some(id) => Release::As(id),
+        None => Release::NotOut,
+    }
+}
+
+/// `(spotifyId, notOut)` for a song row: its own id, or the released copy's.
+pub(crate) fn playable_id(id: &str, t: &TrackMessage, files_known: bool) -> (String, bool) {
+    match release_of(t, files_known) {
+        Release::Out => (id.to_owned(), false),
+        Release::As(alt) => (alt, false),
+        Release::NotOut => (id.to_owned(), true),
+    }
+}
+
+/// Seconds since 1970 for a UTC calendar time (days-from-civil).
+fn epoch_secs(y: i32, m: i32, d: i32, hh: i32, mm: i32) -> i64 {
+    let (y, m) = (i64::from(if m <= 2 { y - 1 } else { y }), i64::from(m));
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    days * 86_400 + i64::from(hh) * 3_600 + i64::from(mm) * 60
+}
+
 pub(crate) fn date_of(a: &AlbumMessage) -> String {
     let Some(d) = a.date.as_ref() else { return String::new() };
     match (d.year(), d.month(), d.day()) {
@@ -393,6 +500,50 @@ fn escaped(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_follows_the_players_rule() {
+        use librespot_protocol::metadata::{Availability, Date};
+        let window = |year: i32| {
+            let mut d = Date::new();
+            d.set_year(year);
+            d.set_month(1);
+            d.set_day(1);
+            let mut a = Availability::new();
+            a.start = protobuf::MessageField::some(d);
+            a
+        };
+        // No windows: out.
+        let mut t = TrackMessage::new();
+        assert!(matches!(release_of(&t, false), Release::Out));
+        // A window that has started: out.
+        t.availability.push(window(2001));
+        assert!(matches!(release_of(&t, false), Release::Out));
+        // Started, but no audio of its own while its album-mates have some:
+        // a placeholder ("Track 4"), not out.
+        assert!(matches!(release_of(&t, true), Release::NotOut));
+        t.file.push(librespot_protocol::metadata::AudioFile::new());
+        assert!(matches!(release_of(&t, true), Release::Out));
+        // Only a window still ahead: not out.
+        let mut t = TrackMessage::new();
+        t.availability.push(window(2999));
+        assert!(matches!(release_of(&t, false), Release::NotOut));
+        // ... unless another copy is out: that one plays.
+        let mut alt = TrackMessage::new();
+        alt.set_gid(vec![7u8; 16]);
+        t.alternative.push(alt);
+        match release_of(&t, true) {
+            Release::As(id) => assert_eq!(id.len(), 22),
+            _ => panic!("expected the released copy"),
+        }
+    }
+
+    #[test]
+    fn calendar_to_epoch() {
+        assert_eq!(epoch_secs(1970, 1, 1, 0, 0), 0);
+        assert_eq!(epoch_secs(2024, 3, 14, 0, 0), 1_710_374_400);
+        assert_eq!(epoch_secs(2026, 10, 22, 23, 0), 1_792_710_000);
+    }
 
     #[test]
     fn escapes_like_the_clients() {

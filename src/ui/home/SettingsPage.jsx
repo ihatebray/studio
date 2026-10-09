@@ -77,12 +77,12 @@ export default function SettingsPage({
      Old stored categories map onto it. */
   const cat = setCat === 'playback' || setCat === 'discord' ? 'system' : setCat;
   const CATS = {
-    colour: ['Color', 'Which surfaces take their colour from the artwork, and how strongly.'],
+    colour: ['Color', 'Which surfaces take their color from the artwork, and how strongly.'],
     font: ['Font', 'The typeface for the whole app. Rounded faces only; add your own under My fonts.'],
     layout: ['Layout', 'How pages and lists are arranged.'],
     library: ['Library', 'What the song table shows, and managing the library itself.'],
-    system: ['System', 'Playback behaviour and what studio shares with Discord.'],
-    connections: ['Connections', 'Services studio uses for search, metadata and downloads.'],
+    system: ['System', 'Playback behavior and what Studio shares with Discord.'],
+    connections: ['Connections', 'Services Studio uses for search, metadata and downloads.'],
   };
   const [tourStep, setTourStep] = useState(0);
   const tourCat = tour ? TOUR[tourStep]?.cat : null;
@@ -156,15 +156,15 @@ export default function SettingsPage({
                   onChange={pickNpBarColor} onReset={() => pickNpBarColor(NP_BAR_DEFAULT)} /></span>
               ) : null}
             </SetRow>
-            <SetRow title="Colour intensity" note="How saturated cover colours get. Off is greyscale; Full is the strongest and makes faint text harder to read.">
-              <SetSeg label="Colour intensity" value={theme.colourIntensity} onPick={(v) => setThemeKey('colourIntensity', v)}
+            <SetRow title="Color intensity" note="How saturated cover colors get. Off is grayscale; Full is the strongest and makes faint text harder to read.">
+              <SetSeg label="Color intensity" value={theme.colourIntensity} onPick={(v) => setThemeKey('colourIntensity', v)}
                 options={[['off', 'Off'], ['muted', 'Muted'], ['balanced', 'Balanced'], ['vivid', 'Vivid'], ['full', 'Full']]} />
             </SetRow>
-            <SetRow title="Accent" note="The colour used for buttons, toggles, the scrubber and focus rings. White is the default and reads on every surface; Follow artwork matches it to whatever is playing; Fixed pins one colour of your choosing.">
+            <SetRow title="Accent" note="The color used for buttons, toggles, the scrubber and focus rings. White is the default and reads on every surface; Follow artwork matches it to whatever is playing; Fixed pins one color of your choosing.">
               <SetSeg label="Accent" value={accentMode} onPick={pickAccentMode}
                 options={[['white', 'White'], ['artwork', 'Follow artwork'], ['fixed', 'Fixed']]} />
               {accentMode === 'fixed' ? (
-                <span className="sth-set-sub" role="radiogroup" aria-label="Fixed accent colour" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                <span className="sth-set-sub" role="radiogroup" aria-label="Fixed accent color" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                   {ACCENT_SWATCHES.map(([rgb, name]) => (
                     <button key={rgb} type="button" role="radio" aria-checked={accentFixed === rgb} aria-label={name} title={name}
                       onClick={() => pickAccentFixed(rgb)}
@@ -227,8 +227,8 @@ export default function SettingsPage({
             <SetRow title="Compact bar visualizer" note="Fills the empty middle of the library bar in compact mode. Follows local files and Saved Spotify songs alike, and stays still when paused or when reduced motion is on.">
               <CompactVizPicker value={compactViz} onPick={pickCompactViz} palette={npWashTheme?.palette} accent={rawAccent} coverColours={compactVizCover} />
             </SetRow>
-            <SetRow title="Visualizer colours from the cover" note="On, the visualizer takes its colours from the album playing. Off, it's drawn in white, whatever the album." wide={false}>
-              <SetToggle label="Visualizer colours from the cover" on={compactVizCover} onToggle={toggleCompactVizCover} />
+            <SetRow title="Visualizer colors from the cover" note="On, the visualizer takes its colors from the album playing. Off, it's drawn in white, whatever the album." wide={false}>
+              <SetToggle label="Visualizer colors from the cover" on={compactVizCover} onToggle={toggleCompactVizCover} />
             </SetRow>
             <SetRow title="Notifications" note="Where notifications appear. Own lane makes room for them so they never cover anything; the player bar option shows them over the song info for a moment. Hover a notification to hold it.">
               <ToastPositionPicker />
@@ -314,7 +314,7 @@ export default function SettingsPage({
                   <SetRow title="Rich presence" wide={false}
                     note={discordPresenceEnabled
                       ? (discordStatus?.unavailable ? 'Enabled, but this build is missing the Discord module.'
-                        : discordStatus?.connected ? 'Connected. Your profile shows what studio is playing.'
+                        : discordStatus?.connected ? 'Connected. Your profile shows what Studio is playing.'
                           : 'Waiting for the Discord desktop app.')
                       : 'Show the playing track on your Discord profile. Requires the Discord desktop app.'}>
                     <SetToggle label="Rich presence" on={discordPresenceEnabled} onToggle={() => onSetDiscordPresenceEnabled(!discordPresenceEnabled)} />
@@ -431,7 +431,7 @@ function UpdatesRow() {
   const note = {
     checking: 'Checking for a new version…',
     downloading: `Downloading Studio ${s.version} in the background…`,
-    ready: `Studio ${s.version} is downloaded. Restart to update; your library and settings stay as they are.`,
+    ready: `Studio ${s.version} is ready to install. Restart to update; your library and settings stay as they are.`,
     available: `Studio ${s.version} is out. This copy can’t update itself, so download it from GitHub.`,
     none: `Up to date${s.checkedAt ? `, checked ${ago(s.checkedAt)}` : ''}. Studio checks every hour and lets you know in notifications.`,
     error: s.error || 'Couldn’t check for updates.',
@@ -458,9 +458,9 @@ const TOUR = [
     points: [
       ['Immerse', 'a slow gradient from the cover behind the Now Playing bar and side panel'],
       ['Library pages', 'the background of Songs, Albums and Artists'],
-      ['Side panel and Now Playing bar', 'plain, one colour, or tinted by the cover'],
-      ['Colour intensity', 'how strong cover colours get, from greyscale to full'],
-      ['Accent', 'buttons, toggles and the scrubber: white, the cover’s colour, or one you pick'],
+      ['Side panel and Now Playing bar', 'plain, one color, or tinted by the cover'],
+      ['Color intensity', 'how strong cover colors get, from grayscale to full'],
+      ['Accent', 'buttons, toggles and the scrubber: white, the cover’s color, or one you pick'],
     ] },
   { cat: 'font', mark: true, title: 'Font',
     points: [

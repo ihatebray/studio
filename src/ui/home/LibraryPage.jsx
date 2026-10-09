@@ -1,10 +1,9 @@
 import React from 'react';
 import { pageTone, pageWash, readableAccent, recordDeep, recordWashSource } from '../../lib/coverTheme.js';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
-import { hoverPreload } from '../../lib/spotifyMediaElement.js';
 import ArtistGrid from '../ArtistGrid.jsx';
 import ArtistPage from '../ArtistPage.jsx';
-import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
+import { ExplicitBadge, PauseIcon, PlayIcon } from '../sharedUI.jsx';
 import { PlayingBars } from './common.jsx';
 import { DetailAction, LibHeader, LibRow, RowPlayButton } from './Library.jsx';
 import RecordPage, { isAllCaps, recordLayoutOf } from './RecordPage.jsx';
@@ -13,6 +12,9 @@ import ScrollJump from './ScrollJump.jsx';
 
 export default function LibraryPage({
   LIB_OVERSCAN,
+  onPlayNext,
+  onAddToQueue,
+  onAddToPlaylist,
   LIB_ROW_H,
   accent,
   autoRgb,
@@ -328,6 +330,9 @@ export default function LibraryPage({
                 setMoreOpen={setDetailMore}
                 bridge={mySpotifyBridge}
                 fullAlbum={theme.albumSongs === 'full'}
+                onPlayNext={onPlayNext}
+                onAddToQueue={onAddToQueue}
+                onAddToPlaylist={onAddToPlaylist}
               />
             );
           }
@@ -510,18 +515,25 @@ export default function LibraryPage({
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '16px 0 14px' }}>
-                    {/* The same white Play pill as the other album and playlist layouts. */}
-                    <button type="button" onClick={() => onPlayTrack?.(detailData.tracks[0], detailData.tracks)}
-                      aria-label={`Play ${detailData.title}`}
+                    {/* The same white Play button as the other album and playlist layouts. */}
+                    {/* Playing from here: Pause, which pauses rather than starting over. */}
+                    {(() => {
+                      const here = !!currentTrack && detailData.tracks.some((t) => t.id === currentTrack.id);
+                      const pause = here && isPlaying;
+                      return (
+                    <button type="button" onClick={() => (here && onTogglePlay ? onTogglePlay() : onPlayTrack?.(detailData.tracks[0], detailData.tracks))}
+                      aria-label={`${pause ? 'Pause' : 'Play'} ${detailData.title}`}
                       style={{
-                        height: 46, padding: '0 24px 0 20px', borderRadius: 999, border: 'none', cursor: 'pointer', flexShrink: 0,
+                        height: 46, padding: '0 24px 0 20px', borderRadius: 12, border: 'none', cursor: 'pointer', flexShrink: 0,
                         display: 'inline-flex', alignItems: 'center', gap: 9, font: 'inherit', fontWeight: 800, fontSize: 15,
                         background: '#fff', color: '#000', transition: 'transform 0.12s ease',
                       }}
                       onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
-                      <PlayIcon size={15} />Play
+                      {pause ? <PauseIcon size={15} /> : <PlayIcon size={15} />}{pause ? 'Pause' : 'Play'}
                     </button>
+                      );
+                    })()}
                     <DetailAction title="Shuffle" onClick={() => { const sh = [...detailData.tracks].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); }}>
                       <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
                     </DetailAction>
@@ -597,7 +609,7 @@ export default function LibraryPage({
                             style={{ gridTemplateColumns: cols, padding: '7px 8px' }}
                             onDoubleClick={() => onPlayTrack?.(t, detailTracks)}
                             onContextMenu={canManage ? (e) => openRowMenu(e, t) : undefined}>
-                            <div className="sth-lrow-n" style={{ height: 42 }} {...hoverPreload(t)}>
+                            <div className="sth-lrow-n" style={{ height: 42 }}>
                               {playing
                                 ? <PlayingBars acc={pageAccUI} playing={isPlaying} />
                                 : <span className="sth-lrow-num">{detailData.kind === 'album' ? (t.trackNumber || i + 1) : i + 1}</span>}
@@ -628,7 +640,7 @@ export default function LibraryPage({
                                 /* Always visible — a heart you can't see
                                    is a heart whose state you can't read. */
                                 <button type="button" className="sth-lrow-more" onClick={() => onToggleFavorite(t.id)}
-                                  title={t.isFavorite ? 'Remove from favourites' : 'Add to favourites'}
+                                  title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                                   style={{ opacity: 1, color: t.isFavorite ? `rgb(${pageAccUI})` : 'rgba(var(--st-fg-rgb), 0.4)' }}>
                                   <svg width="15" height="15" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />

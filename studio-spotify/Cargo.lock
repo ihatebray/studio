@@ -2550,6 +2550,7 @@ dependencies = [
  "http",
  "http-body-util",
  "librespot-core",
+ "librespot-metadata",
  "librespot-playback",
  "librespot-protocol",
  "log",

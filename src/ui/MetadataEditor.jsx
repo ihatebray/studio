@@ -715,7 +715,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
             ) : null;
           })()}
           <button type="button" onClick={handleRefetch} disabled={refetching || saving}
-            title="Look this track up in the online catalogue and fill in what it finds"
+            title="Look this track up in the online catalog and fill in what it finds"
             style={{
               padding: '8px 12px', borderRadius: 9,
               border: '1px solid rgba(255,255,255,0.1)',
