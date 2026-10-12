@@ -10,6 +10,7 @@ import {
 import { api, fmtMs, fmtSec } from '../lib/format.js';
 import { parseSpotifyLink } from '../lib/spotifyLink.js';
 import { PlayIcon } from './sharedUI.jsx';
+import { PlayingBars } from './home/common.jsx';
 
 /* =========================================================================
  *  studio — instant search
@@ -287,6 +288,7 @@ export default function InstantSearch({
   onOpenLibraryAlbum,     // (libTrack) → your album page, for owned songs Spotify can't place
   onOpenAlbum,            // (album)   → push the full album page (optional)
   seed = '',              // preload the query when something else opens this
+  nowPlaying = null,      // { id, isRow(spotifyRow), playing }: the song playing, to mark its row
   onSpotifyLink,          // (text) → open a pasted Spotify link instead of searching for it
   onFilterLibrary,        // (queryString) → narrow the library table and go there
 }) {
@@ -1868,6 +1870,18 @@ export default function InstantSearch({
     return { done: ex.done, total: ex.total, finished: ex.done >= ex.total };
   })();
 
+  /* The playing song's row: your copy by id, a Spotify row by the same
+     test every other list uses (streamed, or your copy of it). null when
+     this isn't it, else whether it's playing or paused. */
+  const nowOf = (libTrack, row) => {
+    if (!nowPlaying) return null;
+    const hit = (libTrack && libTrack.id === nowPlaying.id) || (!!row?.spotifyId && !!nowPlaying.isRow?.(row));
+    return hit ? { playing: !!nowPlaying.playing } : null;
+  };
+  const nowOver = (now) => (
+    <span className="isx-artplay is-now" aria-hidden><PlayingBars color="#fff" playing={now.playing} /></span>
+  );
+
   /* --- one results row per kind ------------------------------------------ */
   function renderItem(item, i) {
     const on = i === cursor;
@@ -1977,11 +1991,13 @@ export default function InstantSearch({
       const dur = s.libTrack?.duration ? fmtSec(s.libTrack.duration) : fmtMs(s.spotify?.durationMs);
       // Plays (your copy, or streamed); only a peer's file has to be got first.
       const canPlay = !!(s.libTrack || (s.spotify && onPlaySpotifyRows));
+      const now = nowOf(s.libTrack, s.spotify);
+      const over = now ? nowOver(now) : canPlay ? playOver : null;
       return (
         <button {...common} onClick={(e) => { e.stopPropagation(); activate(item); }}>
           {art
-            ? <div className={`isx-art${s.owned ? ' is-owned' : ''}`} style={{ backgroundImage: `url("${art}")` }}>{canPlay ? playOver : null}</div>
-            : <div className="isx-glyph"><Svg d={Ico.note} size={17} w={1.8} />{canPlay ? playOver : null}</div>}
+            ? <div className={`isx-art${s.owned ? ' is-owned' : ''}`} style={{ backgroundImage: `url("${art}")` }}>{over}</div>
+            : <div className="isx-glyph"><Svg d={Ico.note} size={17} w={1.8} />{over}</div>}
           <div className="isx-mid">
             <div className="isx-nm">{title}</div>
             <div className="isx-meta">
@@ -2068,7 +2084,11 @@ export default function InstantSearch({
         <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}${track.notOut ? ' is-locked' : ''}`}
           {...(track.notOut ? { onClick: undefined, 'aria-disabled': true, title: 'Not out yet' } : null)}>
           <span className={`isx-n${track.spotifyId && !track.notOut && onPlaySpotifyRows ? ' can-play' : ''}`}>
-            <span className="num">{track.trackNumber || item.data.index + 1}</span>
+            {(() => {
+              const now = track.notOut ? null : nowOf(null, { ...track, album: track.album || frame?.album?.name });
+              return now ? <span className="num"><PlayingBars playing={now.playing} /></span>
+                : <span className="num">{track.trackNumber || item.data.index + 1}</span>;
+            })()}
             <span className="pl"><PlayIcon size={11} /></span>
           </span>
           {/* Title over credits: the lead artist, then anyone featured. Each
@@ -2167,7 +2187,9 @@ export default function InstantSearch({
       const key = `s:${t.spotifyId}`;
       return (
         <button {...common}>
-          <div className="isx-art" style={{ backgroundImage: t.albumArtUrl ? `url("${t.albumArtUrl}")` : 'none' }}>{onPlaySpotifyRows ? playOver : null}</div>
+          <div className="isx-art" style={{ backgroundImage: t.albumArtUrl ? `url("${t.albumArtUrl}")` : 'none' }}>
+            {(() => { const now = nowOf(null, t); return now ? nowOver(now) : onPlaySpotifyRows ? playOver : null; })()}
+          </div>
           <div className="isx-mid">
             <div className="isx-nm">{t.title}</div>
             <div className="isx-meta"><span className="isx-mi">{t.album}</span></div>
@@ -2965,7 +2987,7 @@ const STYLES = `
 .isx-art, .isx-glyph { position: relative; }
 .isx-artplay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; border-radius: inherit;
   background: rgba(0, 0, 0, 0.5); color: #fff; opacity: 0; transition: opacity 0.12s ease; }
-.isx-row:hover .isx-artplay, .isx-row.is-on .isx-artplay { opacity: 1; }
+.isx-row:hover .isx-artplay, .isx-row.is-on .isx-artplay, .isx-artplay.is-now { opacity: 1; }
 /* No cover: the play icon takes the note's place rather than sitting on it. */
 .isx-glyph .isx-artplay { background: none; }
 .isx-row:hover .isx-glyph:has(.isx-artplay) > svg, .isx-row.is-on .isx-glyph:has(.isx-artplay) > svg { opacity: 0; }

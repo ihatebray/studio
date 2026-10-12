@@ -275,6 +275,35 @@ export const TOKENS_CSS = `
 .st-icon-btn.is-sm { width: 28px; height: 28px; border-radius: var(--r-ctl-s); }
 .st-icon-btn.is-on { color: var(--accent-line); }
 .st-icon-btn:disabled { opacity: 0.35; cursor: default; }
+/* The playing indicator (PlayingBars in home/common.jsx): the current song's
+   row in every list. Three styles, one picked in Settings → Layout. Paused
+   holds each at rest; reduced motion holds them all still. */
+.st-ind { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 14px;
+  flex-shrink: 0; vertical-align: middle; color: var(--accent-line, currentColor); }
+.st-ind.is-bars { gap: 2.5px; }
+.st-ind.is-bars i { display: block; width: 2.5px; height: 11px; border-radius: 2px; background: currentColor; box-shadow: 0 0 6px currentColor;
+  animation: stIndBars 0.9s ease infinite; will-change: transform; }
+.st-ind.is-bars i:nth-child(2) { animation-delay: 0.18s; }
+.st-ind.is-bars i:nth-child(3) { animation-delay: 0.36s; }
+.st-ind.is-bars.is-paused i { animation: none; transform: scaleY(0.36); }
+@keyframes stIndBars { 0%, 100% { transform: scaleY(0.36); } 50% { transform: scaleY(1); } }
+.st-ind.is-beacon i { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: currentColor; }
+.st-ind.is-beacon i:nth-child(2), .st-ind.is-beacon i:nth-child(3) { background: none; border: 1.5px solid currentColor;
+  animation: stIndBeacon 1.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+.st-ind.is-beacon i:nth-child(3) { animation-delay: 0.9s; }
+@keyframes stIndBeacon { 0% { transform: scale(1); opacity: 0.9; } 100% { transform: scale(2.6); opacity: 0; } }
+.st-ind.is-beacon.is-paused i:nth-child(2), .st-ind.is-beacon.is-paused i:nth-child(3) { animation: none; opacity: 0; }
+.st-ind.is-beacon.is-paused i:nth-child(1) { opacity: 0.6; }
+.st-ind.is-signal svg { width: 16px; height: 14px; overflow: visible; }
+.st-ind.is-signal .a1 { animation: stIndSignal 1.2s ease-in-out infinite; }
+.st-ind.is-signal .a2 { animation: stIndSignal 1.2s ease-in-out 0.25s infinite; }
+@keyframes stIndSignal { 0%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
+.st-ind.is-signal.is-paused .a1, .st-ind.is-signal.is-paused .a2 { animation: none; opacity: 0.2; }
+@media (prefers-reduced-motion: reduce) { .st-ind i, .st-ind path { animation: none !important; } }
+/* An artist's name that opens their page (ArtistLinks): reads as plain text
+   until hovered, like Spotify's credits. */
+.st-artist-link { padding: 0; border: none; background: none; font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer; }
+.st-artist-link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
 
 /* ---- Type ---------------------------------------------------------------- */
 .st-eyebrow { font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-faint); }

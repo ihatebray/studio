@@ -2352,7 +2352,11 @@ export default function StudioHome({
         const mixed = [...favorites].sort(() => Math.random() - 0.5);
         onPlayTrack?.(mixed[0], mixed);
       },
-      isCurrent: (row) => !!currentSid && currentSid === row.spotifyId,
+      /* The row's song is playing: streamed, or your own copy of it (which
+         is what playRows plays when you have one, via spotifyPlayable). */
+      isCurrent: (row) => !!currentTrack && !!row?.spotifyId && (
+        currentSid === row.spotifyId || currentTrack.spotifyId === row.spotifyId
+        || spotifyPlayable(row).id === currentTrack.id),
       isPlaying: !!isPlaying,
       onOpenArtist: openArtistAnywhere,
       onConnect: () => { pickSection('settings'); setSetCat('connections'); },
@@ -2426,6 +2430,14 @@ export default function StudioHome({
       ? { label: 'In your library', icon: 'check', disabled: true }
       : { label, icon: 'plus', stay: true, again: { saved: true }, onClick: save });
     const open = { label: 'Open', icon: 'open', onClick: () => live().open(info) };
+    /* The quick first version (name and cover, details still coming): the
+       buttons it's about to have, dimmed, so nothing moves when they land. */
+    if (info.loading && (info.kind === 'track' || info.kind === 'album')) {
+      card.buttons.push({ label: 'Play', icon: 'play', primary: true, pending: true });
+      card.buttons.push({ label: info.kind === 'album' ? 'Save all' : 'Save', icon: 'plus', pending: true });
+      card.buttons.push(info.kind === 'album' ? open : { label: 'Album', icon: 'open', pending: true });
+      return card;
+    }
     if (info.kind === 'track') {
       card.explicit = !!row?.explicit;
       card.meta = [info.album?.name, year, row?.durationMs ? fmtMs(row.durationMs) : ''].filter(Boolean).join(' · ');
@@ -3520,6 +3532,7 @@ export default function StudioHome({
           onZoomCover={openCoverZoom}
           onCopyLink={copySpotifyLink}
           copyBusy={!!currentTrack && sharing === currentTrack.id}
+          onOpenArtist={openArtistAnywhere}
           onTogglePlay={onTogglePlay}
           onPrev={onPrev}
           onNext={onNext}
@@ -4315,6 +4328,7 @@ export default function StudioHome({
       <InstantSearch
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
+        nowPlaying={currentTrack ? { id: currentTrack.id, isRow: mySpotifyBridge.isCurrent, playing: !!isPlaying } : null}
         library={library}
         alreadyOwned={alreadyOwned}
         coverFor={coverFor}

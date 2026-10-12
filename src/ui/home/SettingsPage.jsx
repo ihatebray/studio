@@ -3,7 +3,8 @@ import { ago, api } from '../../lib/format.js';
 import { CompactVizPicker } from '../CompactVisualizer.jsx';
 import { SoulseekCredsPanel, SpotifyCredsPanel } from '../StudioOnboarding.jsx';
 import { ToastPositionPicker } from '../Toasts.jsx';
-import { hexToRgb, rgbToHex } from './common.jsx';
+import { hexToRgb, PlayingBars, rgbToHex } from './common.jsx';
+import { INDICATOR_STYLES, setIndicatorStyle, useIndicatorStyle } from '../../lib/playingIndicator.js';
 import { NP_BAR_DEFAULT, THEME_DEFAULTS } from './constants.js';
 import FontSettings from './FontSettings.jsx';
 import { RecordLayoutPicker, recordLayoutOf } from './RecordPage.jsx';
@@ -75,15 +76,16 @@ export default function SettingsPage({
   /* Brief, Settings: Playback and Discord merged into one System page
      (a navigation change — flagged in the brief for confirmation).
      Old stored categories map onto it. */
-  const cat = setCat === 'playback' || setCat === 'discord' ? 'system' : setCat;
+  const cat = setCat === 'playback' ? 'system' : setCat === 'discord' ? 'connections' : setCat;
   const CATS = {
     colour: ['Color', 'Which surfaces take their color from the artwork, and how strongly.'],
     font: ['Font', 'The typeface for the whole app. Rounded faces only; add your own under My fonts.'],
     layout: ['Layout', 'How pages and lists are arranged.'],
     library: ['Library', 'What the song table shows, and managing the library itself.'],
-    system: ['System', 'Playback behavior and what Studio shares with Discord.'],
-    connections: ['Connections', 'Services Studio uses for search, metadata and downloads.'],
+    system: ['System', 'Updates and playback behavior.'],
+    connections: ['Connections', 'Services Studio uses for search, metadata and downloads, and Discord.'],
   };
+  const indicator = useIndicatorStyle();
   const [tourStep, setTourStep] = useState(0);
   const tourCat = tour ? TOUR[tourStep]?.cat : null;
   useEffect(() => { if (tourCat) setSetCat(tourCat); }, [tourCat]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -237,6 +239,10 @@ export default function SettingsPage({
               <SetSeg label="List density" value={listDensity} onPick={pickListDensity}
                 options={[['compact', 'Compact'], ['default', 'Default'], ['roomy', 'Roomy']]} />
             </SetRow>
+            <SetRow title="Playing indicator" note="What marks the song that's playing, in every list: library, albums and playlists, My Spotify, artist pages, search and the queue. It holds still when paused.">
+              <SetSeg label="Playing indicator" value={indicator} onPick={setIndicatorStyle}
+                options={INDICATOR_STYLES.map(([id, name]) => [id, name, <PlayingBars key={id} kind={id} playing={indicator === id} />])} />
+            </SetRow>
           </div>
         ) : null}
 
@@ -307,57 +313,6 @@ export default function SettingsPage({
                 </SetRow>
               ) : null}
             </div>
-            {onSetDiscordPresenceEnabled ? (
-              <>
-                <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Discord</div>
-                <div className="sth-set-list">
-                  <SetRow title="Rich presence" wide={false}
-                    note={discordPresenceEnabled
-                      ? (discordStatus?.unavailable ? 'Enabled, but this build is missing the Discord module.'
-                        : discordStatus?.connected ? 'Connected. Your profile shows what Studio is playing.'
-                          : 'Waiting for the Discord desktop app.')
-                      : 'Show the playing track on your Discord profile. Requires the Discord desktop app.'}>
-                    <SetToggle label="Rich presence" on={discordPresenceEnabled} onToggle={() => onSetDiscordPresenceEnabled(!discordPresenceEnabled)} />
-                  </SetRow>
-                  {onSetDiscordHideWhenPaused ? (
-                    <SetRow title="Hide when paused" note="Clears your Discord status while playback is stopped." wide={false}>
-                      <SetToggle label="Hide when paused" on={discordHideWhenPaused} onToggle={() => onSetDiscordHideWhenPaused(!discordHideWhenPaused)} />
-                    </SetRow>
-                  ) : null}
-                  {discordPresenceEnabled && onSetDiscordPresenceDetail ? (
-                    <SetRow title="Show on your profile" note="The album still appears when you hover the cover art on Discord either way.">
-                      <SetSeg label="Show on your profile" value={discordPresenceDetail} onPick={setDiscordPresenceDetailSafely}
-                        options={[['full', 'Title, artist, album'], ['basic', 'Title, artist']]} />
-                    </SetRow>
-                  ) : null}
-                  {discordPresenceEnabled ? (
-                    <SetRow title="Application ID" note="Optional. Use your own Discord application to change the name shown on your profile.">
-                      <input className="st-input" placeholder="e.g. 1123581321345589" value={discordAppId}
-                        onChange={(e) => onSetDiscordAppId?.(e.target.value)} spellCheck={false} aria-label="Discord application ID" />
-                      <span className="sth-set-sub">
-                        <SetHowTo label="How do I get an Application ID?">
-                          <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.85 }}>
-                            <li>Open the{' '}<button type="button" className="sth-set-link" onClick={() => api()?.openExternal?.('https://discord.com/developers/applications')}>Discord Developer Portal</button>{' '}and sign in.</li>
-                            <li>Click <SetLit>New Application</SetLit>. Its name is what Discord shows on your profile.</li>
-                            <li>Copy the <SetLit>Application ID</SetLit> from General Information and paste it here.</li>
-                            <li>For artwork, upload images named <SetLit>immerse_logo</SetLit>, <SetLit>play</SetLit> and <SetLit>pause</SetLit> under Rich Presence, Art Assets.</li>
-                          </ol>
-                        </SetHowTo>
-                      </span>
-                    </SetRow>
-                  ) : null}
-                  {discordPresenceEnabled ? (
-                    <SetRow title="imgbb API key" note="Optional. Lets custom local cover art appear on Discord by uploading it once to imgbb.">
-                      <input className="st-input" placeholder="From api.imgbb.com" value={imgbbApiKey}
-                        onChange={(e) => onSetImgbbApiKey?.(e.target.value)} spellCheck={false} aria-label="imgbb API key" />
-                    </SetRow>
-                  ) : null}
-                </div>
-                {discordStatus?.lastError ? (
-                  <div role="status" style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{String(discordStatus.lastError)}</div>
-                ) : null}
-              </>
-            ) : null}
           </>
         ) : null}
 
@@ -391,6 +346,73 @@ export default function SettingsPage({
               </div>
               <SoulseekCredsPanel compact onStatus={(v) => setConnState((c2) => ({ ...c2, soulseek: v }))} />
             </section>
+            {onSetDiscordPresenceEnabled ? (
+              <section className="sth-conn">
+                <div className="sth-conn-head">
+                  <div>
+                    <h2>Discord <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
+                    <p>Shows the song you’re playing on your Discord profile, with its cover. Needs the Discord desktop app.</p>
+                  </div>
+                  <span className={`st-status ${discordPresenceEnabled && discordStatus?.connected ? 'ok' : 'off'}`}>
+                    {!discordPresenceEnabled ? 'Off' : discordStatus?.connected ? 'Connected' : 'Waiting for Discord'}
+                  </span>
+                </div>
+                <div className="sth-set-list">
+                  <SetRow title="Rich presence" wide={false}
+                    note={discordPresenceEnabled
+                      ? (discordStatus?.unavailable ? 'Enabled, but this build is missing the Discord module.'
+                        : discordStatus?.connected ? 'Connected. Your profile shows what Studio is playing.'
+                          : 'Waiting for the Discord desktop app.')
+                      : 'Show the playing track on your Discord profile. Requires the Discord desktop app.'}>
+                    <SetToggle label="Rich presence" on={discordPresenceEnabled} onToggle={() => onSetDiscordPresenceEnabled(!discordPresenceEnabled)} />
+                  </SetRow>
+                  {onSetDiscordHideWhenPaused ? (
+                    <SetRow title="Hide when paused" note="Clears your Discord status while playback is stopped." wide={false}>
+                      <SetToggle label="Hide when paused" on={discordHideWhenPaused} onToggle={() => onSetDiscordHideWhenPaused(!discordHideWhenPaused)} />
+                    </SetRow>
+                  ) : null}
+                  {discordPresenceEnabled && onSetDiscordPresenceDetail ? (
+                    <SetRow title="Show on your profile" note="The album still appears when you hover the cover art on Discord either way.">
+                      <SetSeg label="Show on your profile" value={discordPresenceDetail} onPick={setDiscordPresenceDetailSafely}
+                        options={[['full', 'Title, artist, album'], ['basic', 'Title, artist']]} />
+                    </SetRow>
+                  ) : null}
+                  {discordPresenceEnabled ? (
+                    <SetRow title="Application ID" note="Your own Discord application. Studio doesn’t come with one, so nothing shows on Discord until this is set. Its name is what your profile shows.">
+                      <input className="st-input" placeholder="e.g. 1123581321345589144" value={discordAppId}
+                        onChange={(e) => onSetDiscordAppId?.(e.target.value)} spellCheck={false} aria-label="Discord application ID" />
+                      <span className="sth-set-sub">
+                        <SetHowTo label="How do I get an Application ID?">
+                          <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.85 }}>
+                            <li>Open the{' '}<button type="button" className="sth-set-link" onClick={() => api()?.openExternal?.('https://discord.com/developers/applications')}>Discord Developer Portal</button>{' '}and sign in.</li>
+                            <li>Click <SetLit>New Application</SetLit> and name it <SetLit>Studio</SetLit>. Your profile shows it as “Listening to Studio”.</li>
+                            <li>Copy the <SetLit>Application ID</SetLit> from General Information and paste it here.</li>
+                          </ol>
+                        </SetHowTo>
+                      </span>
+                    </SetRow>
+                  ) : null}
+                  {discordPresenceEnabled ? (
+                    <SetRow title="imgbb API key" note="Optional. Lets custom local cover art appear on Discord by uploading it once to imgbb.">
+                      <input className="st-input" placeholder="From api.imgbb.com" value={imgbbApiKey}
+                        onChange={(e) => onSetImgbbApiKey?.(e.target.value)} spellCheck={false} aria-label="imgbb API key" />
+                      <span className="sth-set-sub">
+                        <SetHowTo label="How do I get an imgbb key?">
+                          <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.85 }}>
+                            <li>Open{' '}<button type="button" className="sth-set-link" onClick={() => api()?.openExternal?.('https://api.imgbb.com')}>api.imgbb.com</button>{' '}and sign in. It’s free.</li>
+                            <li>Click <SetLit>Get API key</SetLit> and copy the key.</li>
+                            <li>Paste it here. Studio uploads each cover once, the first time Discord needs it.</li>
+                          </ol>
+                        </SetHowTo>
+                      </span>
+                    </SetRow>
+                  ) : null}
+                </div>
+                {discordStatus?.lastError ? (
+                  <div role="status" style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{String(discordStatus.lastError)}</div>
+                ) : null}
+              </section>
+            ) : null}
             {onReplayOnboarding ? (
               <section className="sth-conn" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -474,6 +496,7 @@ const TOUR = [
       ['Album songs', 'just the songs you own, or the whole album'],
       ['Page background', 'from each cover or one fixed shade, plus header alignment for Classic'],
       ['Sidebar and window', 'the active-tab marker, and Standard or Compact layout'],
+      ['Playing indicator', 'what marks the playing song in every list: Bars, Beacon or Signal'],
       ['Also here', 'the compact bar visualizer, where notifications appear, and list density'],
     ] },
   { cat: 'library', mark: true, title: 'Library',
@@ -488,14 +511,13 @@ const TOUR = [
     points: [
       ['Updates', 'your version, a button to check for a new one, and the changelog; new versions also show up in notifications'],
       ['Gapless playback', 'no silence between songs, for live albums and mixes'],
-      ['Discord', 'show what you’re playing on your profile, hide it when paused, use your own app name'],
-      ['imgbb key', 'optional; lets covers of your own files show on Discord'],
     ] },
   { cat: 'connections', mark: true, title: 'Connections',
     points: [
       ['Spotify', 'your sign-in, which plays Spotify songs and fills My Spotify'],
       ['Spotify developer keys', 'optional backup search when your sign-in is busy'],
       ['Soulseek', 'optional second source for rarer songs'],
+      ['Discord', 'show what you’re playing on your profile, set up with your own Application ID; an imgbb key adds covers of your own files'],
       ['Run setup again', 'goes back through setup; your library stays'],
     ] },
 ];

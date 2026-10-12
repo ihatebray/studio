@@ -387,6 +387,7 @@ const CSS = `
 .st-tcard-btn.is-icon { flex: 0 0 38px; padding: 0; }
 .st-tcard-btn.is-icon svg { width: 13px; height: 13px; }
 .st-tcard-btn.is-icon:disabled { opacity: 1; color: rgb(140, 220, 160); }
+.st-tcard-btn.is-pending, .st-tcard-ib.is-pending { opacity: 0.4; pointer-events: none; transition: opacity 0.2s ease; }
 .st-toast-life { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; transform-origin: 0 50%;
   background: rgba(var(--tk), 0.55); animation-name: stToastLife; animation-timing-function: linear; animation-fill-mode: forwards; }
 @keyframes stToastLife { from { transform: scaleX(1); } to { transform: scaleX(0); } }
@@ -401,8 +402,9 @@ const CSS = `
    strip, the cover flush on the left; capsule, a rounded pill; large, the
    cover across the top with labelled buttons.
    card: { style, image, round, title, explicit, sub, meta,
-           buttons: [{ label, icon, primary, disabled, stay, onClick }] }
-   A button dismisses the card unless it says `stay`. */
+           buttons: [{ label, icon, primary, disabled, pending, stay, onClick }] }
+   A button dismisses the card unless it says `stay`. `pending`: the button
+   it will be once the details arrive, shown dimmed until then. */
 const CARD_ICONS = {
   play: <path d="M8 6.5v11l9.5-5.5z" fill="currentColor" strokeWidth="4" />,
   plus: <path d="M12 5v14M5 12h14" />,
@@ -446,12 +448,12 @@ function ToastCard({ card, onButton, onDismiss }) {
             {(card.buttons || []).map((b) => (
               /* Save is a +, and saved a tick, here as everywhere else. */
               ICON_ONLY.has(b.icon) ? (
-                <button key={b.label} type="button" className="st-tcard-btn is-icon" disabled={!!b.disabled}
+                <button key={b.label} type="button" className={`st-tcard-btn is-icon${b.pending ? ' is-pending' : ''}`} disabled={!!b.disabled}
                   title={b.label} aria-label={b.label} onClick={() => onButton(b)}>
                   <CardIcon name={b.icon} />
                 </button>
               ) : (
-                <button key={b.label} type="button" className={`st-tcard-btn${b.primary ? ' is-primary' : ''}`} disabled={!!b.disabled} onClick={() => onButton(b)}>
+                <button key={b.label} type="button" className={`st-tcard-btn${b.primary ? ' is-primary' : ''}${b.pending ? ' is-pending' : ''}`} disabled={!!b.disabled} onClick={() => onButton(b)}>
                   <CardIcon name={b.icon} />{b.label}
                 </button>
               )
@@ -468,7 +470,7 @@ function ToastCard({ card, onButton, onDismiss }) {
       {style === 'strip' ? null : art}
       <div className="st-tcard-text">{title}{sub}</div>
       {(card.buttons || []).map((b) => (
-        <button key={b.label} type="button" className={`st-tcard-ib${b.primary ? ' is-primary' : ''}${b.icon === 'play' ? ' is-play' : ''}`} disabled={!!b.disabled}
+        <button key={b.label} type="button" className={`st-tcard-ib${b.primary ? ' is-primary' : ''}${b.icon === 'play' ? ' is-play' : ''}${b.pending ? ' is-pending' : ''}`} disabled={!!b.disabled}
           title={b.label} aria-label={b.label} onClick={() => onButton(b)}>
           <CardIcon name={b.icon} />
         </button>

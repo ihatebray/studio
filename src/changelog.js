@@ -8,6 +8,36 @@
 
 export const CHANGELOG = [
   {
+    version: '0.0.5',
+    date: '2026-10-12',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Playing Indicator', text: 'Choose how the playing song is marked in every list: Bars, Beacon or Signal. Find it in Settings → Layout.' },
+          { lead: 'Discord Setup', text: 'Setup now walks you through connecting Discord, step by step.' },
+          { lead: 'Artist Links', text: 'Click an artist’s name in the Now Playing bar or on Home to open their page.' },
+          { lead: 'Scrolling Titles', text: 'Long song titles scroll in the Now Playing bar.' },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Page Headers', text: 'Every tab now shares one clean header, with less empty space above it.' },
+          { lead: 'Spotify Links', text: 'Copied links now show up in Studio almost instantly.' },
+          { lead: 'Discord Settings', text: 'Moved to Settings → Connections.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed the playing song not being marked in My Spotify, on artist pages and in search.',
+          'Fixed extra space between the controls and Popular on artist pages.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.4',
     date: '2026-10-09',
     sections: [

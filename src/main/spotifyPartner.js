@@ -1168,7 +1168,9 @@ function libraryCard(uri, d) {
     };
     case 'Album': {
       const artists = nameList(d.artists);
-      return { kind: 'album', id: idOf(uri || d.uri), name: d.name || '', sub: `Album${artists ? ` · ${artists}` : ''}`, image: img(d.coverArt?.sources, 300) };
+      // artistIds: the subtitle's names, in order, so each opens the right page.
+      const artistIds = (d.artists?.items || []).filter((x) => x?.profile?.name).map((x) => idOf(x.uri));
+      return { kind: 'album', id: idOf(uri || d.uri), name: d.name || '', sub: `Album${artists ? ` · ${artists}` : ''}`, artistIds, image: img(d.coverArt?.sources, 300) };
     }
     case 'Artist': return {
       kind: 'artist', id: idOf(uri || d.uri), name: d.profile?.name || '', sub: 'Artist',

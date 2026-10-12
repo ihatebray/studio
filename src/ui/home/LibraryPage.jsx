@@ -161,7 +161,9 @@ export default function LibraryPage({
       /* Compact drops the page title (see .is-compact .sth-libhead-tw),
          so the top inset tightens with it and the controls row
          becomes the first thing in the card. */
-      padding: detailPage ? 0 : (compactMode ? '14px 24px 16px' : '28px 28px 20px'),
+      /* 18px on top at full size: the header is one bar now, and 28px
+         there left a band of nothing over every tab. */
+      padding: detailPage ? 0 : (compactMode ? '14px 24px 16px' : '18px 28px 20px'),
       boxSizing: 'border-box',
     }}>
 

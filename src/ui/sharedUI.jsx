@@ -429,6 +429,29 @@ export { ExplicitBadge, ImmerseTooltipLayer, useDownloadProgress, VideoPicker };
  * The optical nudge right is deliberate: a triangle centred by its bounding
  * box reads as sitting left, because its visual mass is toward the flat edge.
  */
+/** An artist credit as links, each name opening that artist's page through
+ *  onOpen({ name, spotifyId }). `names` is the credit ("A, B") or a list,
+ *  `ids` their Spotify ids in the same order when known. When the ids don't
+ *  line up with the split (a name with a comma in it, like "Tyler, The
+ *  Creator"), the credit stays whole and opens the first artist. Without
+ *  onOpen it's plain text. */
+export function ArtistLinks({ names, ids = null, onOpen }) {
+  const text = Array.isArray(names) ? names.filter(Boolean).join(', ') : String(names || '');
+  if (!text) return null;
+  if (!onOpen) return text;
+  const idList = Array.isArray(ids) ? ids : [];
+  let list = Array.isArray(names) ? names.filter(Boolean) : text.split(', ');
+  if (idList.length && idList.length !== list.length) list = [text];
+  return list.map((nm, i) => (
+    <React.Fragment key={`${nm}:${i}`}>
+      {i ? ', ' : ''}
+      <button type="button" className="st-artist-link" title={`Go to ${nm}`}
+        onClick={(e) => { e.stopPropagation(); onOpen({ name: nm, spotifyId: idList[i] || null }); }}
+        onKeyDown={(e) => e.stopPropagation()}>{nm}</button>
+    </React.Fragment>
+  ));
+}
+
 export function PlayIcon({ size = 13, nudge = true }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"

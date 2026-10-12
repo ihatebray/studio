@@ -920,10 +920,12 @@ export function SetRow({ title, note, children, wide = true }) {
 export function SetSeg({ value, options, onPick, label }) {
   return (
     <span className="st-segs" role="radiogroup" aria-label={label}>
-      {options.map(([id, lbl]) => (
+      {/* An option may carry an icon as its third item, drawn before the label. */}
+      {options.map(([id, lbl, icon]) => (
         <button key={String(id)} type="button" role="radio" aria-checked={value === id}
-          className={value === id ? 'on' : ''} onClick={() => onPick(id)}>
-          {titleCase(lbl)}
+          className={value === id ? 'on' : ''} onClick={() => onPick(id)}
+          style={icon ? { display: 'inline-flex', alignItems: 'center', gap: 8 } : undefined}>
+          {icon || null}{titleCase(lbl)}
         </button>
       ))}
     </span>

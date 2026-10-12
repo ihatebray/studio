@@ -1,4 +1,5 @@
 import React from 'react';
+import { useIndicatorStyle } from '../../lib/playingIndicator.js';
 import { createPortal } from 'react-dom';
 import { PauseIcon, PlayIcon } from '../sharedUI.jsx';
 
@@ -113,11 +114,25 @@ export const MenuItem = React.memo(function MenuItem({ icon, label, sub, danger,
 /* formatTotalMs() moved to mediaUtils.js — the artist page states a
    catalogue's runtime the same way an album states its own. */
 
-export const PlayingBars = React.memo(function PlayingBars({ acc, playing = true }) {
+/* The one playing indicator, used by every list: Bars, Beacon or Signal,
+   whichever is picked in Settings → Layout (playingIndicator.js). Paused
+   holds it still. `acc` is an "r, g, b" string; `color` any CSS color, for
+   lists that keep their accent in a variable. `kind` forces a style (the
+   setting's own preview). Styles: .st-ind in accentTokens.js. */
+export const PlayingBars = React.memo(function PlayingBars({ acc, color, playing = true, kind = null }) {
+  const chosen = useIndicatorStyle();
+  const style = kind || chosen;
   return (
-    <span className={`sth-eq${playing ? '' : ' is-paused'}`} aria-label="Now playing" title="Now playing"
-      style={{ color: `rgb(${acc})` }}>
-      <i /><i /><i />
+    <span className={`st-ind is-${style}${playing ? '' : ' is-paused'}`} role="img"
+      aria-label={playing ? 'Now playing' : 'Paused'} title={playing ? 'Now playing' : 'Paused'}
+      style={acc ? { color: `rgb(${acc})` } : color ? { color } : undefined}>
+      {style === 'signal' ? (
+        <svg viewBox="0 0 18 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+          <circle cx="4" cy="8" r="2.2" fill="currentColor" stroke="none" />
+          <path className="a1" d="M8.5 4.8a4.5 4.5 0 0 1 0 6.4" />
+          <path className="a2" d="M11.8 2a8.6 8.6 0 0 1 0 12" />
+        </svg>
+      ) : <><i /><i /><i /></>}
     </span>
   );
 });

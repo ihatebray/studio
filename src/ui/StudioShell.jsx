@@ -310,6 +310,11 @@ export default function StudioShell({
         onCreatePlaylist={onCreatePlaylist}
         onAddTracksToPlaylist={onAddTracksToPlaylist}
         onImported={onReloadLibrary}
+        discord={onSetDiscordPresenceEnabled ? {
+          enabled: discordPresenceEnabled, onSetEnabled: onSetDiscordPresenceEnabled,
+          appId: discordAppId, onSetAppId: onSetDiscordAppId,
+          imgbbKey: imgbbApiKey, onSetImgbbKey: onSetImgbbApiKey,
+        } : null}
       />
     );
   }

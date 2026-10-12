@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { sampleImageTheme, isFallbackTheme, recordWashSource, pageWash, readableAccent } from '../lib/coverTheme.js';
 import { PauseIcon, PlayIcon } from './sharedUI.jsx';
+import { PlayingBars } from './home/common.jsx';
 import { formatTotalMs } from '../lib/mediaUtils.js';
 import { api, fmtMs } from '../lib/format.js';
 import { coverLayers } from '../lib/coverUrl.js';
@@ -128,9 +129,10 @@ function PillBtn({ onClick, on = false, children }) {
   );
 }
 
-function SectionHead({ title, sub, action, onAction }) {
+/* `first`: straight under the action bar, which already leaves room. */
+function SectionHead({ title, sub, action, onAction, first = false }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '34px 0 15px' }}>
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: `${first ? 10 : 34}px 0 15px` }}>
       <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.015em', color: 'var(--st-text)' }}>{title}</span>
       {sub ? <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(var(--st-sub-rgb), 0.42)' }}>{sub}</span> : null}
       {action ? (
@@ -369,7 +371,8 @@ function PopularRow({ n, t, rel = null, info = null, owned, canPlay = owned, pla
         color: playing ? `rgb(${accent})` : `rgba(var(--st-sub-rgb), ${hot ? 0.85 : 0.4})`,
         display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
       }}>
-        {hot && canPlay ? (playing && isPlaying ? <PauseIcon size={12} /> : <PlayIcon size={12} />) : n}
+        {hot && canPlay ? (playing && isPlaying ? <PauseIcon size={12} /> : <PlayIcon size={12} />)
+          : playing ? <PlayingBars acc={accent} playing={isPlaying} /> : n}
       </span>
       <span className="c-art" style={{
         width: 44, height: 44, borderRadius: 6, flexShrink: 0,
@@ -768,7 +771,7 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
                 onClick={() => bridge.playRows(rows, i, { context })}
                 onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}>
                 <span className="n">
-                  {on && bridge.isPlaying ? <span className="apx-eq"><i /><i /><i /></span> : <span className="num">{i + 1}</span>}
+                  {on ? <PlayingBars color="rgb(var(--apx-acc))" playing={bridge.isPlaying} /> : <span className="num">{i + 1}</span>}
                   <span className="pl"><PlayIcon size={11} /></span>
                 </span>
                 <span className="tt">
@@ -844,7 +847,7 @@ const RELEASE_INLINE_CSS = `
 .apx-trk:hover { background: rgba(var(--st-fg-rgb), 0.06); }
 .apx-trk .n { position: relative; display: flex; align-items: center; font-size: 12px; font-variant-numeric: tabular-nums; color: rgba(var(--st-sub-rgb), 0.45); }
 .apx-trk .n .pl { display: none; color: var(--st-text); }
-.apx-trk:hover .n .num, .apx-trk:hover .n .apx-eq { display: none; }
+.apx-trk:hover .n .num, .apx-trk:hover .n .st-ind { display: none; }
 .apx-trk:hover .n .pl { display: flex; }
 .apx-trk .tt { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .apx-trk .t { font-size: 13.5px; font-weight: 600; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
@@ -862,10 +865,6 @@ const RELEASE_INLINE_CSS = `
 .apx-trk.is-locked .n, .apx-trk.is-locked .tt, .apx-trk.is-locked .d { opacity: 0.45; }
 .apx-trk .sv.is-soon { opacity: 1; border-color: transparent; cursor: default; color: rgba(var(--st-fg-rgb), 0.4); }
 .apx-trk .sv.is-saved { border-color: transparent; background: transparent; color: rgb(123,224,176); cursor: default; }
-.apx-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; color: rgb(var(--apx-acc)); }
-.apx-eq i { width: 2.5px; border-radius: 1px; background: currentColor; animation: apxEq 0.9s ease-in-out infinite; }
-.apx-eq i:nth-child(2) { animation-delay: -0.3s; } .apx-eq i:nth-child(3) { animation-delay: -0.6s; }
-@keyframes apxEq { 0%, 100% { height: 3px; } 50% { height: 12px; } }
 .apx-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.6px solid rgba(var(--st-fg-rgb), 0.2); border-top-color: var(--st-text); animation: apxSpin 0.7s linear infinite; }
 @keyframes apxSpin { to { transform: rotate(360deg); } }
 .apx-rel-sk { height: 30px; margin: 5px 0; border-radius: 8px; background: linear-gradient(90deg, rgba(var(--st-fg-rgb),0.04), rgba(var(--st-fg-rgb),0.09), rgba(var(--st-fg-rgb),0.04));
@@ -875,7 +874,7 @@ const RELEASE_INLINE_CSS = `
 .apx-rel-x { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 8px; border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center; background: transparent; color: rgba(var(--st-fg-rgb), 0.5); }
 .apx-rel-x:hover { background: rgba(var(--st-fg-rgb), 0.1); color: var(--st-text); }
-@media (prefers-reduced-motion: reduce) { .apx-rel, .apx-eq i, .apx-rel-sk { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .apx-rel, .apx-rel-sk { animation: none; } }
 `;
 
 /* ========================================================================= */
@@ -1790,11 +1789,11 @@ export default function ArtistPage({
             position: 'sticky', top: 0, zIndex: 4,
             display: 'flex', alignItems: 'center', gap: stuck ? 8 : 20, padding: stuck ? '0 30px 0 14px' : '0 30px',
             /* Exact heights, padding included: the compact bar is 56px, the
-               full one 100px, and the margin keeps the 44px between them so
+               full one 88px, and the margin keeps the 32px between them so
                the page below stays exactly where it was. Any mismatch here
                and the browser nudges the scroll back when the bar sticks,
                which then un-sticks it: the stutter. */
-            boxSizing: 'border-box', height: stuck ? 56 : 100, marginBottom: stuck ? 44 : 0,
+            boxSizing: 'border-box', height: stuck ? 56 : 88, marginBottom: stuck ? 32 : 0,
             background: stuck ? `rgb(${deep})` : 'transparent',
             boxShadow: stuck ? 'inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.07)' : 'none',
             transition: 'background 0.2s ease, box-shadow 0.2s ease',
@@ -1868,7 +1867,7 @@ export default function ArtistPage({
 
             {spConnected && sp.status === 'loading' ? (
               <>
-                <SectionHead title="Popular" />
+                <SectionHead title="Popular" first />
                 <div aria-hidden className="app-pop">
                   {[0, 1, 2, 3, 4].map((i) => (
                     <div key={i} className="app-pop-row">
@@ -1906,7 +1905,7 @@ export default function ArtistPage({
             {popular.length ? (
               <>
                 <SectionHead
-                  title="Popular"
+                  title="Popular" first
                   sub={!hasPlays ? 'play counts unavailable right now' : undefined}
                 />
                 <div className={`app-pop${hasPlays ? '' : ' no-plays'}`}>
@@ -1915,11 +1914,12 @@ export default function ArtistPage({
                     <PopularRow
                       key={t.spotifyId || i} n={i + 1} t={t} rel={relById.get(t.albumId) || null} info={trackInfo[t.spotifyId] || null} owned={!!lib}
                       canPlay={!!lib || (!!spotifyBridge && !!t.spotifyId)}
-                      playing={lib ? currentId === lib.id : !!spotifyBridge?.isCurrent?.(t)} isPlaying={isPlaying}
+                      playing={(!!lib && currentId === lib.id) || !!spotifyBridge?.isCurrent?.(t)} isPlaying={isPlaying}
                       accent={pageAccUI}
                       dl={dlState?.[`s:${t.spotifyId}`]} progress={dlProgress?.[`s:${t.spotifyId}`]}
                       onPlay={() => {
-                        const here = lib ? currentId === lib.id : !!spotifyBridge?.isCurrent?.(t);
+                        // Your copy or the stream of it: either way it's this row.
+                        const here = (!!lib && currentId === lib.id) || !!spotifyBridge?.isCurrent?.(t);
                         if (here && onTogglePlay) onTogglePlay();
                         /* The whole list, saved or not: your copies play from the
                            library, the rest stream from Spotify. */

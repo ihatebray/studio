@@ -579,13 +579,6 @@ export const HOME_CSS = `
            never triggers layout: this can be on screen while a 500-row list is
            being scrolled. transform-origin is centre so it grows both ways and
            stays optically centred in the column. */
-        .sth-eq { display: inline-flex; align-items: center; gap: 2.5px; height: 14px; flex-shrink: 0; vertical-align: middle; }
-        .sth-eq i { display: block; width: 2.5px; height: 11px; border-radius: 2px; background: currentColor; box-shadow: 0 0 6px currentColor; transform-origin: center; animation: sthEq 0.9s ease infinite; will-change: transform; }
-        .sth-eq i:nth-child(1) { animation-delay: 0s; }
-        .sth-eq i:nth-child(2) { animation-delay: 0.18s; }
-        .sth-eq i:nth-child(3) { animation-delay: 0.36s; }
-        .sth-eq.is-paused i { animation: none; transform: scaleY(0.36); }
-        @keyframes sthEq { 0%, 100% { transform: scaleY(0.36); } 50% { transform: scaleY(1); } }
         .sth-libact { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 8px; border: none; cursor: pointer; background: transparent; color: rgba(var(--st-sub-rgb), 0.62); font-size: 12.5px; font-weight: 600; font-family: inherit; transition: color 0.15s ease, background 0.15s ease; }
         .sth-libact:hover { color: var(--st-text); background: rgba(var(--st-fg-rgb), 0.07); }
         /* Play all is the primary action; Shuffle is an alternative to it.
@@ -811,9 +804,9 @@ export const HOME_CSS = `
            vertically. */
         .sth-lrow-play { position: absolute; left: -6px; top: 0; bottom: 0; margin: auto 0; width: 26px; height: 26px; border-radius: 50%; border: none; background: transparent; color: #fff; cursor: pointer; display: none; align-items: center; justify-content: center; }
         /* Hover hides whatever occupies the index slot — number OR equaliser —
-           so the play button can take its place. Without the .sth-eq rule the
+           so the play button can take its place. Without the .st-ind rule the
            bars stayed put and the button appeared on top of them. */
-        .sth-lrow:hover .sth-lrow-num, .sth-lrow:hover .sth-eq { opacity: 0; }
+        .sth-lrow:hover .sth-lrow-num, .sth-lrow:hover .st-ind { opacity: 0; }
         .sth-lrow:hover .sth-lrow-play { display: flex; }
         .sth-lrow-more { width: 28px; height: 28px; border-radius: 7px; border: none; background: transparent; color: rgba(var(--st-fg-rgb), 0.4); cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.14s ease, color 0.14s ease; }
         .sth-lrow:hover .sth-lrow-more { opacity: 1; }
@@ -932,6 +925,19 @@ export const HOME_CSS = `
         .sth-npbar-title.is-link { display: block; max-width: 100%; padding: 0; margin: 0; border: 0; background: none; font-family: inherit; line-height: inherit; text-align: left; cursor: pointer; }
         .sth-npbar-title.is-link:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
         .sth-npbar-title.is-link:disabled { cursor: progress; opacity: 0.6; }
+        /* The scrolling title (Marquee in NowPlaying.jsx). At rest a long
+           title ends in a fade on the right; while it moves the left edge
+           fades too. Two masks, intersected: the right one stays put, the
+           left one is wider than the box and slides in, so that fade comes
+           and goes smoothly. */
+        .st-marquee { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+        .st-marquee-track { display: inline-block; white-space: nowrap; will-change: transform; }
+        .st-marquee.is-long { text-overflow: clip;
+          -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent), linear-gradient(to right, transparent, #000 14px);
+          -webkit-mask-composite: source-in; -webkit-mask-repeat: no-repeat;
+          -webkit-mask-size: 100% 100%, calc(100% + 14px) 100%;
+          -webkit-mask-position: 0 0, -14px 0; transition: -webkit-mask-position 0.35s ease; }
+        .st-marquee.is-long.is-moving { -webkit-mask-position: 0 0, 0 0; }
         /* ---- Fullscreen Now Playing (NowPlayingFullView) ---- */
         .sth-full { position: absolute; inset: 10px; z-index: 42; border-radius: var(--r-card); overflow: hidden; background: #0a0a0b; border: 1px solid var(--border); display: flex; flex-direction: column; animation: sthFullIn 0.28s cubic-bezier(0.22,1,0.36,1) both; }
         @keyframes sthFullIn { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
@@ -977,6 +983,14 @@ export const HOME_CSS = `
         .sth-root.is-compact .sth-libhead-tw { display: none; }
         .sth-root.is-compact .sth-libhead { gap: 0; padding-top: 0; }
         .sth-root.is-compact .sth-libhead.is-single { padding-top: 0; min-height: 34px; }
+        /* Full size: one bar. Title and count on the left, every control on
+           the right of the same row, the same on all five tabs (My Spotify's
+           .msp-lhead matches). A window too narrow for both drops the
+           controls to a second row rather than squeezing the title. */
+        .sth-root:not(.is-compact) .sth-libhead, .sth-root:not(.is-compact) .sth-libhead.is-single {
+          flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px 8px; padding: 0 0 14px; }
+        .sth-root:not(.is-compact) .sth-libhead-tw { flex: 1 1 260px; margin-right: 10px; }
+        .sth-root:not(.is-compact) .sth-libhead-r2 { flex: 0 0 auto; }
         /* Compact mode: the top bar slides down over the card on edge peek. */
         .sth-topbar.is-compact { transform: translateY(-100%); visibility: hidden; pointer-events: none; transition: transform 0.18s ease, visibility 0s linear 0.18s; }
         .sth-topbar.is-compact.is-peek { transform: none; visibility: visible; pointer-events: auto; box-shadow: 0 12px 36px rgba(0,0,0,0.45); transition: transform 0.22s cubic-bezier(0.22,1,0.36,1); }
@@ -1052,7 +1066,7 @@ export const HOME_CSS = `
         .sth-findfield input::placeholder { color: var(--text-faint); }
 
         /* ---- Library headers, album + artist grids ---- */
-        .sth-libhead-t { font-size: 32px; font-weight: 800; letter-spacing: -0.02em; }
+        .sth-libhead-t { font-size: 28px; font-weight: 750; letter-spacing: -0.018em; line-height: 1.15; }
         .sth-libhead-m { font-size: 13px; color: var(--text-faint); }
         /* No outlines. Borders on these read as boxes floating on the page's
            colour wash — the original borderless treatment is right, and only

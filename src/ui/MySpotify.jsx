@@ -33,7 +33,8 @@ import { ago, cx, fmtMs } from '../lib/format.js';
 import { hiResCover } from '../lib/coverUrl.js';
 import { pageWash, recordWashSource, sampleCoverTheme } from '../lib/coverTheme.js';
 import { BoundedMap } from '../lib/boundedMap.js';
-import { PlayIcon } from './sharedUI.jsx';
+import { ArtistLinks, PlayIcon } from './sharedUI.jsx';
+import { PlayingBars } from './home/common.jsx';
 
 /* ------------------------------------------------------------------ data */
 
@@ -179,9 +180,6 @@ const Icon = {
   people: (s = 14) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.6-3.4 3.3-5.5 6.5-5.5s5.9 2.1 6.5 5.5" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.7.8 2.8 2.5 3 5.2" /></svg>,
 };
 
-function Bars() {
-  return <span className="msp-bars" aria-label="Playing"><i /><i /><i /></span>;
-}
 
 /* ----------------------------------------------------------------- style */
 
@@ -209,11 +207,7 @@ const CSS = `
   opacity: 0; transform: translateY(6px) scale(0.92); transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22,1,0.36,1), background 0.14s ease; }
 .msp-tile:hover .msp-playfab, .msp-tile:focus-within .msp-playfab, .msp-playfab.is-on { opacity: 1; transform: none; }
 
-/* playing bars */
-.msp-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
-.msp-bars i { width: 3px; border-radius: 1px; background: var(--accent-line); animation: mspBar 0.9s ease-in-out infinite; }
-.msp-bars i:nth-child(2) { animation-delay: -0.3s; } .msp-bars i:nth-child(3) { animation-delay: -0.6s; }
-@keyframes mspBar { 0%, 100% { height: 3px; } 50% { height: 12px; } }
+
 
 /* countdowns: albums on the way from artists followed in Studio */
 .msp-cds { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 12px; }
@@ -345,8 +339,8 @@ const CSS = `
    baseline, soft-rectangle controls on the row under it */
 .msp-lhead { display: flex; flex-direction: column; gap: 16px; padding: 8px 0 16px; box-shadow: inset 0 -1px 0 rgba(var(--st-fg-rgb), 0.08); }
 .msp-lhead-tw { display: flex; align-items: baseline; gap: 12px; min-height: 32px; min-width: 0; }
-.msp-lhead-t { font-size: 25px; font-weight: 700; letter-spacing: -0.014em; color: var(--st-text, var(--text)); line-height: 1.2; white-space: nowrap; flex-shrink: 0; }
-.msp-lhead-m { font-size: 12px; font-weight: 500; color: rgba(var(--st-sub-rgb, var(--st-fg-rgb)), 0.42); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.msp-lhead-t { font-size: 28px; font-weight: 750; letter-spacing: -0.018em; color: var(--st-text, var(--text)); line-height: 1.15; white-space: nowrap; flex-shrink: 0; }
+.msp-lhead-m { font-size: 13px; font-weight: 500; color: rgba(var(--st-sub-rgb, var(--st-fg-rgb)), 0.42); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .msp-lhead-r2 { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .msp-grow { flex: 1; }
 /* Compact: the same as the library pages, where the title goes and the
@@ -355,6 +349,17 @@ const CSS = `
 .sth-root.is-compact .msp-scroll { padding-top: 14px; }
 .sth-root.is-compact .msp-lhead-tw { display: none; }
 .sth-root.is-compact .msp-lhead { gap: 0; padding-top: 0; }
+/* Full size: one bar, like the library pages (.sth-libhead): the same 28px
+   gutter and 18px above, title and caption left, controls right. Too narrow
+   for both and the controls drop to a second row. */
+.sth-root:not(.is-compact) .msp-scroll { padding: 18px 28px 48px; }
+.sth-root:not(.is-compact) .msp-lhead { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px 18px; padding: 0 0 14px; }
+.sth-root:not(.is-compact) .msp-lhead-tw { flex: 1 1 260px; }
+/* nowrap: the header wraps the whole group, never pieces of it. Electron's
+   Chromium sizes a wrapping row narrower than its contents, which sent
+   "Updated" / "Checked" to a line of its own under the buttons. */
+.sth-root:not(.is-compact) .msp-lhead-r2 { flex: 0 0 auto; flex-wrap: nowrap; }
+.sth-root:not(.is-compact) .msp-lhead-r2 .msp-grow { flex: 0 0 4px; }
 /* "Checked 2 hr ago" and its refresh button wrap as one, so a narrow window
    can't leave the button alone on a line under the time. */
 .msp-refresh { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; }
@@ -511,7 +516,7 @@ const CSS = `
 .msp-panel-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 18px; }
 .msp-panel .msp-row { grid-template-columns: 26px 40px minmax(0, 1fr) auto auto; }
 .msp-panel .msp-row.no-art { grid-template-columns: 26px minmax(0, 1fr) auto auto; }
-@media (prefers-reduced-motion: reduce) { .msp-panel, .msp-scrim, .msp-bars i, .msp-sk, .msp-rexp, .msp-fm { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .msp-panel, .msp-scrim, .msp-sk, .msp-rexp, .msp-fm { animation: none !important; } }
 `;
 
 /* ---------------------------------------------------------------- pieces */
@@ -533,6 +538,15 @@ function Art({ src: raw, round = false, children, style, className }) {
   );
 }
 
+/** A card's subtitle, its artists clickable when it's an album
+ *  ("Album · saoirse dream"). Anything else reads as it always has. */
+function SubLine({ item, onOpenArtist }) {
+  const sub = String(item?.sub || '');
+  const at = sub.indexOf(' · ');
+  if (item?.kind !== 'album' || at < 0 || !onOpenArtist) return sub;
+  return <>{sub.slice(0, at + 3)}<ArtistLinks names={sub.slice(at + 3)} ids={item.artistIds} onOpen={onOpenArtist} /></>;
+}
+
 function SaveButton({ state, onSave }) {
   if (state === 'saved') return <span className="msp-save is-saved" title="In your library">{Icon.check(13)}</span>;
   if (state === 'busy') return <span className="msp-save is-busy" title="Saving…"><svg className="st-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M21 12a9 9 0 1 1-6.2-8.56" /></svg></span>;
@@ -545,7 +559,7 @@ function SaveButton({ state, onSave }) {
 }
 
 /** One track row. `n` is a rank / position; `meta` the right-hand text. */
-function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context = null, focus = false }) {
+function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context = null, focus = false, onOpenArtist = bridge.onOpenArtist }) {
   const on = bridge.isCurrent(row);
   /* The song a link pointed at: marked, and scrolled to once it's drawn. */
   const ref = useRef(null);
@@ -563,7 +577,7 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
         {showArt ? <Art src={row.albumArtUrl} /> : null}
         <span style={{ minWidth: 0 }}>
           <span className="t" style={{ display: 'block' }}>{row.title}</span>
-          <span className="a" style={{ display: 'block' }}>{row.explicit ? <span className="e">E</span> : null}{row.artists}</span>
+          <span className="a" style={{ display: 'block' }}>{row.explicit ? <span className="e">E</span> : null}<ArtistLinks names={row.artists} ids={row.artistIds} onOpen={onOpenArtist} /></span>
         </span>
         <span className="m">{meta}</span>
         <span className="msp-soon" aria-label="Not out yet">
@@ -576,11 +590,11 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
     <div ref={ref} className={cx('msp-row', on && 'on', !showArt && 'no-art', focus && 'is-focus')} role="button" tabIndex={0}
       onClick={() => bridge.playRows(list, index, { context })}
       onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}>
-      <span className="n">{on && bridge.isPlaying ? <Bars /> : n}</span>
+      <span className="n">{on ? <PlayingBars playing={bridge.isPlaying} /> : n}</span>
       {showArt ? <Art src={row.albumArtUrl} /> : null}
       <span style={{ minWidth: 0 }}>
         <span className="t" style={{ display: 'block' }}>{row.title}</span>
-        <span className="a" style={{ display: 'block' }}>{row.explicit ? <span className="e">E</span> : null}{row.artists}</span>
+        <span className="a" style={{ display: 'block' }}>{row.explicit ? <span className="e">E</span> : null}<ArtistLinks names={row.artists} ids={row.artistIds} onOpen={onOpenArtist} /></span>
       </span>
       <span className="m">{meta}</span>
       <SaveButton state={bridge.saveState(row)} onSave={() => bridge.saveRow(row)} />
@@ -671,6 +685,7 @@ function CollectionPanel({ item, bridge, onClose }) {
   const outRows = (rows || []).filter((r) => !r.notOut);
   const notOut = (rows?.length || 0) - outRows.length;
   const unsaved = outRows.filter((r) => !bridge.saveState(r));
+  const openArtist = bridge.onOpenArtist ? (a) => { onClose(); bridge.onOpenArtist(a); } : null;
   return (
     <>
       <div className="msp-scrim" onClick={onClose} />
@@ -686,7 +701,7 @@ function CollectionPanel({ item, bridge, onClose }) {
             <span className="sub">
               {item.kind === 'liked'
                 ? `${item.sub || ''}${rows?.length && item.count > rows.length ? ` · newest ${rows.length} here` : ''}`
-                : `${item.sub || ''}${rows?.length ? ` · ${rows.length} songs${notOut ? ` · ${outRows.length} out` : ''} · ${Math.round(total / 60000)} min` : ''}`}
+                : <><SubLine item={item} onOpenArtist={openArtist} />{rows?.length ? ` · ${rows.length} songs${notOut ? ` · ${outRows.length} out` : ''} · ${Math.round(total / 60000)} min` : ''}</>}
             </span>
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <button type="button" className="st-btn st-btn-primary st-btn-sm" disabled={!outRows.length}
@@ -706,7 +721,7 @@ function CollectionPanel({ item, bridge, onClose }) {
           {!rows && !err ? Array.from({ length: 8 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 40, margin: '8px 6px' }} />) : null}
           {(rows || []).map((r, i) => (
             <TrackRow key={`${r.spotifyId}:${i}`} row={r} n={i + 1} list={rows} index={i} bridge={bridge}
-              showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item}
+              showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item} onOpenArtist={openArtist}
               focus={!!item.focusId && r.spotifyId === item.focusId} />
           ))}
           {rows && !rows.length ? <div className="st-meta" style={{ padding: 20, textAlign: 'center' }}>{item.empty || 'Nothing to play here.'}</div> : null}
@@ -1303,7 +1318,10 @@ export function SpotifyHome({ bridge }) {
                         {it.kind === 'liked' ? <LikedArt size={24} /> : it.kind === 'mix' ? <MixArt item={{ ...it, name: '' }} /> : <Art src={it.image} round={it.kind === 'artist'} />}
                         <span style={{ minWidth: 0 }}>
                           <span className="nm" style={{ display: 'block' }}>{it.name}</span>
-                          <span className="sb" style={{ display: 'block' }}>{it.playedAt ? `${it.kind === 'mix' ? 'Mix' : it.sub || ''}${it.sub || it.kind === 'mix' ? ' · ' : ''}${ago(it.playedAt)}` : it.sub}</span>
+                          <span className="sb" style={{ display: 'block' }}>
+                            {it.playedAt && it.kind === 'mix' ? 'Mix' : <SubLine item={it} onOpenArtist={bridge.onOpenArtist} />}
+                            {it.playedAt ? `${it.sub || it.kind === 'mix' ? ' · ' : ''}${ago(it.playedAt)}` : ''}
+                          </span>
                         </span>
                         <button type="button" className="go" aria-label={`Play ${it.name}`} style={{ border: 'none', cursor: 'pointer' }}
                           onClick={(e) => { e.stopPropagation(); playItem(it); }}>{Icon.play(15)}</button>
@@ -1354,7 +1372,7 @@ export function SpotifyHome({ bridge }) {
                           <span className="sb" style={{ display: 'block' }}>Artist</span>
                         </span>
                       </button>
-                    ) : <CoverTile key={`${it.kind}:${it.id}`} item={it} onOpen={openItem} onPlay={playItem} liked={it.kind === 'liked'} />))}
+                    ) : <CoverTile key={`${it.kind}:${it.id}`} item={it} onOpen={openItem} onPlay={playItem} liked={it.kind === 'liked'} onOpenArtist={bridge.onOpenArtist} />))}
                   </div>
                 </section>
               ))}
@@ -1375,7 +1393,7 @@ export function SpotifyHome({ bridge }) {
                 <section className="msp-sec">
                   <SectionHead title="Albums in Your Library" meta="Most recently played first" />
                   <div className="msp-grid is-clip" style={{ '--rows': 2 }}>
-                    {data.savedAlbums.map((a) => <CoverTile key={a.id} item={a} onOpen={openItem} onPlay={playItem} />)}
+                    {data.savedAlbums.map((a) => <CoverTile key={a.id} item={a} onOpen={openItem} onPlay={playItem} onOpenArtist={bridge.onOpenArtist} />)}
                   </div>
                 </section>
               ) : null}
@@ -1390,11 +1408,11 @@ export function SpotifyHome({ bridge }) {
                         onClick={() => bridge.playRows(data.allTime, i)} onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(data.allTime, i); }}>
                         <Art src={t.albumArtUrl}>
                           <span className="msp-rank">{i + 1}</span>
-                          <span className={cx('msp-playfab', bridge.isCurrent(t) && 'is-on')}>{bridge.isCurrent(t) && bridge.isPlaying ? <Bars /> : Icon.play(14)}</span>
+                          <span className={cx('msp-playfab', bridge.isCurrent(t) && 'is-on')}>{bridge.isCurrent(t) ? <PlayingBars color="#fff" playing={bridge.isPlaying} /> : Icon.play(14)}</span>
                         </Art>
                         <span style={{ minWidth: 0 }}>
                           <span className="nm" style={{ display: 'block' }}>{t.title}</span>
-                          <span className="sb" style={{ display: 'block' }}>{t.plays ? `${t.plays} plays · ` : ''}{t.artists}</span>
+                          <span className="sb" style={{ display: 'block' }}>{t.plays ? `${t.plays} plays · ` : ''}<ArtistLinks names={t.artists} ids={t.artistIds} onOpen={bridge.onOpenArtist} /></span>
                         </span>
                       </div>
                     ))}
@@ -1427,7 +1445,7 @@ function LikedArt({ size = 44, children }) {
   );
 }
 
-function CoverTile({ item, onOpen, onPlay, liked = false }) {
+function CoverTile({ item, onOpen, onPlay, liked = false, onOpenArtist }) {
   return (
     <div className="msp-tile" role="button" tabIndex={0} onClick={() => onOpen(item)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}>
       <Art src={item.image} style={liked ? { background: 'linear-gradient(135deg, rgb(var(--accent-rgb)), rgba(var(--accent-rgb),0.25))' } : null}>
@@ -1441,7 +1459,7 @@ function CoverTile({ item, onOpen, onPlay, liked = false }) {
       </Art>
       <span style={{ minWidth: 0 }}>
         <span className="nm" style={{ display: 'block' }}>{item.name}</span>
-        <span className="sb" style={{ display: 'block' }}>{item.sub}</span>
+        <span className="sb" style={{ display: 'block' }}><SubLine item={item} onOpenArtist={onOpenArtist} /></span>
       </span>
     </div>
   );
@@ -1520,7 +1538,7 @@ function ReleaseTracks({ release, bridge, context }) {
           <div key={`${r.spotifyId}:${i}`} className={cx('msp-trow', on && 'on')} role="button" tabIndex={0}
             onClick={() => bridge.playRows(rows, i, { context })}
             onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}>
-            <span className="n">{on && bridge.isPlaying ? <Bars /> : <><span className="num">{i + 1}</span><span className="pl">{Icon.play(11)}</span></>}</span>
+            <span className="n">{on ? <PlayingBars playing={bridge.isPlaying} /> : <><span className="num">{i + 1}</span><span className="pl">{Icon.play(11)}</span></>}</span>
             <span className="tt">
               <span className="t">{r.explicit ? <span className="e">E</span> : null}{r.title}</span>
               {r.artists && r.artists !== release.artists ? <span className="a">{r.artists}</span> : null}
@@ -1793,7 +1811,7 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
                     n += 1;
                     const it = asItem(r);
                     const isOpen = openId === r.albumId;
-                    const playing = bridge.isPlaying && (tracksCache.get(r.albumId) || []).some((x) => bridge.isCurrent(x));
+                    const current = (tracksCache.get(r.albumId) || []).some((x) => bridge.isCurrent(x));
                     const artists = String(r.artists || '').split(', ');
                     return (
                       <React.Fragment key={r.albumId}>
@@ -1801,7 +1819,7 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
                           onClick={() => setOpenId(isOpen ? null : r.albumId)}
                           onKeyDown={(e) => { if (e.key === 'Enter') setOpenId(isOpen ? null : r.albumId); }}>
                           <span className="msp-rn">
-                            <span className="num">{playing ? <Bars /> : n}</span>
+                            <span className="num">{current ? <PlayingBars playing={bridge.isPlaying} /> : n}</span>
                             <button type="button" className="pl" aria-label={`Play ${r.name}`} onClick={(e) => { e.stopPropagation(); play(r); }}>{Icon.play(13)}</button>
                           </span>
                           <span className="msp-rtitle">

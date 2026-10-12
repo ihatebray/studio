@@ -4,7 +4,7 @@ import { formatTime, getFileFormatLabel, parseGenres } from '../../lib/mediaUtil
 import PanelLyricsEditor from '../PanelLyricsEditor.jsx';
 import VolumeControl from '../VolumeControl.jsx';
 import { AnimatedGradientBg } from '../VisualEffects.jsx';
-import { PauseIcon, PlayIcon } from '../sharedUI.jsx';
+import { ArtistLinks, PauseIcon, PlayIcon } from '../sharedUI.jsx';
 import { PlainLyrics, SyncedLyrics } from '../Lyrics.jsx';
 import { NP_FULL_TABS, NP_PANEL_TABS, NP_PANEL_W } from './constants.js';
 import { PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
@@ -14,6 +14,9 @@ import { playContextFor } from '../../lib/playContext.js';
 import { spotifyIdOf } from '../../lib/spotifyMediaElement.js';
 import { usePlaybackTime } from '../../lib/playbackClock.js';
 import { BoundedMap } from '../../lib/boundedMap.js';
+
+/* The Spotify ids of a song's artists, when it was played from a Spotify page. */
+const artistIdsOf = (t) => playContextFor(spotifyIdOf(t))?.artistIds || null;
 
 export function NowPlayingFullView({
   track, art, accent, isPlaying = false, onSeek,
@@ -1013,11 +1016,66 @@ function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFai
   );
 }
 
+/* A title too long for its box scrolls: it rests for a moment, glides left
+   until a second copy has taken the first one's place, and rests again, so
+   the loop never jumps. A title that fits just sits there, and with reduced
+   motion on the long one keeps its ellipsis. The edges fade only while it's
+   moving, so the first letter is crisp at rest. */
+const MARQUEE_SPEED = 32;    // px per second
+const MARQUEE_REST = 2600;   // ms at the start of each pass
+const MARQUEE_GAP = 40;      // px between the end and the next copy
+
+function Marquee({ text }) {
+  const boxRef = useRef(null);
+  const textRef = useRef(null);
+  const trackRef = useRef(null);
+  const [overflow, setOverflow] = useState(false);
+
+  useEffect(() => {
+    const box = boxRef.current; const span = textRef.current;
+    if (!box || !span) return undefined;
+    const measure = () => setOverflow(span.offsetWidth > box.clientWidth + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [text]);
+
+  useEffect(() => {
+    const box = boxRef.current; const track = trackRef.current; const span = textRef.current;
+    if (!overflow || !box || !track || !span) return undefined;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return undefined;
+    let timer = null; let anim = null; let live = true;
+    const pass = () => {
+      if (!live) return;
+      const dist = span.offsetWidth + MARQUEE_GAP;
+      box.classList.add('is-moving');
+      anim = track.animate([{ transform: 'translateX(0)' }, { transform: `translateX(${-dist}px)` }],
+        { duration: (dist / MARQUEE_SPEED) * 1000, easing: 'linear' });
+      anim.onfinish = () => {
+        box.classList.remove('is-moving');
+        timer = setTimeout(pass, MARQUEE_REST);
+      };
+    };
+    timer = setTimeout(pass, MARQUEE_REST);
+    return () => { live = false; clearTimeout(timer); anim?.cancel(); box.classList.remove('is-moving'); };
+  }, [overflow, text]);
+
+  return (
+    <span ref={boxRef} className={`st-marquee${overflow ? ' is-long' : ''}`}>
+      <span ref={trackRef} className="st-marquee-track">
+        <span ref={textRef} style={{ display: 'inline-block' }}>{text}</span>
+        {overflow ? <span aria-hidden style={{ display: 'inline-block', paddingLeft: MARQUEE_GAP }}>{text}</span> : null}
+      </span>
+    </span>
+  );
+}
+
 export function NowPlayingBar(props) {
   return props.track ? <NowPlayingBarBody {...props} /> : null;
 }
 
-function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, onOpenArtist, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
   const currentTime = usePlaybackTime();
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
@@ -1105,11 +1163,11 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
             {onCopyLink ? (
               <button type="button" className="sth-npbar-title is-link" onClick={() => onCopyLink(track)} disabled={copyBusy}
                 title={copyBusy ? 'Looking up on Spotify…' : `${track.title} · click to copy Spotify link`}
-                aria-label={`Copy Spotify link for ${track.title}`}>{track.title}</button>
+                aria-label={`Copy Spotify link for ${track.title}`}><Marquee text={track.title} /></button>
             ) : (
-              <div className="sth-npbar-title" title={track.title}>{track.title}</div>
+              <div className="sth-npbar-title" title={track.title}><Marquee text={track.title} /></div>
             )}
-            <div className="sth-npbar-artist" title={track.artist}>{track.artist}</div>
+            <div className="sth-npbar-artist" title={track.artist}><ArtistLinks names={track.artist} ids={artistIdsOf(track)} onOpen={onOpenArtist} /></div>
           </div>
           {/* Beside the title rather than in the right-hand cluster, which
               they crowded at full size: the heart and add-to-playlist are

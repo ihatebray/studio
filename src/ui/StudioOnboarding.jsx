@@ -170,13 +170,13 @@ export function StudioMotionStyles() {
 }
 
 /** A big rounded colour tile with a glyph in it — the friendly bit. */
-function IconTile({ from, to, delay = 0, children, size = 52, glow = null }) {
+function IconTile({ from, to, delay = 0, children, size = 52, glow = null, ink = '#16121a' }) {
   return (
     <div style={{
       width: size, height: size, borderRadius: size > 42 ? 13 : 11, flexShrink: 0,
       background: to ? `linear-gradient(135deg, ${from}, ${to})` : from,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      color: '#16121a',
+      color: ink,
       boxShadow: glow ? `0 8px 24px ${glow}55, inset 0 1px 0 rgba(255,255,255,0.45)` : 'none',
       animation: `stPop 0.6s cubic-bezier(0.34, 1.56, 0.5, 1) ${delay}s both`,
     }}>
@@ -723,6 +723,102 @@ function PlaylistImportPanel({ onCreatePlaylist, onAddTracksToPlaylist, onImport
 }
 
 /* =========================================================================
+ *  Discord (onboarding)
+ * ========================================================================= */
+
+/**
+ * Discord Rich Presence: the song you're playing on your Discord profile.
+ * Studio has no Application ID of its own, so this is where you make one.
+ * The settings are App's (the same ones as Settings → System → Discord),
+ * passed in as `discord`, so whatever is set here is what Settings shows.
+ */
+const DISCORD_ID = /^\d{17,20}$/;
+function DiscordPanel({ discord }) {
+  const [appId, setAppId] = useState(discord.appId || '');
+  const [imgbb, setImgbb] = useState(discord.imgbbKey || '');
+  const [status, setStatus] = useState(null);
+  const on = !!discord.enabled && DISCORD_ID.test(String(discord.appId || '').trim());
+  const idOk = DISCORD_ID.test(appId.trim());
+
+  /* While it's on, ask how the connection is doing, so the step can say
+     "Connected" the moment Discord picks it up. */
+  useEffect(() => {
+    if (!on || !api()?.discordStatus) { setStatus(null); return undefined; }
+    let alive = true;
+    const poll = () => api().discordStatus().then((st) => { if (alive) setStatus(st || null); }).catch(() => {});
+    poll();
+    const t = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(t); };
+  }, [on, discord.appId]);
+
+  const turnOn = () => {
+    if (!idOk) return;
+    discord.onSetAppId?.(appId.trim());
+    discord.onSetEnabled?.(true);
+  };
+  const saveImgbb = () => discord.onSetImgbbKey?.(imgbb.trim());
+
+  return (
+    <div>
+      <HowTo open={false} label="How do I get an Application ID?" hint="3 steps, about a minute">
+        <Steps>
+          <li>Open the <ExtLink href="https://discord.com/developers/applications">Discord Developer Portal</ExtLink> and sign in with your Discord account.</li>
+          <li>Click <Lit>New Application</Lit> and name it <Lit>Studio</Lit>. Your profile shows it as “Listening to Studio”.</li>
+          <li>On <Lit>General Information</Lit>, copy the <Lit>Application ID</Lit> and paste it below.</li>
+        </Steps>
+        <div style={{ marginTop: 10, fontSize: 11.5, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6 }}>
+          Keep the Discord desktop app open while you listen. If nothing shows, check that activity sharing is on in Discord under User Settings → Activity Privacy.
+        </div>
+      </HowTo>
+
+      <div className="st-fields">
+        <label className="st-field">
+          <span className="st-field-lbl">Application ID</span>
+          <input className="st-input" placeholder="e.g. 1123581321345589144" value={appId} inputMode="numeric"
+            onChange={(e) => setAppId(e.target.value.replace(/\s+/g, ''))} spellCheck={false} />
+        </label>
+      </div>
+      {appId.trim() && !idOk ? (
+        <div role="status" style={{ marginTop: 10, fontSize: 12, color: 'var(--danger, #FF8B8B)' }}>That doesn’t look like an Application ID. It’s a long number, 17 to 20 digits.</div>
+      ) : on ? (
+        <div role="status" style={{ marginTop: 10, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, color: status?.connected ? 'var(--success, #7BE0B0)' : 'rgba(255,255,255,0.6)' }}>
+          {status?.connected ? <><CheckGlyph /> Connected. Your profile shows what Studio is playing.</>
+            : status?.lastError ? <span style={{ color: 'var(--danger, #FF8B8B)' }}>{String(status.lastError)}</span>
+              : <><Spinner /> On. Waiting for the Discord desktop app…</>}
+        </div>
+      ) : null}
+      <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button type="button" className="st-btn st-btn-primary" disabled={!idOk || (on && appId.trim() === discord.appId)} onClick={turnOn}>
+          {on && appId.trim() === discord.appId ? 'Turned On' : on ? 'Save ID' : 'Turn On'}
+        </button>
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        <HowTo open={false} label="Show your own cover art too (optional)" hint="3 steps">
+          <Steps>
+            <li>Songs with your own covers need an image host, since Discord can only show pictures from the web. Open <ExtLink href="https://api.imgbb.com">api.imgbb.com</ExtLink> and sign in. It’s free.</li>
+            <li>Click <Lit>Get API key</Lit> and copy the key.</li>
+            <li>Paste it below. Studio uploads each cover once, the first time Discord needs it.</li>
+          </Steps>
+          <div className="st-fields" style={{ marginTop: 12 }}>
+            <label className="st-field">
+              <span className="st-field-lbl">imgbb API key</span>
+              <input className="st-input" placeholder="From api.imgbb.com" value={imgbb} onChange={(e) => setImgbb(e.target.value)} spellCheck={false} />
+            </label>
+          </div>
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button type="button" className="st-btn st-btn-outline" disabled={!imgbb.trim() || imgbb.trim() === (discord.imgbbKey || '')} onClick={saveImgbb}>Save Key</button>
+            {discord.imgbbKey && imgbb.trim() === discord.imgbbKey ? (
+              <span style={{ fontSize: 12, color: 'var(--success, #7BE0B0)', display: 'inline-flex', alignItems: 'center', gap: 6 }}><CheckGlyph /> Saved.</span>
+            ) : null}
+          </div>
+        </HowTo>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================================
  *  The onboarding flow itself
  * ========================================================================= */
 
@@ -734,8 +830,9 @@ const SETUP_STEPS = [
   { id: 'playlists', label: 'Playlists' },
   { id: 'keys', label: 'Backup search' },
   { id: 'soulseek', label: 'Soulseek' },
+  { id: 'discord', label: 'Discord' },
 ];
-const STEPS = ['welcome', 'account', 'playlists', 'keys', 'soulseek', 'ready'];
+const STEPS = ['welcome', 'account', 'playlists', 'keys', 'soulseek', 'discord', 'ready'];
 
 /* One colour per letter of "studio": white → peach → pink. Plain `color`, so
    it survives the per-letter blur/scale animation. */
@@ -748,9 +845,11 @@ const HUES = {
   mint: ['#a8f0dc', '#4fd1ae'],
   pink: ['#ffc4d8', '#ff86b4'],
   green: ['#8ff0b5', '#1ed760'],
+  /* Discord's own: solid blurple, white mark (the third value is the ink). */
+  discord: ['#5865F2', '#5865F2', '#ffffff'],
 };
 
-export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCreatePlaylist, onAddTracksToPlaylist, onImported }) {
+export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCreatePlaylist, onAddTracksToPlaylist, onImported, discord = null }) {
   const [step, setStep] = useState('welcome');
   const [dir, setDir] = useState('fwd');
   const [leaving, setLeaving] = useState(null);
@@ -792,7 +891,9 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
       ? 'stInFwd 0.46s cubic-bezier(0.34, 1.4, 0.5, 1) both'
       : 'stInBack 0.46s cubic-bezier(0.34, 1.4, 0.5, 1) both');
 
-  const stepN = SETUP_STEPS.findIndex((x) => x.id === step);
+  /* Discord is only a step when the host passed its settings in. */
+  const setupSteps = discord ? SETUP_STEPS : SETUP_STEPS.filter((x) => x.id !== 'discord');
+  const stepN = setupSteps.findIndex((x) => x.id === step);
 
   return (
     <div className="st-onb" style={{
@@ -884,7 +985,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
 
         {step === 'account' ? (
           <StepCard
-            progress={{ i: stepN, n: SETUP_STEPS.length, label: 'Spotify' }}
+            progress={{ i: stepN, n: setupSteps.length, label: 'Spotify' }}
             title="Sign in to Spotify"
             subtitle="This is what plays Spotify songs in Studio and fills My Spotify, artist pages and search. Songs play with Premium; everything else works on any account."
             onBack={back}
@@ -898,7 +999,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
 
         {step === 'playlists' ? (
           <StepCard
-            progress={{ i: stepN, n: SETUP_STEPS.length, label: 'Playlists' }}
+            progress={{ i: stepN, n: setupSteps.length, label: 'Playlists' }}
             title="Bring your playlists"
             subtitle="Pick any of your Spotify playlists and Studio makes them here too, with the same name, cover and songs. The songs play through your Spotify account; nothing is downloaded."
             onBack={back}
@@ -913,7 +1014,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
 
         {step === 'keys' ? (
           <StepCard
-            progress={{ i: stepN, n: SETUP_STEPS.length, label: 'Backup search' }}
+            progress={{ i: stepN, n: setupSteps.length, label: 'Backup search' }}
             title="Add backup search keys"
             subtitle="Optional. A free Spotify developer app gives Studio a second way to search and fill in song details when your sign-in is busy or rate-limited. About a minute."
             onBack={back}
@@ -927,7 +1028,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
 
         {step === 'soulseek' ? (
           <StepCard
-            progress={{ i: stepN, n: SETUP_STEPS.length, label: 'Soulseek' }}
+            progress={{ i: stepN, n: setupSteps.length, label: 'Soulseek' }}
             title="Add a second source"
             subtitle="Soulseek finds the rare stuff, usually in better quality. Totally optional; skip it and nothing breaks."
             onBack={back}
@@ -935,6 +1036,20 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
             icon={<><path d="M12 3v12" /><path d="M8 11l4 4 4-4" /><path d="M4 19h16" /></>}
           >
             <SoulseekCredsPanel />
+            <SkipRow onSkip={() => go(discord ? 'discord' : 'ready')} label="Continue" primary />
+          </StepCard>
+        ) : null}
+
+        {step === 'discord' ? (
+          <StepCard
+            progress={{ i: stepN, n: setupSteps.length, label: 'Discord' }}
+            title="Show it on Discord"
+            subtitle="Optional. Your Discord profile shows the song you’re playing, with its cover, for friends to see. You need the Discord desktop app and a free Application ID. About a minute."
+            onBack={back}
+            hue={HUES.discord}
+            icon={<path fill="currentColor" stroke="none" d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.1.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />}
+          >
+            <DiscordPanel discord={discord} />
             <SkipRow onSkip={() => go('ready')} label="Continue" primary />
           </StepCard>
         ) : null}
@@ -963,7 +1078,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
                 [HUES.peach, <><strong>/</strong> opens search from anywhere.</>],
                 [HUES.violet, <><strong>My Spotify → Home</strong> fills in as you listen, with new mixes every day.</>],
                 [HUES.pink, <><strong>Follow</strong> an artist from their page, and their releases show in New Releases.</>],
-                [HUES.mint, <>Anything you skipped is in <strong>Settings → Connections</strong>.</>],
+                [HUES.mint, <>Anything you skipped is in <strong>Settings → Connections</strong>, and Discord in <strong>Settings → System</strong>.</>],
               ].map(([hue, text], i) => (
                 <div key={i} className="st-onb-tip"><i style={{ background: `linear-gradient(135deg, ${hue[0]}, ${hue[1]})` }} /><span>{text}</span></div>
               ))}
@@ -1029,7 +1144,7 @@ function StepCard({ title, subtitle, children, onBack, icon, hue = HUES.peach, p
       <div className="st-onb-stepcard" style={{ '--c1': hue[0], '--c2': hue[1] }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
           {icon ? (
-            <IconTile from={hue[0]} to={hue[1]} delay={0.06} size={44} glow={hue[1]}>
+            <IconTile from={hue[0]} to={hue[1]} delay={0.06} size={44} glow={hue[1]} ink={hue[2]}>
               <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 {icon}
               </svg>
