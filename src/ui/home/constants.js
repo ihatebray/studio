@@ -85,7 +85,7 @@ export const THEME_DEFAULTS = {
   accent: null,             // unused; the accent is white — see `const accent`
   detailMode: 'cover',      // 'cover' | 'fixed' — album/playlist page wash
   detailColor: '70, 84, 190',
-  recordLayout: 'classic',  // album page layout; see RECORD_LAYOUTS in RecordPage.jsx
+  recordLayout: 'colour',   // album page layout; see RECORD_LAYOUTS in RecordPage.jsx
   playlistLayout: null,     // playlist page layout; null = the same as albums
   showHome: true,
   autoFollow: true,         // follow (in Studio) artists with more than 5 songs in the library           // My Spotify → Home in the sidebar; off moves countdowns to New Releases
@@ -108,16 +108,31 @@ export const THEME_DEFAULTS = {
      picker was removed rather than given a better default. Fixed at 'auto';
      the theme loader coerces older saved values. */
   coverColour: 'auto',
-  /* How saturated cover-derived surfaces are allowed to get. Displays with a
-     vibrancy boost push everything toward fully clipped colour, so this is a
-     setting rather than a constant — see setColourIntensity(). */
-  colourIntensity: 'balanced',  // 'off' | 'muted' | 'balanced' | 'vivid' | 'full'
+  /* Dark mode: one ready-made dark look for every surface, so nobody has to
+     build one by picking near-blacks for each. While it's on, the surface
+     settings below are kept but not used (see viewTheme). */
+  darkMode: false,
   pageSurface: 'cover',     // 'off' | 'colour' | 'cover' | 'coverFull'
-  pageColour: '14, 13, 18',
+  pageColour: '32, 36, 47',  // the Now Playing bar's own default, so Color shows at once
   panelSurface: 'cover',    // 'black' | 'colour' | 'cover' | 'bar'
-  panelColour: '14, 13, 18',
+  panelColour: '32, 36, 47',
   barSurface: 'colour',     // 'colour' | 'cover'
 };
+
+/* Dark mode's surfaces. `page` is the app's own card colour (accentTokens
+   SURFACE.surface), so album and artist pages sit flush with Songs and
+   Settings, and the Now Playing bar is the same: the three cards read as one
+   set, told apart by their hairline borders, not by shade. `raised` is only
+   for parts inside a page that need to stand apart, like Sticky column's
+   panel. */
+export const DARK = { page: '10, 10, 11', raised: '21, 21, 24', bar: '#0A0A0B' };
+
+/** The theme pages paint with. Dark mode stands in for the surface
+ *  settings; Settings itself always gets the real theme so your own
+ *  choices are still there when you turn it off. */
+export function viewTheme(t) {
+  return t && t.darkMode ? { ...t, pageSurface: 'off', panelSurface: 'black', barSurface: 'colour', detailMode: 'dark' } : t;
+}
 
 export const TOPBAR_H = 62;
 

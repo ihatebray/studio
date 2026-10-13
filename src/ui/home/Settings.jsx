@@ -173,10 +173,8 @@ export function StudioColorPicker({ value, onChange, onReset, title, size = 24 }
           style={{
             position: 'fixed', top: pos.top, left: pos.left, width: 232, zIndex: 200,
             borderRadius: 14, padding: 12,
-            /* Black, like the rest of Studio's surfaces. The near-black grey it
-               had was a hair lighter than the panels around it, which is the
-               kind of difference that reads as a mistake rather than a choice. */
-            background: '#000',
+            /* The app's card colour, like every other floating layer. */
+            background: 'var(--surface)',
             boxShadow: 'inset 0 0 0 1px rgba(var(--st-fg-rgb), 0.14), 0 24px 60px rgba(0,0,0,0.7)',
             transformOrigin: 'top center',
             animation: 'sthPopIn 0.15s cubic-bezier(0.22,1,0.3,1) both',

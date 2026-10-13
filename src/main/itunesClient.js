@@ -814,6 +814,19 @@ function scoreSearchRelevance(cand, queryTokens) {
  * @param {string} q
  * @returns {Promise<Array>}
  */
+/**
+ * One small song search, for a cover (the Discord lookup). A single request
+ * against the shared budget, where a full track search spends seven or more
+ * (variants, artist, discography). Throws when iTunes can't be reached or
+ * keeps refusing, so the caller can tell "busy" from "no such song".
+ */
+export async function itunesSongsForCover(term) {
+  const q = String(term || '').trim();
+  if (!q) return [];
+  const rows = await itunesGet({ term: q, entity: 'song', media: 'music', limit: 25 });
+  return rows.filter((r) => r.wrapperType === 'track' && r.trackName).map(mapTrack);
+}
+
 export async function itunesSearchTracks(q) {
   const query = String(q || '').trim();
   if (!query) return [];

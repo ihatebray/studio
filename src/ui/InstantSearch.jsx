@@ -289,6 +289,7 @@ export default function InstantSearch({
   onOpenAlbum,            // (album)   → push the full album page (optional)
   seed = '',              // preload the query when something else opens this
   nowPlaying = null,      // { id, isRow(spotifyRow), playing }: the song playing, to mark its row
+  onSongMenu,             // (event, { track } | { row }) → the song menu (right-click)
   onSpotifyLink,          // (text) → open a pasted Spotify link instead of searching for it
   onFilterLibrary,        // (queryString) → narrow the library table and go there
 }) {
@@ -1994,7 +1995,8 @@ export default function InstantSearch({
       const now = nowOf(s.libTrack, s.spotify);
       const over = now ? nowOver(now) : canPlay ? playOver : null;
       return (
-        <button {...common} onClick={(e) => { e.stopPropagation(); activate(item); }}>
+        <button {...common} onClick={(e) => { e.stopPropagation(); activate(item); }}
+          onContextMenu={onSongMenu && (s.libTrack || s.spotify) ? (e) => onSongMenu(e, s.libTrack ? { track: s.libTrack } : { row: s.spotify }) : undefined}>
           {art
             ? <div className={`isx-art${s.owned ? ' is-owned' : ''}`} style={{ backgroundImage: `url("${art}")` }}>{over}</div>
             : <div className="isx-glyph"><Svg d={Ico.note} size={17} w={1.8} />{over}</div>}
@@ -2082,6 +2084,7 @@ export default function InstantSearch({
       const isOpen = expandedTrack === tKey;
       return (
         <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}${track.notOut ? ' is-locked' : ''}`}
+          onContextMenu={onSongMenu && track.spotifyId ? (e) => onSongMenu(e, { row: { ...track, album: track.album || frame?.album?.name || '', albumId: track.albumId || frame?.album?.albumId, artists: track.artists || frame?.album?.artists || '' } }) : undefined}
           {...(track.notOut ? { onClick: undefined, 'aria-disabled': true, title: 'Not out yet' } : null)}>
           <span className={`isx-n${track.spotifyId && !track.notOut && onPlaySpotifyRows ? ' can-play' : ''}`}>
             {(() => {
@@ -2186,7 +2189,7 @@ export default function InstantSearch({
       const owned = alreadyOwned?.(t.title, t.artists, t.album || undefined);
       const key = `s:${t.spotifyId}`;
       return (
-        <button {...common}>
+        <button {...common} onContextMenu={onSongMenu && t.spotifyId ? (e) => onSongMenu(e, { row: t }) : undefined}>
           <div className="isx-art" style={{ backgroundImage: t.albumArtUrl ? `url("${t.albumArtUrl}")` : 'none' }}>
             {(() => { const now = nowOf(null, t); return now ? nowOver(now) : onPlaySpotifyRows ? playOver : null; })()}
           </div>

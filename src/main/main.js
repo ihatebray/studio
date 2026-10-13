@@ -37,12 +37,13 @@ if (require('electron-squirrel-startup')) {
 
 import path from 'path';
 import fs from 'fs';
-import { ensureLibraryOpen, loadAllTracks, loadAlbumCovers, setAlbumCover, loadArtistHeaders, setArtistHeader, clearArtistHeader, loadArtistImageCache, setArtistImageCache, loadCoverColours, setCoverColour, setAlbumCoversBulk, upsertTracks, removeTracksByIds, clearAllLibraryData, updateTrackMetadata, updateAlbumMetadata, loadAllPlaylists, loadPlaylistTrackIds, createPlaylist, updatePlaylist, deletePlaylist, renamePlaylist, removeTrackFromPlaylist, addTracksToPlaylist, removeTracksFromPlaylist, closeLibraryDb, isPlaybackPathAllowed, loadCachedLyrics, saveCachedLyrics, deleteCachedLyrics, setTrackFavorite, recordTrackPlay, loadPlayEvents, getStatsHealth, getLibraryOverview, clearAllStats, loadFollowedArtistOverrides, addFollowedArtist, excludeFollowedArtist, clearFollowedArtistOverride, setItunesArtistIdForArtist, loadCachedReleases, upsertArtistReleases } from './libraryDb.js';
+import { ensureLibraryOpen, loadAllTracks, loadAlbumCovers, setAlbumCover, loadArtistHeaders, setArtistHeader, clearArtistHeader, loadArtistImageCache, setArtistImageCache, loadCoverColours, setCoverColour, setAlbumCoversBulk, upsertTracks, removeTracksByIds, clearAllLibraryData, updateTrackMetadata, updateAlbumMetadata, loadAllPlaylists, loadPlaylistTrackIds, createPlaylist, updatePlaylist, deletePlaylist, renamePlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, addTracksToPlaylist, removeTracksFromPlaylist, closeLibraryDb, isPlaybackPathAllowed, loadCachedLyrics, saveCachedLyrics, deleteCachedLyrics, setTrackFavorite, recordTrackPlay, loadPlayEvents, getStatsHealth, getLibraryOverview, clearAllStats, loadFollowedArtistOverrides, addFollowedArtist, excludeFollowedArtist, clearFollowedArtistOverride, setItunesArtistIdForArtist, loadCachedReleases, upsertArtistReleases } from './libraryDb.js';
 import { analyzeSamples, themeFromAnalysis } from '../lib/coverTheme.js';
 import { analyseCover } from '../lib/coverColour.js';
 import { spotifyCredentialsConfigured, saveSpotifyCredentials, spotifySearchTracks, spotifySearchAlbums, spotifyGetAlbumTracks, spotifyGetTrack, spotifyGetArtist, getSpotifyAccessToken, buildAuthorizeUrl, generatePkcePair, generateOAuthState, exchangeAuthCode, loadUserToken, clearUserToken, hasUserToken, getValidUserToken, SPOTIFY_OAUTH_PORT, spotifyArtistByName, spotifySearchArtists, spotifyArtistTopTracks, spotifyArtistAlbums } from './spotifyClient.js';
 import {
   itunesSearchTracks,
+  itunesSongsForCover,
   itunesSearchAlbums,
   itunesSearchArtists,
   itunesGetAlbumTracks,
@@ -62,7 +63,7 @@ import {
 import http from 'http';
 import { downloadYoutubeAudioById, searchCandidatesForPicker } from './ytdlpImport.js';
 import { saveSoulseekCredentials, soulseekCredentialsConfigured, soulseekStatus, soulseekTestConnection, soulseekDisconnect, soulseekSearch, soulseekDownload, soulseekCancelDownload } from './soulseekClient.js';
-import { resolveCoverFilePath, mimeForCoverPath, storeCoverFromDataUri } from './coverArtStore.js';
+import { resolveCoverFilePath, colorFilePath, mimeForCoverPath, storeCoverFromDataUri } from './coverArtStore.js';
 import * as discordPresence from './discordPresence.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
@@ -377,7 +378,8 @@ async function handleStudioMediaRequest(request) {
 
 /** Serve cover-art images from the userData cover-cache folder. */
 function handleStudioCoverRequest(request) {
-  const filePath = resolveCoverFilePath(request.url);
+  // `?for=color`: the copy colors are read from (coverArtStore.colorFilePath).
+  const filePath = /[?&]for=color\b/.test(request.url) ? colorFilePath(request.url) : resolveCoverFilePath(request.url);
   if (!filePath) return new Response('Bad cover URL', { status: 400 });
   let stat;
   try {
@@ -391,7 +393,8 @@ function handleStudioCoverRequest(request) {
     status: 200,
     headers: {
       'Content-Type': mimeForCoverPath(filePath),
-      'Content-Length': String(stat.size),
+      // The bytes actually read: a cover upgraded in place can change size.
+      'Content-Length': String(buf.length),
       'Cache-Control': 'public, max-age=31536000, immutable',
       /* The scheme is registered corsEnabled, so Chromium runs a CORS check on
          it — and without this header the check FAILS. Displaying an <img> or a
@@ -457,6 +460,10 @@ function createWindow() {
       // On by default: loads dictionaries and checks every text field. A
       // music player's search box doesn't need it.
       spellcheck: false,
+      /* FaceDetector, which the Poster layout uses to keep a face in the part
+         of a cover it shows (coverFocus.js). It works where the system offers
+         face detection (Windows and macOS) and is simply absent elsewhere. */
+      enableBlinkFeatures: 'ShapeDetection',
     },
   });
 
@@ -1319,25 +1326,66 @@ ipcMain.handle('genius:credits', async (_event, params) => {
  * available — for example, tracks imported back when albumArtUrl wasn't
  * populated, or tracks where Spotify's search row didn't carry an image.
  *
- * Hits the Deezer API (free, no auth, generous rate limits). We search at
- * the SONG level (not album) because song rows carry artist + album +
- * title together, which lets us verify all three against the track
- * we're looking up. We only return a URL when artist, album, AND title
- * all match after normalization. Without that tight gate the API
- * happily returns "Greatest Hits", deluxe editions, karaoke versions,
- * or completely unrelated tracks with the same title, and that wrong
- * cover ends up on Discord. Better to show the fallback asset than the
- * wrong album.
+ * Spotify songs ask Spotify's public link preview first (one request, the
+ * right cover by definition). Everything else, or a Spotify song the
+ * preview can't answer, gets ONE iTunes song search, under the shared iTunes
+ * budget. We only return a URL when artist, title AND album (when known)
+ * all match after normalization. Without that tight gate the API happily
+ * returns "Greatest Hits", deluxe editions, karaoke versions, or unrelated
+ * tracks with the same title, and that wrong cover ends up on Discord.
+ * Better to show the fallback asset than the wrong album.
  *
- * Results cached in-memory by `artist|album|title` lowercased so replay
- * doesn't re-hit the network, and misses are cached too so failures
- * aren't retried on every spin of the same song.
+ * Answers are remembered across launches (see below). A busy or refused
+ * request is not an answer: it isn't remembered, so it's asked again.
  *
  * Only used by the Discord-presence path. The on-disk artwork the UI
  * shows isn't affected — Discord needs a public URL its media proxy can
  * fetch, and that's a separate concern from what the library renders.
  */
-const coverLookupCache = new BoundedMap(3000); // key: 'artist|album|title' lowercased → url string or null
+/* Covers found for Discord, remembered across launches (userData), so a song
+   is looked up once, ever. Keys:
+     sp:<spotify id>            a Spotify song's own cover
+     al:<first artist>|<album>  any cover found for that album: the rest of
+                                its songs need no request at all
+     song:<artist>|<album>|<title>  the iTunes answer, a miss included (a
+                                miss is asked again after a few days)
+   Value: { url, at }; url '' is a miss. */
+const COVER_CACHE_FILE = 'discord-cover-lookups.json';
+const COVER_CACHE_MAX = 5000;
+const COVER_MISS_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+const coverLookupCache = new Map();
+let coverCacheLoaded = false;
+let coverCacheTimer = null;
+function loadCoverCache() {
+  if (coverCacheLoaded) return;
+  coverCacheLoaded = true;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), COVER_CACHE_FILE), 'utf8'));
+    for (const [k, v] of Object.entries(raw || {})) {
+      if (v && typeof v.url === 'string' && Number.isFinite(v.at)) coverLookupCache.set(k, v);
+    }
+  } catch { /* first run, or unreadable: start empty */ }
+}
+function knownCover(key) {
+  if (!key) return undefined;
+  loadCoverCache();
+  const v = coverLookupCache.get(key);
+  if (!v) return undefined;
+  if (!v.url && Date.now() - v.at > COVER_MISS_TTL_MS) { coverLookupCache.delete(key); return undefined; }
+  return v.url;
+}
+function rememberCover(key, url) {
+  if (!key) return;
+  loadCoverCache();
+  coverLookupCache.delete(key);
+  coverLookupCache.set(key, { url, at: Date.now() });
+  while (coverLookupCache.size > COVER_CACHE_MAX) coverLookupCache.delete(coverLookupCache.keys().next().value);
+  if (coverCacheTimer) return;
+  coverCacheTimer = setTimeout(() => {
+    coverCacheTimer = null;
+    fs.promises.writeFile(path.join(app.getPath('userData'), COVER_CACHE_FILE), JSON.stringify(Object.fromEntries(coverLookupCache)), 'utf8').catch(() => { /* next save tries again */ });
+  }, 3000);
+}
 
 /**
  * Normalize an artist/album/title for fuzzy equality:
@@ -1378,58 +1426,102 @@ function fuzzyEq(a, b) {
   return false;
 }
 
+/* A Spotify song's cover from Spotify's public link preview: one quick
+   request, no sign-in, and it's the right cover by definition. One at a
+   time, a moment apart, so a run of skips can't burst at it. */
+let spotifyCoverChain = Promise.resolve();
+function spotifyTrackCover(id) {
+  const run = async () => {
+    const page = `https://open.spotify.com/track/${encodeURIComponent(id)}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      const res = await net.fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(page)}`, { signal: ctrl.signal });
+      if (res.status === 404) return { url: '' };
+      if (!res.ok) return { url: '', busy: true };
+      const j = await res.json();
+      const u = String(j?.thumbnail_url || '');
+      return { url: /^https:\/\//i.test(u) ? u : '' };
+    } catch { return { url: '', busy: true }; } finally { clearTimeout(timer); }
+  };
+  const p = spotifyCoverChain.then(run);
+  spotifyCoverChain = p.then(() => new Promise((r) => setTimeout(r, 250)));
+  return p;
+}
+
+const coverLookupsInFlight = new Map(); // first cache key → Promise
+
 ipcMain.handle('discord:lookupArtwork', async (event, query) => {
   try {
     const artist = String(query?.artist || '').trim();
     const album = String(query?.album || '').trim();
     const title = String(query?.title || '').trim();
-    // Need at least artist + title to have any hope of a confident match.
-    if (!artist || !title) return { ok: false, url: '' };
-    const cacheKey = `${artist}|${album}|${title}`.toLowerCase();
-    if (coverLookupCache.has(cacheKey)) {
-      return { ok: true, url: coverLookupCache.get(cacheKey) || '' };
+    const spotifyId = String(query?.spotifyId || '').trim();
+    // "A, B" / "A & B" / "A feat. B": the first name is the one every
+    // catalogue agrees on.
+    const firstArtist = artist.split(/\s*(?:,|&|;|\bx\b|\bfeat\.?|\bft\.?|\bwith\b)\s*/i)[0].trim() || artist;
+    const n = normalizeForMatch;
+    const spKey = spotifyId ? `sp:${spotifyId}` : '';
+    const albumKey = album && firstArtist ? `al:${n(firstArtist)}|${n(album)}` : '';
+    const songKey = artist && title ? `song:${n(artist)}|${n(album)}|${n(title)}` : '';
+
+    // Already known: no request at all.
+    for (const k of [spKey, albumKey, songKey]) {
+      const u = knownCover(k);
+      if (u) return { ok: true, url: u };
     }
-    // Song-level search. Include artist + title in the term; Deezer
-    // ranks by relevance so the right song usually comes back in the
-    // first 5-10 rows.
-    const term = `${artist} ${title}`.replace(/\s+/g, ' ').trim();
-    const results = await itunesSearchTracks(term);
+    if (!spotifyId && knownCover(songKey) === '') return { ok: false, url: '' };
 
-    if (!results.length) {
-      coverLookupCache.set(cacheKey, null);
-      return { ok: false, url: '' };
-    }
+    const flightKey = spKey || songKey;
+    if (!flightKey) return { ok: false, url: '' };
+    if (coverLookupsInFlight.has(flightKey)) return await coverLookupsInFlight.get(flightKey);
 
-    // Find a row where ALL of artist + title (+ album if we have one)
-    // match after normalization. Each is necessary — title alone is
-    // useless (lots of "Forever"s), artist alone is useless (artists
-    // re-record songs), album alone misses singles. Album is optional
-    // because some tracks aren't part of an album in our library (no
-    // album field) but it's the strongest signal we have when present.
-    const match = results.find((r) => {
-      if (!fuzzyEq(r.artists, artist)) return false;
-      if (!fuzzyEq(r.title, title)) return false;
-      if (album && !fuzzyEq(r.album, album)) return false;
-      return true;
-    });
+    const work = (async () => {
+      if (spotifyId) {
+        const r = await spotifyTrackCover(spotifyId);
+        if (r.url) {
+          rememberCover(spKey, r.url);
+          rememberCover(albumKey, r.url);
+          return { ok: true, url: r.url };
+        }
+        if (r.busy) console.log(`[discord] Spotify cover preview unavailable for "${title}", trying iTunes`);
+      }
+      // Need at least artist + title to have any hope of a confident match.
+      if (!artist || !title) return { ok: false, url: '' };
+      if (knownCover(songKey) === '') return { ok: false, url: '' };
 
-    // No confident match → cache the miss and bail. We do NOT fall back
-    // to results[0] — that's how wrong covers slip through to Discord.
-    if (!match) {
-      coverLookupCache.set(cacheKey, '');
-      console.log(`[discord] no iTunes cover match for "${title}" by ${artist}${album ? ` (album: ${album})` : ''}`);
-      return { ok: false, url: '' };
-    }
+      let results;
+      try {
+        results = await itunesSongsForCover(`${firstArtist} ${title}`);
+      } catch (e) {
+        console.log(`[discord] iTunes busy for "${title}" by ${artist} (${String(e?.message || e)}), will try again later`);
+        return { ok: false, url: '', retry: true };
+      }
 
-    // iTunes client returns 600px artwork via upgradeArtwork,
-    // and it's a public CDN URL that Discord's media proxy can fetch.
-    const bestThumbnail = match.albumArtUrl || '';
-
-    coverLookupCache.set(cacheKey, bestThumbnail);
-    if (bestThumbnail) {
-      console.log(`[discord] Deezer cover matched for "${title}" by ${artist}: ${match.album}`);
-    }
-    return { ok: !!bestThumbnail, url: bestThumbnail };
+      // A row where artist AND title (AND album, when we have one) match
+      // after normalization. Title alone is useless (lots of "Forever"s),
+      // artist alone is useless (artists re-record songs), and without the
+      // album gate the API happily returns greatest-hits, deluxe and
+      // karaoke covers. Never results[0]: that's how wrong covers reach
+      // Discord. Better the fallback than the wrong album.
+      const match = results.find((r) => {
+        if (!fuzzyEq(r.artists, artist) && !fuzzyEq(r.artists, firstArtist)) return false;
+        if (!fuzzyEq(r.title, title)) return false;
+        if (album && !fuzzyEq(r.album, album)) return false;
+        return true;
+      });
+      const url = match?.albumArtUrl || '';
+      rememberCover(songKey, url);
+      if (!url) {
+        console.log(`[discord] no iTunes cover match for "${title}" by ${artist}${album ? ` (album: ${album})` : ''}`);
+        return { ok: false, url: '' };
+      }
+      rememberCover(albumKey, url);
+      console.log(`[discord] iTunes cover matched for "${title}" by ${artist}: ${match.album}`);
+      return { ok: true, url };
+    })().finally(() => { coverLookupsInFlight.delete(flightKey); });
+    coverLookupsInFlight.set(flightKey, work);
+    return await work;
   } catch (e) {
     return { ok: false, url: '', error: String(e?.message || e) };
   }
@@ -2019,6 +2111,11 @@ ipcMain.handle('playlists:rename', async (_e, { id, name } = {}) => {
 
 ipcMain.handle('playlists:removeTrack', async (_e, { playlistId, trackId } = {}) => {
   try { return await removeTrackFromPlaylist(playlistId, trackId); }
+  catch (e) { return { ok: false, error: String(e?.message || e) }; }
+});
+
+ipcMain.handle('playlists:reorder', async (_e, { playlistId, trackIds } = {}) => {
+  try { return await reorderPlaylistTracks(playlistId, trackIds); }
   catch (e) { return { ok: false, error: String(e?.message || e) }; }
 });
 

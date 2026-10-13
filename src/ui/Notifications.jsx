@@ -31,7 +31,7 @@ const CSS = `
 .stn-badge.is-bad { background: rgb(243, 114, 114); color: #1a0b0b; }
 .stn-panel { -webkit-app-region: no-drag; position: absolute; top: calc(100% + 8px); right: 0; z-index: 96; width: min(420px, calc(100vw - 32px));
   max-height: min(72vh, 600px); display: flex; flex-direction: column; overflow: hidden;
-  border-radius: 14px; background: rgba(22, 22, 24, 0.985); border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px; background: var(--surface, #0A0A0B); border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.55); transform-origin: top right;
   animation: stnIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
 @keyframes stnIn { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }

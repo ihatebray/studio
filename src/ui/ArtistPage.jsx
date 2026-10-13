@@ -6,6 +6,7 @@ import { formatTotalMs } from '../lib/mediaUtils.js';
 import { api, fmtMs } from '../lib/format.js';
 import { coverLayers } from '../lib/coverUrl.js';
 import { BoundedMap } from '../lib/boundedMap.js';
+import { DARK } from './home/constants.js';
 
 /** The artist page's back button: in the hero, then in the sticking bar. */
 function BackBtn({ onClick, style }) {
@@ -350,7 +351,7 @@ function releaseText(d, precision = '') {
  *  date, all-time Spotify plays, length, and what you can do with it.
  *  `rel` is the song's release from the artist's discography; `info` the
  *  song's own details, for one that isn't in it (a feature, say). */
-function PopularRow({ n, t, rel = null, info = null, owned, canPlay = owned, playing, isPlaying, accent, dl, progress, onPlay, onGet }) {
+function PopularRow({ n, t, rel = null, info = null, owned, canPlay = owned, playing, isPlaying, accent, dl, progress, onPlay, onGet, onMenu = null }) {
   const albumName = t.album || rel?.name || info?.album || '';
   const released = rel?.releaseDate ? releaseText(rel.releaseDate, rel.datePrecision) : releaseText(info?.releaseDate || t.releaseDate);
   const [hot, setHot] = useState(false);
@@ -358,6 +359,7 @@ function PopularRow({ n, t, rel = null, info = null, owned, canPlay = owned, pla
   const act = () => (canPlay ? onPlay() : onGet?.());
   return (
     <div role="button" tabIndex={0} onClick={act}
+      onContextMenu={onMenu || undefined}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } }}
       onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
       className="app-pop-row"
@@ -641,7 +643,7 @@ const relKind = (r) => (r.group === 'appears_on' ? 'Appears on'
   : r.type === 'compilation' || r.group === 'compilation' ? 'Compilation'
     : r.group === 'single' ? (r.totalTracks > 1 ? 'EP' : 'Single') : 'Album');
 
-function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, onOpenLibrary = null }) {
+function ReleaseInline({ release, notch, accent, mark = accent, bridge, artistName, onClose, onOpenLibrary = null }) {
   const id = release.albumId;
   const [rows, setRows] = useState(() => releaseTracksCache.get(id) || null);
   const [err, setErr] = useState('');
@@ -704,7 +706,7 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
   ].filter(Boolean);
 
   return (
-    <div className="apx-rel" ref={boxRef} style={{ '--apx-notch': notch, '--apx-acc': accent }}>
+    <div className="apx-rel" ref={boxRef} style={{ '--apx-notch': notch, '--apx-acc': accent, '--apx-mark': mark }}>
       <div className="apx-rel-card">
         <div className="apx-rel-band">
           <div className="apx-rel-cover" style={{ backgroundImage: release.albumArtUrl ? coverLayers(String(release.albumArtUrl).replace(/"/g, '%22')) : 'none' }} />
@@ -753,7 +755,8 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
             const feat = t.artists && t.artists !== (release.artists || artistName) ? t.artists : '';
             if (t.notOut) {
               return (
-                <div key={`${t.spotifyId}:${i}`} className="apx-trk is-locked" aria-disabled title="Not out yet">
+                <div key={`${t.spotifyId}:${i}`} className="apx-trk is-locked" aria-disabled title="Not out yet"
+                  onContextMenu={(e) => bridge?.openMenu?.(e, { ...t, album: t.album || release.name, albumId: t.albumId || id })}>
                   <span className="n"><span className="num">{i + 1}</span></span>
                   <span className="tt">
                     <span className="t">{t.explicit ? <span className="e">E</span> : null}{t.title}</span>
@@ -768,10 +771,11 @@ function ReleaseInline({ release, notch, accent, bridge, artistName, onClose, on
             }
             return (
               <div key={`${t.spotifyId}:${i}`} className={`apx-trk${on ? ' is-on' : ''}`} role="button" tabIndex={0}
+                onContextMenu={(e) => bridge?.openMenu?.(e, { ...t, album: t.album || release.name, albumId: t.albumId || id, albumArtUrl: t.albumArtUrl || release.albumArtUrl })}
                 onClick={() => bridge.playRows(rows, i, { context })}
                 onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}>
                 <span className="n">
-                  {on ? <PlayingBars color="rgb(var(--apx-acc))" playing={bridge.isPlaying} /> : <span className="num">{i + 1}</span>}
+                  {on ? <PlayingBars color="rgb(var(--apx-mark))" playing={bridge.isPlaying} /> : <span className="num">{i + 1}</span>}
                   <span className="pl"><PlayIcon size={11} /></span>
                 </span>
                 <span className="tt">
@@ -835,7 +839,7 @@ const RELEASE_INLINE_CSS = `
 .apx-rel-ib:hover:not(:disabled), .apx-rel-ib[aria-expanded="true"] { color: var(--st-text); background: rgba(var(--st-fg-rgb), 0.1); }
 .apx-rel-ib:disabled { opacity: 0.4; cursor: default; }
 .apx-rel-menu { position: absolute; top: 40px; right: 0; z-index: 20; width: 200px; padding: 5px; border-radius: 12px; display: flex; flex-direction: column;
-  --mi-accent: 255,255,255; background: #0d0d0e; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
+  --mi-accent: 255,255,255; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
 .apx-rel-list { min-width: 0; }
 /* Two columns from 10 songs, where the card has room for them. */
 @container (min-width: 600px) {
@@ -851,7 +855,7 @@ const RELEASE_INLINE_CSS = `
 .apx-trk:hover .n .pl { display: flex; }
 .apx-trk .tt { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .apx-trk .t { font-size: 13.5px; font-weight: 600; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
-.apx-trk.is-on .t { color: rgb(var(--apx-acc)); }
+.apx-trk.is-on .t { color: rgb(var(--apx-mark, var(--apx-acc))); }
 .apx-trk .a { font-size: 12px; color: rgba(var(--st-sub-rgb), 0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 2; }
 .apx-trk .e { display: inline-block; margin-right: 6px; padding: 0 4px; border-radius: 3px; font-size: 9px; font-weight: 800; line-height: 14px;
   background: rgba(var(--st-fg-rgb), 0.16); color: rgba(var(--st-fg-rgb), 0.7); vertical-align: 1px; }
@@ -1322,12 +1326,19 @@ export default function ArtistPage({
     return () => { dead = true; };
   }, [heroSrc]);
 
-  const wash = theme.detailMode === 'fixed'
-    ? pageWash(theme.detailColor)
+  // Fixed: the colour you picked, exactly, as on album pages.
+  // Dark mode: the app's own dark under the photo, nothing taken from it.
+  const darkPage = theme.detailMode === 'dark';
+  const fixedPage = theme.detailMode === 'fixed' && !!theme.detailColor;
+  const wash = darkPage ? DARK.page : fixedPage
+    ? theme.detailColor
     : pageWash(pageTheme ? recordWashSource(pageTheme) : accent);
-  const deep = pageTheme ? pageTheme.wash : '10, 10, 14';
+  const deep = darkPage ? DARK.page : fixedPage ? theme.detailColor : pageTheme ? pageTheme.wash : '10, 10, 14';
   const pageAcc = pageTheme ? pageTheme.accent : accent;
   const pageAccUI = readableAccent(pageAcc);
+  /* The playing song is marked in your accent (Settings → Color), not the
+     photo's color, the same as every other list. */
+  const markAcc = readableAccent(accent);
 
   /* ---- Play counts ------------------------------------------------------
    * All-time, not the Stats page's rolling window: an artist page is a shelf,
@@ -1638,7 +1649,7 @@ export default function ArtistPage({
         .apx-bar-rect:disabled { cursor: default; background: rgba(var(--st-fg-rgb), 0.14); color: rgba(var(--st-fg-rgb), 0.4); }
         .apx-bar-menu { position: absolute; top: 46px; left: 0; z-index: 20; width: 190px; padding: 5px; border-radius: 12px;
           display: flex; flex-direction: column; --mi-accent: 255,255,255;
-          background: #0d0d0e; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
+          background: var(--surface); border: 1px solid var(--border); box-shadow: 0 22px 60px rgba(0,0,0,0.7); }
         .sth-artist-hero-tools { opacity: 0; transition: opacity 0.16s ease; }
         .sth-artist:hover .sth-artist-hero-tools,
         .sth-artist-hero-tools:focus-within { opacity: 1; }
@@ -1915,7 +1926,7 @@ export default function ArtistPage({
                       key={t.spotifyId || i} n={i + 1} t={t} rel={relById.get(t.albumId) || null} info={trackInfo[t.spotifyId] || null} owned={!!lib}
                       canPlay={!!lib || (!!spotifyBridge && !!t.spotifyId)}
                       playing={(!!lib && currentId === lib.id) || !!spotifyBridge?.isCurrent?.(t)} isPlaying={isPlaying}
-                      accent={pageAccUI}
+                      accent={markAcc}
                       dl={dlState?.[`s:${t.spotifyId}`]} progress={dlProgress?.[`s:${t.spotifyId}`]}
                       onPlay={() => {
                         // Your copy or the stream of it: either way it's this row.
@@ -1927,6 +1938,9 @@ export default function ArtistPage({
                         else onPlayTrack?.(lib, popularOwned);
                       }}
                       onGet={getTrack ? () => getTrack(t) : () => onJumpToFind?.(`${name} ${t.title}`, 'spotify')}
+                      onMenu={spotifyBridge?.openMenu && t.spotifyId ? (e) => spotifyBridge.openMenu(e, {
+                        ...t, artists: t.artists || name, album: t.album || relById.get(t.albumId)?.name || trackInfo[t.spotifyId]?.album || '',
+                      }) : null}
                     />
                   ))}
                 </div>
@@ -1963,7 +1977,7 @@ export default function ArtistPage({
                   renderOpen={(r, notch) => {
                     const own = ownedRelease(r);
                     return (
-                      <ReleaseInline key={`open:${r.albumId}`} release={r} notch={notch} accent={pageAccUI}
+                      <ReleaseInline key={`open:${r.albumId}`} release={r} notch={notch} accent={pageAccUI} mark={markAcc}
                         bridge={spotifyBridge} artistName={name} onClose={closeRel}
                         onOpenLibrary={own && (own.tracks?.length || 0) > 1 ? () => onOpenAlbum?.(own.key) : null} />
                     );

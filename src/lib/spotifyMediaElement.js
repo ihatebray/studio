@@ -86,6 +86,7 @@ export class SpotifyMediaElement extends EventTarget {
     this._duration = NaN;
     this._pos = 0;           // seconds, as of _at
     this._at = 0;            // performance.now() when _pos was sampled
+    this._floor = 0;         // never report less than this while running (see 'position')
     this._running = false;   // helper says audio is actually coming out
     this._paused = true;     // what the app asked for
     this._pending = null;    // { positionMs } — load not yet sent to the helper
@@ -112,7 +113,7 @@ export class SpotifyMediaElement extends EventTarget {
 
   get currentTime() {
     if (!this._running) return this._pos;
-    const t = this._pos + (performance.now() - this._at) / 1000;
+    const t = Math.max(this._pos + (performance.now() - this._at) / 1000, this._floor);
     return Number.isFinite(this._duration) && this._duration > 0 ? Math.min(t, this._duration) : t;
   }
 
@@ -310,6 +311,20 @@ export class SpotifyMediaElement extends EventTarget {
         this._emit('timeupdate');
         return;
       case 'position':
+        /* The helper's report usually lands a little behind our running
+           estimate (it was measured before it crossed the IPC). Snapping to
+           it stepped the clock BACK a fraction of a second every half
+           second, and whenever that crossed the start of a lyric line the
+           line before lit up again for a moment: the lyrics bounced back
+           and forth. A small lag now holds the clock still until the report
+           catches up; a real jump (over a second) still goes straight in. */
+        if (pos != null) {
+          const est = this.currentTime;
+          this._setPos(pos);
+          if (this._running && pos < est && est - pos < 1) this._floor = est;
+        }
+        this._emit('timeupdate');
+        return;
       case 'seeked':
         if (pos != null) this._setPos(pos);
         this._emit('timeupdate');
@@ -435,7 +450,7 @@ export class SpotifyMediaElement extends EventTarget {
     }
   }
 
-  _setPos(sec) { this._pos = sec; this._at = performance.now(); }
+  _setPos(sec) { this._pos = sec; this._at = performance.now(); this._floor = 0; }
   _freeze() { this._setPos(this.currentTime); }
 
   _startTick() {

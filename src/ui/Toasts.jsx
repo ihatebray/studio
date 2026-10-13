@@ -289,7 +289,7 @@ const CSS = `
   transition: height 0.34s ${EASE}; }
 .st-toast { position: absolute; left: 0; right: 0; bottom: 0; box-sizing: border-box;
   border-radius: 14px; overflow: hidden; touch-action: pan-y;
-  background: rgba(22, 22, 24, 0.97); border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--surface, #0A0A0B); border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
   color: rgba(255, 255, 255, 0.94);
   transform-origin: 50% 100%; will-change: transform, opacity;

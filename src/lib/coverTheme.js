@@ -730,9 +730,36 @@ export function recordDeep(theme, fallback = '10, 10, 14') {
   return oklchToRgb(Math.min(L, 0.24), Math.min(C, 0.055), h).join(', ');
 }
 
+/* Where the palette analysis runs. The app's entry registers the worker
+   (coverThemeWorker.js); without one, it runs here on the page's thread. */
+let offThread = null;
+export function setThemeAnalyzer(fn) { offThread = typeof fn === 'function' ? fn : null; }
+
+/* One reading per cover: several parts of the app ask for the same cover's
+   colors when a song starts, and each used to analyze it again. */
+const themeCache = new Map(); // src → Promise<theme>
+const THEME_CACHE_MAX = 300;
+
 /** Average-color theme from cover art for gradients (renderer-safe). */
 export function sampleCoverTheme(src) {
-  const fallback = { accent: '48, 48, 48', wash: '10, 10, 10', mid: '12, 12, 12', deep: '0, 0, 0' };
+  const strip = ({ unread, ...theme }) => theme;
+  if (!src) return readCoverTheme(src).then(strip);
+  let p = themeCache.get(src);
+  if (!p) {
+    p = readCoverTheme(src).then((theme) => {
+      // A cover that couldn't be read isn't remembered: it may load next time.
+      if (theme.unread) themeCache.delete(src);
+      return strip(theme);
+    });
+    themeCache.set(src, p);
+    if (themeCache.size > THEME_CACHE_MAX) themeCache.delete(themeCache.keys().next().value);
+  }
+  // Each caller gets its own copy, as when every call read the cover itself.
+  return p.then((theme) => ({ ...theme }));
+}
+
+function readCoverTheme(src) {
+  const fallback = { accent: '48, 48, 48', wash: '10, 10, 10', mid: '12, 12, 12', deep: '0, 0, 0', unread: true };
   return new Promise((resolve) => {
     if (!src) {
       resolve(fallback);
@@ -784,25 +811,42 @@ export function sampleCoverTheme(src) {
         } catch { /* logging is never worth failing a sample over */ }
         ctx.drawImage(img, 0, 0, w, h);
         const { data } = ctx.getImageData(0, 0, w, h);
-        const samples = [];
+        const rgb = new Uint8Array(w * h * 3);
+        let n = 0;
         for (let i = 0; i < data.length; i += 4) {
           if (data[i + 3] < 30) continue;
-          samples.push([data[i], data[i + 1], data[i + 2]]);
+          rgb[n++] = data[i]; rgb[n++] = data[i + 1]; rgb[n++] = data[i + 2];
         }
-        if (!samples.length) {
+        if (!n) {
           resolve(fallback);
           return;
         }
-        resolve(themeFromAnalysis({
-          ...analyzeSamples(samples),
-          perceptual: analyseCover(samples),
-        }));
+        const pixels = rgb.slice(0, n);
+        // Here, on the page's thread: only when there's no worker.
+        const analyzeHere = () => {
+          const samples = [];
+          for (let i = 0; i < pixels.length; i += 3) samples.push([pixels[i], pixels[i + 1], pixels[i + 2]]);
+          return themeFromAnalysis({ ...analyzeSamples(samples), perceptual: analyseCover(samples) });
+        };
+        if (offThread) {
+          offThread(pixels.slice()).then(resolve, () => {
+            // No worker after all: do it here, once the page has a moment.
+            const run = () => { try { resolve(analyzeHere()); } catch { resolve(fallback); } };
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 1200 }); else setTimeout(run, 300);
+          });
+        } else {
+          resolve(analyzeHere());
+        }
       } catch {
         resolve(fallback);
       }
     };
     img.onerror = () => resolve(fallback);
-    img.src = src;
+    /* A saved cover's colors are read from it at the size it was first saved
+       at, not the large copy shown on screen (coverArtStore, "The size a
+       cover's colors are read at"), so upgrading a cover to HD doesn't change
+       its colors. */
+    img.src = /^studio-cover:/i.test(src) ? `${src}${src.includes('?') ? '&' : '?'}for=color` : src;
   });
 }
 
@@ -842,50 +886,20 @@ export function accentTextColor(accent) {
  * invent a hue the cover doesn't have.
  */
 /* ---------------------------------------------------------------------------
- *  Colour intensity.
+ *  How strong cover colours get.
  *
  *  Every number in this file assumes the display shows sRGB as sRGB. A monitor
- *  with a vibrancy or saturation boost does not: it stretches chroma away from
- *  the grey axis, so a surface capped at 0.72 saturation arrives fully clipped
- *  at 1.0, and the faint-text contrast this file works to protect falls by
- *  about a fifth — 3.16 becomes 2.50, under the bar.
- *
- *  Luminance moves much less than chroma under that transform, which is why
- *  the contrast clamp still does most of its job. What it can't do is know
- *  about the monitor, so the ceiling is a setting rather than a guess.
+ *  with a vibrancy or saturation boost stretches chroma away from the grey
+ *  axis, so the saturation ceiling and the faint-text target leave room for
+ *  that. This used to be a setting (Color intensity); it's now fixed at what
+ *  was its default. Colours picked in Settings never pass through here.
  * ------------------------------------------------------------------------- */
-let SATURATION_CAP = 0.56;
-let FAINT_TARGET = 3.3;
-
-/**
- * 'muted' | 'balanced' | 'vivid'.
- *
- * Two dials move together, because capping saturation alone doesn't do it:
- * even at 0.24 the worst of six test covers only reached 2.91 once a boosted
- * display had stretched it. A boost shifts luminance a little as well as
- * chroma a lot, so the reliable lever is to darken further — the target ratio
- * is what buys that margin, and the cap keeps the colour from arriving clipped.
- */
-/** @param {'off'|'muted'|'balanced'|'vivid'|'full'} level */
-export function setColourIntensity(level) {
-  /* 'full' is the Spotify-like end of the scale.
-     Measured against their album header — about rgb(125, 135, 148) for a pale
-     sleeve — Spotify holds roughly 3.6:1 for solid white and 1.9:1 for faint
-     text. They don't guarantee faint-text readability at all; they set that
-     type heavy and solid instead. Matching their brightness means adopting
-     that trade knowingly, so it's the top of the scale rather than the
-     default, and secondary lines will be harder to read on it. */
-  /* 'off' drains the colour entirely: surfaces still take their LIGHTNESS
-     from the sleeve, so a dark record still gives a dark page, but the hue is
-     gone. That's different from turning a surface off, which removes the
-     cover's influence altogether — here the layout keeps reacting to the
-     artwork, just in greyscale. */
-  if (level === 'off') { SATURATION_CAP = 0; FAINT_TARGET = 4.5; return; }
-  if (level === 'full') { SATURATION_CAP = 0.80; FAINT_TARGET = 1.9; return; }
-  if (level === 'vivid') { SATURATION_CAP = 0.72; FAINT_TARGET = 3.1; return; }
-  if (level === 'muted') { SATURATION_CAP = 0.30; FAINT_TARGET = 4.1; return; }
-  SATURATION_CAP = 0.56; FAINT_TARGET = 3.3;
-}
+const SATURATION_CAP = 0.56;
+const FAINT_TARGET = 3.3;
+/* The same for the Now Playing bar and the panels that match it, which are
+   coloured by barTone() rather than pageWash(): how much chroma (OKLCH) they
+   may keep. 0.16 is coverColour.js's own default. */
+const BAR_CHROMA = 0.16;
 
 /** Relative luminance, per WCAG. */
 function relLuminance([r, g, b]) {
@@ -1039,7 +1053,7 @@ export function pageWash(rgbStr, textRgb = [255, 255, 255], minRatio = null) {
 export function barTone(rgbStr) {
   const p = String(rgbStr || '').split(',').map((n) => parseInt(n.trim(), 10));
   if (p.length < 3 || p.some((n) => !Number.isFinite(n))) return '18, 18, 24';
-  return toBarColour(p).rgb.join(', ');
+  return toBarColour(p, { maxChroma: BAR_CHROMA }).rgb.join(', ');
 }
 
 /* How much lighter the library page sits than the chrome under it.

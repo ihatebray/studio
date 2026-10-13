@@ -101,6 +101,9 @@ export default function StudioShell({
   // The live play queue (owned by App.jsx) — the overlay's "Up next" card.
   queue = [],
   queueIndex = -1,
+  onReorderQueue,       // (from, to) — moving a song in the queue
+  onReorderPlaylist,    // (playlistId, trackIds) — a playlist's songs in a new order
+  onRemoveFromQueue,    // (index)
   // Command-center data
   playEvents = [],
   onResetStats,
@@ -350,12 +353,15 @@ export default function StudioShell({
         onUpdatePlaylist={onUpdatePlaylist}
         onSetAlbumCover={onSetAlbumCover}
         onRemoveFromPlaylist={onRemoveFromPlaylist}
+        onReorderPlaylist={onReorderPlaylist}
         onImportFiles={onImportFiles}
         onImportSpotify={onImportSpotify}
         onImportFolder={onImportFolder}
         importing={importing}
         queue={queue}
         queueIndex={queueIndex}
+        onReorderQueue={onReorderQueue}
+        onRemoveFromQueue={onRemoveFromQueue}
         albumCoverOverrides={albumCoverOverrides}
         currentTrack={currentTrack}
         isPlaying={isPlaying}

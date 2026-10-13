@@ -3,7 +3,7 @@ import { readableAccent } from '../../lib/coverTheme.js';
 import { formatTime, getFileFormatLabel, parseGenres } from '../../lib/mediaUtils.js';
 import PanelLyricsEditor from '../PanelLyricsEditor.jsx';
 import VolumeControl from '../VolumeControl.jsx';
-import { AnimatedGradientBg } from '../VisualEffects.jsx';
+import { AnimatedGradientBg, FadeLayer } from '../VisualEffects.jsx';
 import { ArtistLinks, PauseIcon, PlayIcon } from '../sharedUI.jsx';
 import { PlainLyrics, SyncedLyrics } from '../Lyrics.jsx';
 import { NP_FULL_TABS, NP_PANEL_TABS, NP_PANEL_W } from './constants.js';
@@ -24,12 +24,12 @@ export function NowPlayingFullView({
   volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, onToggleFavorite, onAddToPlaylist, onMore,
   savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false,
   onCopyLink, copyBusy = false, onZoomCover,
-  animatedBg = false, immersePalette = null,
+  animatedBg = false, immersePalette = null, dark = false,
   tab = null, onTab, onClose,
   coverFor, upNext = [], onSelectTrack, onReorderQueue, queueOffset = 0,
   lyricsData, onLyricsSaved, onBrowseLyrics,
   lyricSelection = null, onLyricSelectStart, onLyricSelectLine,
-  artistInfo, credits, plays = 0,
+  artistInfo, credits, plays = 0, onQueueMenu = null,
 }) {
   const acc = readableAccent(accent);
   const currentTime = usePlaybackTime();
@@ -82,18 +82,21 @@ export function NowPlayingFullView({
       {/* Backdrop: Immerse's moving gradient when that's on, otherwise the
           artwork blurred under a scrim — the dock's cover treatment, scaled
           up. Both sit behind everything and take no pointer events. */}
-      {animatedBg ? (
-        <div aria-hidden className="sth-full-bg">
-          <AnimatedGradientBg accent={gradBase} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1} />
-        </div>
-      ) : art ? (
+      <FadeLayer show={!!animatedBg} className="sth-full-bg" style={{ zIndex: 1 }}>
+        <AnimatedGradientBg field accent={gradBase} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1} />
+      </FadeLayer>
+      {animatedBg ? null : art && !dark ? (
         <div aria-hidden className="sth-full-bg" style={{
           inset: -80, backgroundImage: `url("${art}")`, backgroundSize: 'cover', backgroundPosition: 'center',
           filter: 'blur(80px) saturate(1.6)', opacity: 0.55,
         }} />
       ) : null}
       <div aria-hidden className="sth-full-bg" style={{
-        background: `linear-gradient(180deg, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.46) 55%, rgba(0,0,0,0.62) 100%), linear-gradient(135deg, rgba(${acc},0.10), transparent 60%)`,
+        /* Dark mode: one flat dark, the pages' own. No glow: a faint
+           gradient over near-black shows as bands. */
+        background: dark
+          ? 'rgb(10, 10, 11)'
+          : `linear-gradient(180deg, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.46) 55%, rgba(0,0,0,0.62) 100%), linear-gradient(135deg, rgba(${acc},0.10), transparent 60%)`,
       }} />
 
       {/* ---- Top strip: drag region, panel tabs, exit ---- */}
@@ -218,7 +221,7 @@ export function NowPlayingFullView({
             {tab === 'queue' ? (
               <QueueTab current={track} upNext={upNext} acc={acc} coverFor={coverFor}
                 onSelectTrack={onSelectTrack} isPlaying={isPlaying}
-                onReorder={onReorderQueue} queueOffset={queueOffset} />
+                onReorder={onReorderQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
             ) : tab === 'lyrics' ? (
               <LyricsTab lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} track={track}
                 onBrowseLyrics={onBrowseLyrics}
@@ -234,7 +237,31 @@ export function NowPlayingFullView({
   );
 }
 
-export function NowPlayingPanelDock({
+/* Stays mounted for a moment after it's closed so it can slide out, using
+   the props it last had (the song can be gone by then). */
+const DOCK_MS = 360;
+export function NowPlayingPanelDock(props) {
+  const { open } = props;
+  const last = useRef(props);
+  if (open) last.current = props;
+  const [present, setPresent] = useState(open);
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (open) { setPresent(true); setLeaving(false); return undefined; }
+    if (!present) return undefined;
+    setLeaving(true);
+    const t = setTimeout(() => { setPresent(false); setLeaving(false); }, DOCK_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  if (!present && !open) return null;
+  const p = open ? props : last.current;
+  if (!p.track) return null;
+  return <PanelDockBody {...p} open leaving={!open && leaving} />;
+}
+
+function PanelDockBody({
+  leaving = false,
   open, tab, onTab, onClose,
   track, art, accent, coverFor,
   surface = 'cover', barWash = null, customColor = null, immersePalette = null,
@@ -243,7 +270,7 @@ export function NowPlayingPanelDock({
   lyricSelection = null, onLyricSelectStart, onLyricSelectLine,
   isPlaying = false, onSeek, onExpand,
   onReorderQueue, queueOffset = 0,
-  artistInfo, credits, plays = 0,
+  artistInfo, credits, plays = 0, onQueueMenu = null,
 }) {
   if (!open) return null;
   const acc = readableAccent(accent);
@@ -259,35 +286,39 @@ export function NowPlayingPanelDock({
       position: 'absolute', top: 'var(--shell-top, 62px)', right: 'var(--gutter)', bottom: 'var(--np-reserve)', width: NP_PANEL_W,
       zIndex: 5, display: 'flex', flexDirection: 'column',
       borderRadius: 'var(--r-card)', overflow: 'hidden',
+      /* The same hairline as the content card and the Now Playing bar, so the
+         three read as one set (and the panel doesn't melt into the black
+         window behind it in Dark mode). */
+      border: '1px solid var(--border)', boxSizing: 'border-box',
       /* `bar` paints the Now Playing bar's own colour, undimmed, so the two
          surfaces are the same. The cover treatment below is a blurred photo
          under a 52-62% black scrim, which is why it always landed darker than
          the bar however bright the artwork was. */
-      background: surface === 'custom' && customColor
+      /* 'colour' is what Settings saves for a picked colour; 'custom' is the
+         older name for it. */
+      background: (surface === 'colour' || surface === 'custom') && customColor
         ? `rgb(${customColor})`
         : (surface === 'bar' && barWash ? `rgb(${barWash})` : '#0a0a0b'),
       transition: 'background 0.5s ease',
-      animation: 'sthPanelIn 0.26s cubic-bezier(0.22,1,0.3,1) both',
+      animation: `${leaving ? 'sthDockOut' : 'sthDockIn'} ${DOCK_MS}ms cubic-bezier(0.32,0.72,0,1) both`,
+      pointerEvents: leaving ? 'none' : undefined,
     }}>
       {/* Cover wash — the same treatment the popouts had, which is what stops
           this reading as a flat card bolted to the side. */}
-      {surface === 'immerse' && art ? (
-        <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
-          <AnimatedGradientBg
-            accent={immersePalette?.accent || acc}
-            mid={immersePalette?.mid || acc}
-            wash={immersePalette?.wash || acc}
-            coverUrl={art} isPlaying vignette={false} brightness={1}
-          />
-        </div>
-      ) : null}
-      {/* Just enough to hold text, and only down the left where it sits. */}
-      {surface === 'immerse' ? (
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+      <FadeLayer show={surface === 'immerse' && !!art} style={{ zIndex: 0 }}>
+        <AnimatedGradientBg field
+          /* The same colours the bar uses, so the two read as one field. */
+          accent={immersePalette?.accent || accent}
+          mid={immersePalette?.mid || accent.split(',').map((n) => Math.round(Number(n) * 0.82)).join(', ')}
+          wash={immersePalette?.wash || accent.split(',').map((n) => Math.round(Number(n) * 0.45)).join(', ')}
+          coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1}
+        />
+        {/* Just enough to hold text, and only down the left where it sits. */}
+        <div style={{
+          position: 'absolute', inset: 0,
           background: 'linear-gradient(180deg, rgba(0,0,0,0.34) 0%, rgba(0,0,0,0.14) 26%, rgba(0,0,0,0.30) 100%)',
         }} />
-      ) : null}
+      </FadeLayer>
 
       {art && surface === 'cover' ? (
         <div aria-hidden style={{
@@ -307,7 +338,7 @@ export function NowPlayingPanelDock({
       ) : null}
       {/* On the bar surface the only overlay is a whisper of depth — anything
           heavier reintroduces the very gap this option exists to close. */}
-      {(surface === 'bar' && barWash) || surface === 'custom' ? (
+      {(surface === 'bar' && barWash) || surface === 'colour' || surface === 'custom' ? (
         <div aria-hidden style={{
           position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
           background: 'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0.10) 100%)',
@@ -349,7 +380,7 @@ export function NowPlayingPanelDock({
         {tab === 'queue' ? (
           <QueueTab current={track} upNext={upNext} acc={acc} coverFor={coverFor}
             onSelectTrack={onSelectTrack} isPlaying={isPlaying}
-            onReorder={onReorderQueue} queueOffset={queueOffset} />
+            onReorder={onReorderQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
         ) : tab === 'lyrics' ? (
           <LyricsTab lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} track={track}
             onBrowseLyrics={onBrowseLyrics}
@@ -408,13 +439,16 @@ const QUEUE_CSS = `
  */
 function QueueRow({
   t, index, playing = false, onClick, coverFor, isPlaying = false,
-  onReorder, queueOffset = 0, dragFrom, dragOver, setDragFrom, setDragOver,
+  onReorder, queueOffset = 0, dragFrom, dragOver, setDragFrom, setDragOver, onRowMenu = null,
 }) {
   const at = index - 1; // position within upNext
   const canDrag = !!onReorder && !playing;
   const art = coverFor?.(t);
   return (
     <div role="button" tabIndex={0} onClick={onClick}
+      /* Right-click: the song menu; for what's up next, with Move up / Move
+         down / Remove from queue (its place in the whole queue). */
+      onContextMenu={onRowMenu ? (e) => onRowMenu(e, t, playing ? null : queueOffset + at) : undefined}
       className={[
         'sth-q-row', playing && 'is-now', onClick && 'can-play', canDrag && 'can-drag',
         dragFrom !== null && dragOver === at && dragFrom !== at && !playing && 'is-drop',
@@ -469,7 +503,7 @@ function QueueRow({
    (its scrubber), and neither tab needs to follow it. */
 const QueueTab = React.memo(function QueueTab({
   current, upNext, acc, coverFor, onSelectTrack, isPlaying = false,
-  onReorder, queueOffset = 0,
+  onReorder, queueOffset = 0, onRowMenu = null,
 }) {
   /* The row being dragged and where it would land, local until the drop. */
   const [dragFrom, setDragFrom] = useState(null);
@@ -501,7 +535,7 @@ const QueueTab = React.memo(function QueueTab({
     return name;
   }, [upNext]);
 
-  const rowProps = { coverFor, isPlaying, onReorder, queueOffset, dragFrom, dragOver, setDragFrom, setDragOver };
+  const rowProps = { coverFor, isPlaying, onReorder, queueOffset, dragFrom, dragOver, setDragFrom, setDragOver, onRowMenu };
 
   return (
     <div className="sth-q sth-libscroll" style={{ '--q-acc': acc }}>
@@ -543,6 +577,7 @@ const LYRICS_CSS = `
 .ly-tools button { width: 30px; height: 30px; border-radius: 6px; border: none; cursor: pointer; background: transparent; color: rgba(var(--st-text-rgb), 0.55);
   display: inline-flex; align-items: center; justify-content: center; transition: background .14s ease, color .14s ease; }
 .ly-tools button:hover { background: rgba(var(--st-fg-rgb), 0.1); color: var(--st-text); }
+.ly-tools button.is-on { color: rgb(var(--ly-acc)); }
 .ly-hint { position: absolute; left: 16px; bottom: 16px; font-size: 11px; font-weight: 600; color: rgba(var(--st-sub-rgb), 0.36); pointer-events: none;
   opacity: 0; transition: opacity .16s ease; }
 .ly-wrap:hover .ly-hint { opacity: 1; }
@@ -552,11 +587,31 @@ const LyIcon = {
   pen: <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />,
   clock: <><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2M9 2h6" /></>,
   list: <path d="M4 6h16M4 12h16M4 18h10" />,
+  tint: <><circle cx="12" cy="12" r="8.5" /><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor" stroke="none" /></>,
   quote: <><path d="M6.6 4.5h10.8a3 3 0 0 1 3 3v6.6a3 3 0 0 1-3 3H12l-3.9 3.4v-3.4H6.6a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3z" /><path fill="currentColor" stroke="none" d="M9.90 8.30A1.30 1.30 0 0 1 11.20 9.60C11.20 11.20 10.30 12.40 8.80 13.00L8.50 12.50C9.40 12.00 9.80 11.40 9.90 10.90A1.30 1.30 0 0 1 9.90 8.30Z M14.30 8.30A1.30 1.30 0 0 1 15.60 9.60C15.60 11.20 14.70 12.40 13.20 13.00L12.90 12.50C13.80 12.00 14.20 11.40 14.30 10.90A1.30 1.30 0 0 1 14.30 8.30Z" /></>,
 };
 const Ly = ({ d, size = 14 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{d}</svg>
 );
+
+/* Accent on the playing line: a look to try, kept per install and shared by
+   the side panel and fullscreen (both mount their own LyricsTab, so a change
+   in one is broadcast to the other). */
+const LY_ACCENT_KEY = 'studio:lyricAccent';
+function useLyricAccent() {
+  const [on, setOn] = useState(() => { try { return localStorage.getItem(LY_ACCENT_KEY) === '1'; } catch { return false; } });
+  useEffect(() => {
+    const sync = (e) => setOn(!!e.detail);
+    window.addEventListener(LY_ACCENT_KEY, sync);
+    return () => window.removeEventListener(LY_ACCENT_KEY, sync);
+  }, []);
+  const toggle = () => {
+    const next = !on;
+    try { localStorage.setItem(LY_ACCENT_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent(LY_ACCENT_KEY, { detail: next }));
+  };
+  return [on, toggle];
+}
 
 function LyricsTab({
   lyricsData, onLyricsSaved, track, accent, onSeek,
@@ -567,6 +622,7 @@ function LyricsTab({
   const hasLyrics = !!(synced || plain);
   const acc = readableAccent(accent);
   const currentTime = usePlaybackTime();
+  const [lineAccent, toggleLineAccent] = useLyricAccent();
 
   /* null, or the editor open in 'text' or 'sync'. Closed for a new song: its
      words aren't the ones being edited. */
@@ -619,6 +675,7 @@ function LyricsTab({
            the StudioHome level and are position:fixed, so they serve the dock
            and the fullscreen stage without either owning them. */
         <SyncedLyrics lines={synced} currentTime={currentTime} accent={accent} onSeek={onSeek} fontSize={16} lineHeight={1.5}
+          activeColor={lineAccent ? acc : null}
           selection={selection} onSelectStart={onSelectStart} onSelectLine={onSelectLine} />
       ) : (
         <div className="sth-libscroll" style={{ flex: 1, overflowY: 'auto', padding: '4px 12px' }}>
@@ -637,6 +694,12 @@ function LyricsTab({
           faded until the pointer is over the lyrics. */}
       {track ? (
         <div className="ly-tools">
+          {synced ? (
+            <button type="button" className={lineAccent ? 'is-on' : ''} onClick={toggleLineAccent} aria-pressed={lineAccent}
+              title={lineAccent ? 'Playing line: accent color' : 'Playing line: white'} aria-label="Accent color on the playing line">
+              <Ly d={LyIcon.tint} size={14} />
+            </button>
+          ) : null}
           <button type="button" onClick={() => setEditing('text')} title="Edit lyrics" aria-label="Edit lyrics"><Ly d={LyIcon.pen} size={13} /></button>
           <button type="button" onClick={() => setEditing('sync')} title={synced ? 'Adjust sync' : 'Sync'} aria-label="Sync"><Ly d={LyIcon.clock} size={14} /></button>
           {onBrowseLyrics ? (
@@ -1034,10 +1097,13 @@ function Marquee({ text }) {
   useEffect(() => {
     const box = boxRef.current; const span = textRef.current;
     if (!box || !span) return undefined;
+    /* Measured from the observer only, which reports right after the
+       browser's own layout. Reading the sizes here as well forced a layout of
+       the whole page in the middle of a song starting. */
     const measure = () => setOverflow(span.offsetWidth > box.clientWidth + 1);
-    measure();
     const ro = new ResizeObserver(measure);
     ro.observe(box);
+    ro.observe(span);
     return () => ro.disconnect();
   }, [text]);
 
@@ -1137,17 +1203,13 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
     <div className="sth-npbar" role="region" aria-label="Now playing" style={
       solidWash ? { background: `rgb(${solidWash})` } : (animatedBg ? { background: '#000' } : undefined)
     }>
-      {animatedBg && !solidWash ? (
-        <>
-          <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
-            <AnimatedGradientBg accent={gradBase} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1} />
-          </div>
-          <div aria-hidden style={{
-            position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-            background: 'linear-gradient(90deg, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.16) 22%, rgba(0,0,0,0) 38%)',
-          }} />
-        </>
-      ) : null}
+      <FadeLayer show={!!animatedBg && !solidWash} style={{ zIndex: 0 }}>
+        <AnimatedGradientBg field accent={gradBase} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1} />
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'linear-gradient(90deg, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.16) 22%, rgba(0,0,0,0) 38%)',
+        }} />
+      </FadeLayer>
 
       <div className="sth-npbar-grid">
         {/* ---- Left, 282px: what's playing ---- */}

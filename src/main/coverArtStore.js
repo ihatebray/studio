@@ -1,7 +1,8 @@
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { app, net } from 'electron';
+import { app, net, nativeImage } from 'electron';
+import { hiResCover } from '../lib/coverUrl.js';
 
 const COVER_DIR_NAME = 'cover-cache';
 
@@ -137,6 +138,7 @@ function loadRemoteMap() {
 let remoteMapDirty = false;
 let remoteMapTimer = null;
 function persistRemoteMap() {
+  originalSizes = null; // the map changed: rebuild the reverse lookup when next asked
   remoteMapDirty = true;
   if (remoteMapTimer) return;
   // Coalesced: a folder import can mirror hundreds of covers, and writing the
@@ -205,7 +207,11 @@ export async function storeCoverFromUrl(url) {
 
   const job = (async () => {
     try {
-      const res = await net.fetch(u);
+      /* The CDN's largest copy of the picture when it has one (Spotify search
+         rows carry the 300 or 640px one), so a cover shown big is sharp. */
+      const big = hiResCover(u);
+      let res = big !== u ? await net.fetch(big).catch(() => null) : null;
+      if (!res || !res.ok) res = await net.fetch(u);
       if (!res.ok) return url;
       const type = res.headers.get('content-type') || '';
       if (type && !/^image\//i.test(type)) { remoteMap[u] = ''; persistRemoteMap(); return url; }
@@ -229,3 +235,118 @@ export async function storeCoverFromUrl(url) {
   return job;
 }
 
+
+/* =============================================================================
+ * Upgrading covers mirrored small.
+ *
+ * Covers mirrored before the change above were saved at whatever size the
+ * CDN link asked for, often 300 or 640px, and a record page shows them far
+ * bigger than that. Each one whose CDN has a larger copy is fetched again and
+ * written over the SAME file, so its studio-cover:// address doesn't change:
+ * album pins, colour picks and everything else keyed on it keep working, and
+ * the picture is simply sharper. One at a time in the background, once each
+ * (remembered in hires-covers.json); an offline launch tries again next time.
+ * ========================================================================== */
+const UPGRADED_FILE = 'hires-covers.json';
+
+export async function upgradeMirroredCovers() {
+  loadRemoteMap();
+  const donePath = path.join(app.getPath('userData'), UPGRADED_FILE);
+  let done = {};
+  try { done = JSON.parse(fs.readFileSync(donePath, 'utf8')) || {}; } catch { done = {}; }
+  const todo = [];
+  const seen = new Set();
+  for (const [remote, local] of Object.entries(remoteMap)) {
+    if (!local || done[local] || seen.has(local) || hiResCover(remote) === remote) continue;
+    seen.add(local);
+    todo.push([remote, local]);
+  }
+  if (!todo.length) return;
+  console.log(`[cover hires] upgrading ${todo.length} cover(s)…`);
+  let upgraded = 0;
+  let sinceSave = 0;
+  const save = () => { try { fs.writeFileSync(donePath, JSON.stringify(done), 'utf8'); } catch { /* next run */ } };
+  for (const [remote, local] of todo) {
+    const file = resolveCoverFilePath(local);
+    if (!file || !fs.existsSync(file)) continue;
+    try {
+      const res = await net.fetch(hiResCover(remote));
+      const type = res.headers.get('content-type') || '';
+      if (!res.ok || (type && !/^image\//i.test(type))) {
+        done[local] = 'none'; // the CDN has nothing bigger
+      } else {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > fs.statSync(file).size && buf.length < 24 * 1024 * 1024) {
+          const tmp = `${file}.hires`;
+          fs.writeFileSync(tmp, buf);
+          fs.renameSync(tmp, file);
+          upgraded += 1;
+        }
+        done[local] = 'done';
+      }
+    } catch {
+      break; // offline: the rest wait for the next launch
+    }
+    if (++sinceSave >= 20) { save(); sinceSave = 0; }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  save();
+  console.log(`[cover hires] done: ${upgraded} upgraded`);
+}
+
+/* =============================================================================
+ * The size a cover's colors are read at.
+ *
+ * Cover palettes are worked out from a small grid of the picture's own pixels
+ * (coverTheme.js), so the same artwork at 640px and at 2000px can give
+ * different colors: a detailed cover at 2000px offers different pixels to the
+ * grid and can land on another main color. Covers saved from Spotify or
+ * iTunes used to be the 300 or 640px copy, and their colors were read from
+ * that; now they're the large copy (for sharpness), so their colors moved.
+ *
+ * So colors are read from the cover at the size it was first saved at:
+ * `?for=color` on a studio-cover:// address asks for that copy, made once
+ * from the large file and kept beside it. Covers that were always this size
+ * (your own files' art) are served as they are.
+ * ========================================================================== */
+const SPOTIFY_SIZES = { '00001e02': 300, '0000b273': 640, '00004851': 64 };
+function originalSizeOf(remote) {
+  const sp = /i\.scdn\.co\/image\/ab67616d([0-9a-f]{8})/i.exec(remote);
+  if (sp) return SPOTIFY_SIZES[sp[1].toLowerCase()] || 0;
+  const it = /\/(\d+)x\d+bb\.(?:jpg|png|webp)$/i.exec(remote);
+  return it ? Number(it[1]) : 0;
+}
+let originalSizes = null; // studio-cover:// address → the size it was first saved at
+function originalSizeFor(local) {
+  loadRemoteMap();
+  if (!originalSizes) {
+    originalSizes = new Map();
+    for (const [remote, stored] of Object.entries(remoteMap)) {
+      if (!stored) continue;
+      const n = originalSizeOf(remote);
+      if (n && (!originalSizes.has(stored) || n < originalSizes.get(stored))) originalSizes.set(stored, n);
+    }
+  }
+  return originalSizes.get(local) || 0;
+}
+
+/** The file to read a cover's colors from (see above). */
+export function colorFilePath(url) {
+  const file = resolveCoverFilePath(url);
+  if (!file) return null;
+  const size = originalSizeFor(String(url).split('?')[0]);
+  if (!size) return file;
+  const out = `${file}.color.jpg`;
+  try {
+    const src = fs.statSync(file);
+    if (fs.existsSync(out) && fs.statSync(out).mtimeMs >= src.mtimeMs) return out;
+    const img = nativeImage.createFromPath(file);
+    const { width, height } = img.getSize();
+    if (!width || width <= size * 1.1) return file; // never upgraded: already that size
+    const small = img.resize({ width: size, height: Math.round((height / width) * size), quality: 'best' });
+    fs.writeFileSync(out, small.toJPEG(92));
+    return out;
+  } catch {
+    return file;
+  }
+}

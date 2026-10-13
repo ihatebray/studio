@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   renamePlaylist: (id, name) => ipcRenderer.invoke('playlists:rename', { id, name }),
   removeTrackFromPlaylist: (playlistId, trackId) => ipcRenderer.invoke('playlists:removeTrack', { playlistId, trackId }),
   removeTracksFromPlaylist: (playlistId, trackIds) => ipcRenderer.invoke('playlists:removeTracks', { playlistId, trackIds }),
+  reorderPlaylistTracks: (playlistId, trackIds) => ipcRenderer.invoke('playlists:reorder', { playlistId, trackIds }),
   spotifyGetCredsState: () => ipcRenderer.invoke('spotify:credsState'),
   spotifySetCredentials: (creds) => ipcRenderer.invoke('spotify:setCreds', creds),
   spotifySearch: (query) => ipcRenderer.invoke('spotify:search', query),

@@ -7,7 +7,7 @@ import { hexToRgb, PlayingBars, rgbToHex } from './common.jsx';
 import { INDICATOR_STYLES, setIndicatorStyle, useIndicatorStyle } from '../../lib/playingIndicator.js';
 import { NP_BAR_DEFAULT, THEME_DEFAULTS } from './constants.js';
 import FontSettings from './FontSettings.jsx';
-import { RecordLayoutPicker, recordLayoutOf } from './RecordPage.jsx';
+import { LayoutChoice, recordLayoutOf } from './RecordPage.jsx';
 import { SetHowTo, SetLit, SetRow, SetSeg, SetToggle, SpotifyAccountPanel, StudioColorPicker } from './Settings.jsx';
 import { checkForUpdate, installUpdate, useUpdate } from '../updates.js';
 import Changelog from '../Changelog.jsx';
@@ -26,7 +26,6 @@ export default function SettingsPage({
   compactViz,
   compactVizCover,
   connState,
-  detailAlign,
   discordAppId,
   discordHideWhenPaused,
   discordPresenceDetail,
@@ -52,7 +51,6 @@ export default function SettingsPage({
   pickAccentMode,
   pickCompactMode,
   pickCompactViz,
-  pickDetailAlign,
   pickListDensity,
   pickNpBarColor,
   rawAccent,
@@ -78,10 +76,10 @@ export default function SettingsPage({
      Old stored categories map onto it. */
   const cat = setCat === 'playback' ? 'system' : setCat === 'discord' ? 'connections' : setCat;
   const CATS = {
-    colour: ['Color', 'Which surfaces take their color from the artwork, and how strongly.'],
+    colour: ['Color', 'Dark mode, your accent, and which surfaces take their color from the artwork.'],
     font: ['Font', 'The typeface for the whole app. Rounded faces only; add your own under My fonts.'],
-    layout: ['Layout', 'How pages and lists are arranged.'],
-    library: ['Library', 'What the song table shows, and managing the library itself.'],
+    layout: ['Layout', 'How pages, lists and the window are arranged.'],
+    library: ['Library', 'Following artists, Spotify links, and managing the library itself.'],
     system: ['System', 'Updates and playback behavior.'],
     connections: ['Connections', 'Services Studio uses for search, metadata and downloads, and Discord.'],
   };
@@ -94,7 +92,13 @@ export default function SettingsPage({
       <svg viewBox="0 0 24 24" aria-hidden>{icon}</svg><span className="t">{label}</span>
     </button>
   );
-  const dim = npAnimatedBg ? { opacity: 0.4, pointerEvents: 'none' } : undefined;
+  const dark = !!theme.darkMode;
+  /* Dark mode stands in for every surface below the accent: those rows stay
+     visible, faded, so your own choices are still there to come back to. */
+  const off = { opacity: 0.4, pointerEvents: 'none' };
+  const darkDim = dark ? off : undefined;
+  const dim = npAnimatedBg || dark ? off : undefined;
+  const darkNote = 'Dark mode is on. Turn it off to use this.';
   const ACCENT_SWATCHES = [['255, 122, 89', 'Coral'], ['120, 170, 255', 'Blue'], ['123, 224, 176', 'Mint'], ['214, 150, 255', 'Violet']];
   /* Each tour step starts at the top of its page, where the card is. */
   const bodyRef = React.useRef(null);
@@ -125,42 +129,8 @@ export default function SettingsPage({
 
         {cat === 'colour' ? (
           <div className="sth-set-list">
-            <SetRow title="Immerse" note="A slow gradient made from the artwork, behind the Now Playing bar and side panel. Overrides both settings below." wide={false}>
-              <SetToggle label="Immerse" on={npAnimatedBg} onToggle={toggleNpAnimatedBg} />
-            </SetRow>
-            <SetRow title="Library pages" note="Background for Songs, Albums and Artists. Cover Art tints the top of the list; Full Color carries it all the way down.">
-              <SetSeg label="Library pages" value={theme.pageSurface} onPick={(v) => setThemeKey('pageSurface', v)}
-                options={[['off', 'Off'], ['colour', 'Color'], ['cover', 'Cover art'], ['coverFull', 'Full color']]} />
-              {theme.pageSurface === 'colour' ? (
-                <span className="sth-set-sub"><StudioColorPicker title="Library page color" value={rgbToHex(theme.pageColour)}
-                  onChange={(hex) => { const v = hexToRgb(hex); if (v) setThemeKey('pageColour', v); }}
-                  onReset={() => setThemeKey('pageColour', THEME_DEFAULTS.pageColour)} /></span>
-              ) : null}
-            </SetRow>
-            <SetRow title="Side panel" note={npAnimatedBg ? 'Immerse is showing the artwork here.' : 'Background for the Queue, Lyrics and Info panel. Match Bar reuses the Now Playing bar surface so the two read as one piece.'}>
-              <span style={{ display: 'contents', ...dim }}>
-                <SetSeg label="Side panel" value={theme.panelSurface} onPick={(v) => setThemeKey('panelSurface', v)}
-                  options={[['black', 'Black'], ['colour', 'Color'], ['cover', 'Cover art'], ['bar', 'Match bar']]} />
-              </span>
-              {theme.panelSurface === 'colour' && !npAnimatedBg ? (
-                <span className="sth-set-sub"><StudioColorPicker title="Panel color" value={rgbToHex(theme.panelColour)}
-                  onChange={(hex) => { const v = hexToRgb(hex); if (v) setThemeKey('panelColour', v); }}
-                  onReset={() => setThemeKey('panelColour', THEME_DEFAULTS.panelColour)} /></span>
-              ) : null}
-            </SetRow>
-            <SetRow title="Now Playing bar" note={npAnimatedBg ? 'Immerse is showing the artwork here.' : 'Background for the bar along the bottom. Cover Art follows whatever is playing; Color stays fixed.'}>
-              <span style={{ display: 'contents', ...dim }}>
-                <SetSeg label="Now Playing bar" value={theme.barSurface} onPick={(v) => setThemeKey('barSurface', v)}
-                  options={[['colour', 'Color'], ['cover', 'Cover art']]} />
-              </span>
-              {theme.barSurface === 'colour' && !npAnimatedBg ? (
-                <span className="sth-set-sub"><StudioColorPicker title="Now Playing bar color" value={npBarColor}
-                  onChange={pickNpBarColor} onReset={() => pickNpBarColor(NP_BAR_DEFAULT)} /></span>
-              ) : null}
-            </SetRow>
-            <SetRow title="Color intensity" note="How saturated cover colors get. Off is grayscale; Full is the strongest and makes faint text harder to read.">
-              <SetSeg label="Color intensity" value={theme.colourIntensity} onPick={(v) => setThemeKey('colourIntensity', v)}
-                options={[['off', 'Off'], ['muted', 'Muted'], ['balanced', 'Balanced'], ['vivid', 'Vivid'], ['full', 'Full']]} />
+            <SetRow title="Dark mode" note="A ready-made dark look for every page, the Now Playing bar and the side panel. Covers and artist photos still show; the colors around them don't. Your accent still applies, and the settings below are kept for when you turn it off." wide={false}>
+              <SetToggle label="Dark mode" on={dark} onToggle={() => setThemeKey('darkMode', !dark)} />
             </SetRow>
             <SetRow title="Accent" note="The color used for buttons, toggles, the scrubber and focus rings. White is the default and reads on every surface; Follow artwork matches it to whatever is playing; Fixed pins one color of your choosing.">
               <SetSeg label="Accent" value={accentMode} onPick={pickAccentMode}
@@ -176,74 +146,122 @@ export default function SettingsPage({
                 </span>
               ) : null}
             </SetRow>
+            <SetRow title="Immerse" note={dark ? darkNote : 'A slow gradient made from the artwork, flowing behind the Now Playing bar, the side panel and the Songs, Albums and Artists pages as one piece. It eases off while paused. Overrides the bar, panel and library page settings below.'} wide={false}>
+              <span style={{ display: 'contents', ...darkDim }}><SetToggle label="Immerse" on={npAnimatedBg && !dark} onToggle={toggleNpAnimatedBg} /></span>
+            </SetRow>
+            <SetRow title="Now Playing bar" note={dark ? darkNote : npAnimatedBg ? 'Immerse is showing the artwork here.' : 'Background for the bar along the bottom. Cover Art follows whatever is playing; Color stays fixed.'}>
+              <span style={{ display: 'contents', ...dim }}>
+                <SetSeg label="Now Playing bar" value={theme.barSurface} onPick={(v) => setThemeKey('barSurface', v)}
+                  options={[['colour', 'Color'], ['cover', 'Cover art']]} />
+              </span>
+              {theme.barSurface === 'colour' && !npAnimatedBg && !dark ? (
+                <span className="sth-set-sub"><StudioColorPicker title="Now Playing bar color" value={npBarColor}
+                  onChange={pickNpBarColor} onReset={() => pickNpBarColor(NP_BAR_DEFAULT)} /></span>
+              ) : null}
+            </SetRow>
+            <SetRow title="Side panel" note={dark ? darkNote : npAnimatedBg ? 'Immerse is showing the artwork here.' : 'Background for the Queue, Lyrics and Info panel. Match Bar reuses the Now Playing bar surface so the two read as one piece.'}>
+              <span style={{ display: 'contents', ...dim }}>
+                <SetSeg label="Side panel" value={theme.panelSurface} onPick={(v) => setThemeKey('panelSurface', v)}
+                  options={[['black', 'Black'], ['colour', 'Color'], ['cover', 'Cover art'], ['bar', 'Match bar']]} />
+              </span>
+              {theme.panelSurface === 'colour' && !npAnimatedBg && !dark ? (
+                <span className="sth-set-sub"><StudioColorPicker title="Panel color" value={rgbToHex(theme.panelColour)}
+                  onChange={(hex) => { const v = hexToRgb(hex); if (v) setThemeKey('panelColour', v); }}
+                  onReset={() => setThemeKey('panelColour', THEME_DEFAULTS.panelColour)} /></span>
+              ) : null}
+            </SetRow>
+            <SetRow title="Library pages" note={dark ? darkNote : 'Background for Songs, Albums and Artists. Cover Art tints the top of the list; Full Color carries it all the way down.'}>
+              <span style={{ display: 'contents', ...darkDim }}>
+                <SetSeg label="Library pages" value={theme.pageSurface} onPick={(v) => setThemeKey('pageSurface', v)}
+                  options={[['off', 'Off'], ['colour', 'Color'], ['cover', 'Cover art'], ['coverFull', 'Full color']]} />
+              </span>
+              {theme.pageSurface === 'colour' && !dark ? (
+                <span className="sth-set-sub"><StudioColorPicker title="Library page color" value={rgbToHex(theme.pageColour)}
+                  onChange={(hex) => { const v = hexToRgb(hex); if (v) setThemeKey('pageColour', v); }}
+                  onReset={() => setThemeKey('pageColour', THEME_DEFAULTS.pageColour)} /></span>
+              ) : null}
+            </SetRow>
+            <SetRow title="Album and playlist pages" note={dark ? darkNote : 'Where album, playlist and artist pages take their background. Cover Art follows each one; Fixed uses one color for all of them.'}>
+              <span style={{ display: 'contents', ...darkDim }}>
+                <SetSeg label="Album and playlist pages" value={theme.detailMode} onPick={(v) => setThemeKey('detailMode', v)}
+                  options={[['cover', 'Cover art'], ['fixed', 'Fixed']]} />
+              </span>
+              {theme.detailMode === 'fixed' && !dark ? (
+                <span className="sth-set-sub"><StudioColorPicker title="Page color" value={rgbToHex(theme.detailColor)}
+                  onChange={(hex) => { const v = hexToRgb(hex); if (v) setThemeKey('detailColor', v); }} /></span>
+              ) : null}
+            </SetRow>
           </div>
         ) : null}
 
         {cat === 'font' ? <FontSettings uiFontId={uiFontId} onSetUiFontId={onSetUiFontId} /> : null}
 
         {cat === 'layout' ? (
-          <div className="sth-set-list">
-            {/* Full width: the drawings don't fit the settings' control column. */}
-            <div className="sth-set-r" style={{ display: 'block' }}>
-              <span className="txt"><b>Album Layout</b><p>How album pages are arranged. Classic is the original page.</p></span>
-              <div style={{ marginTop: 14 }}>
-                <RecordLayoutPicker label="Album layout" value={recordLayoutOf(theme.recordLayout)} onPick={(v) => setThemeKey('recordLayout', v)} />
-              </div>
-            </div>
-            <div className="sth-set-r" style={{ display: 'block' }}>
-              <span className="txt"><b>Playlist Layout</b><p>How playlist pages are arranged. Until you pick one, playlists use the album layout.</p></span>
-              <div style={{ marginTop: 14 }}>
-                <RecordLayoutPicker label="Playlist layout" value={recordLayoutOf(theme.playlistLayout ?? theme.recordLayout)} onPick={(v) => setThemeKey('playlistLayout', v)} />
-              </div>
-            </div>
-            <SetRow title="Home page" note="Show or hide My Spotify's Home. Hidden, it leaves the sidebar, Studio opens on New Releases, and album countdowns show at the top of New Releases instead.">
-              <SetSeg label="Home page" value={theme.showHome === false ? 'hide' : 'show'} onPick={(v) => setThemeKey('showHome', v === 'show')}
-                options={[['show', 'Show'], ['hide', 'Hide']]} />
-            </SetRow>
-            <SetRow title="Album songs" note="Album pages show the songs you own, or the whole album from Spotify with the ones you don't have dimmed, ready to play or save.">
-              <SetSeg label="Album songs" value={theme.albumSongs === 'full' ? 'full' : 'owned'} onPick={(v) => setThemeKey('albumSongs', v)}
-                options={[['owned', 'Songs you own'], ['full', 'Whole album']]} />
-            </SetRow>
-            <SetRow title="Album and playlist pages" note="Where these pages take their background. Cover Art follows each release; Fixed uses one shade for all of them.">
-              <SetSeg label="Album and playlist pages" value={theme.detailMode} onPick={(v) => setThemeKey('detailMode', v)}
-                options={[['cover', 'Cover art'], ['fixed', 'Fixed']]} />
-              {theme.detailMode === 'fixed' ? (
-                <span className="sth-set-sub"><StudioColorPicker title="Page color" value={rgbToHex(theme.detailColor)}
-                  onChange={(hex) => { const v = hexToRgb(hex); if (v) setThemeKey('detailColor', v); }} /></span>
-              ) : null}
-            </SetRow>
-            {recordLayoutOf(theme.recordLayout) === 'classic' || recordLayoutOf(theme.playlistLayout ?? theme.recordLayout) === 'classic' ? (
-              <SetRow title="Album header alignment" note="Where the title and artist sit relative to the cover art.">
-                <SetSeg label="Album header alignment" value={detailAlign} onPick={pickDetailAlign}
-                  options={[['flex-start', 'Top'], ['center', 'Center'], ['flex-end', 'Bottom']]} />
+          <>
+            <div className="st-eyebrow sth-set-subhead">Pages</div>
+            <div className="sth-set-list">
+              <SetRow title="Home page" note="Show or hide My Spotify's Home. Hidden, it leaves the sidebar, Studio opens on New Releases, and album countdowns show at the top of New Releases instead.">
+                <SetSeg label="Home page" value={theme.showHome === false ? 'hide' : 'show'} onPick={(v) => setThemeKey('showHome', v === 'show')}
+                  options={[['show', 'Show'], ['hide', 'Hide']]} />
               </SetRow>
-            ) : null}
-            <SetRow title="Active tab marker" note="How the sidebar shows which library tab you are on.">
-              <SetSeg label="Active tab marker" value={navStyle === 'glow' ? 'chip' : navStyle} onPick={setNavStylePref}
-                options={[['chip', 'Chip'], ['bar', 'Bar'], ['underline', 'Underline'], ['dot', 'Dot']]} />
-            </SetRow>
-            <SetRow title="Window layout" note="Compact gives the whole window to the page you're on, with the Now Playing bar full width underneath. Touch the top or left edge to bring back the top bar or the library. Ctrl+Shift+C switches.">
-              <SetSeg label="Window layout" value={compactMode ? 'compact' : 'standard'} onPick={(v) => pickCompactMode(v === 'compact')}
-                options={[['standard', 'Standard'], ['compact', 'Compact']]} />
-            </SetRow>
-            <SetRow title="Compact bar visualizer" note="Fills the empty middle of the library bar in compact mode. Follows local files and Saved Spotify songs alike, and stays still when paused or when reduced motion is on.">
-              <CompactVizPicker value={compactViz} onPick={pickCompactViz} palette={npWashTheme?.palette} accent={rawAccent} coverColours={compactVizCover} />
-            </SetRow>
-            <SetRow title="Visualizer colors from the cover" note="On, the visualizer takes its colors from the album playing. Off, it's drawn in white, whatever the album." wide={false}>
-              <SetToggle label="Visualizer colors from the cover" on={compactVizCover} onToggle={toggleCompactVizCover} />
-            </SetRow>
-            <SetRow title="Notifications" note="Where notifications appear. Own lane makes room for them so they never cover anything; the player bar option shows them over the song info for a moment. Hover a notification to hold it.">
-              <ToastPositionPicker />
-            </SetRow>
-            <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits about half again as many rows on screen.">
-              <SetSeg label="List density" value={listDensity} onPick={pickListDensity}
-                options={[['compact', 'Compact'], ['default', 'Default'], ['roomy', 'Roomy']]} />
-            </SetRow>
-            <SetRow title="Playing indicator" note="What marks the song that's playing, in every list: library, albums and playlists, My Spotify, artist pages, search and the queue. It holds still when paused.">
-              <SetSeg label="Playing indicator" value={indicator} onPick={setIndicatorStyle}
-                options={INDICATOR_STYLES.map(([id, name]) => [id, name, <PlayingBars key={id} kind={id} playing={indicator === id} />])} />
-            </SetRow>
-          </div>
+              <SetRow title="Album layout" note={theme.playlistLayout ? 'How album pages are arranged.' : 'How album and playlist pages are arranged.'}>
+                <LayoutChoice title={theme.playlistLayout ? 'Album layout' : 'Album and playlist layout'} value={recordLayoutOf(theme.recordLayout)} onPick={(v) => setThemeKey('recordLayout', v)} />
+              </SetRow>
+              <SetRow title="Separate playlist layout" note={theme.playlistLayout ? 'Playlists have a layout of their own.' : 'Off, playlists use the album layout.'} wide={false}>
+                <SetToggle label="Separate playlist layout" on={!!theme.playlistLayout}
+                  onToggle={() => setThemeKey('playlistLayout', theme.playlistLayout ? null : recordLayoutOf(theme.recordLayout))} />
+              </SetRow>
+              {theme.playlistLayout ? (
+                <SetRow title="Playlist layout" note="How playlist pages are arranged.">
+                  <LayoutChoice title="Playlist layout" value={recordLayoutOf(theme.playlistLayout)} onPick={(v) => setThemeKey('playlistLayout', v)} />
+                </SetRow>
+              ) : null}
+              <SetRow title="Album songs" note="Album pages show the songs you own, or the whole album from Spotify with the ones you don't have dimmed, ready to play or save.">
+                <SetSeg label="Album songs" value={theme.albumSongs === 'full' ? 'full' : 'owned'} onPick={(v) => setThemeKey('albumSongs', v)}
+                  options={[['owned', 'Songs you own'], ['full', 'Whole album']]} />
+              </SetRow>
+            </div>
+            <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Lists</div>
+            <div className="sth-set-list">
+              <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits about half again as many rows on screen.">
+                <SetSeg label="List density" value={listDensity} onPick={pickListDensity}
+                  options={[['compact', 'Compact'], ['default', 'Default'], ['roomy', 'Roomy']]} />
+              </SetRow>
+              <SetRow title="Playing indicator" note="What marks the song that's playing, in every list: library, albums and playlists, My Spotify, artist pages, search and the queue. It holds still when paused.">
+                <SetSeg label="Playing indicator" value={indicator} onPick={setIndicatorStyle}
+                  options={INDICATOR_STYLES.map(([id, name]) => [id, name, <PlayingBars key={id} kind={id} playing={indicator === id} />])} />
+              </SetRow>
+              <SetRow title="Date added column" note="Shows when each track joined your library. Hiding it gives the space to Title, Artist and Album." wide={false}>
+                <SetToggle label="Date added column" on={showDateAdded} onToggle={toggleDateAdded} />
+              </SetRow>
+              <SetRow title="Play counts in lists" note="Adds a plays column to album and artist pages. Plays are counted either way." wide={false}>
+                <SetToggle label="Play counts in lists" on={showPlayCounts} onToggle={toggleShowPlayCounts} />
+              </SetRow>
+            </div>
+            <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Window</div>
+            <div className="sth-set-list">
+              <SetRow title="Window layout" note="Compact gives the whole window to the page you're on, with the Now Playing bar full width underneath. Touch the top or left edge to bring back the top bar or the library. Ctrl+Shift+C switches.">
+                <SetSeg label="Window layout" value={compactMode ? 'compact' : 'standard'} onPick={(v) => pickCompactMode(v === 'compact')}
+                  options={[['standard', 'Standard'], ['compact', 'Compact']]} />
+              </SetRow>
+              <SetRow title="Active tab marker" note="How the sidebar shows which library tab you are on.">
+                <SetSeg label="Active tab marker" value={navStyle === 'glow' ? 'chip' : navStyle} onPick={setNavStylePref}
+                  options={[['chip', 'Chip'], ['bar', 'Bar'], ['underline', 'Underline'], ['dot', 'Dot']]} />
+              </SetRow>
+              <SetRow title="Notifications" note="Where notifications appear. Own lane makes room for them so they never cover anything; the player bar option shows them over the song info for a moment. Hover a notification to hold it.">
+                <ToastPositionPicker />
+              </SetRow>
+            </div>
+            <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Compact mode</div>
+            <div className="sth-set-list">
+              <SetRow title="Compact bar visualizer" note="Fills the empty middle of the library bar in compact mode. Follows local files and Saved Spotify songs alike, and stays still when paused or when reduced motion is on.">
+                <CompactVizPicker value={compactViz} onPick={pickCompactViz} palette={npWashTheme?.palette} accent={rawAccent} coverColours={compactVizCover} />
+              </SetRow>
+              <SetRow title="Visualizer colors from the cover" note="On, the visualizer takes its colors from the album playing. Off, it's drawn in white, whatever the album." wide={false}>
+                <SetToggle label="Visualizer colors from the cover" on={compactVizCover} onToggle={toggleCompactVizCover} />
+              </SetRow>
+            </div>
+          </>
         ) : null}
 
         {cat === 'library' ? (
@@ -263,12 +281,6 @@ export default function SettingsPage({
                     options={[['slim', 'Slim'], ['strip', 'Strip'], ['capsule', 'Capsule'], ['large', 'Large']]} />
                 </SetRow>
               ) : null}
-              <SetRow title="Date added column" note="Shows when each track joined your library. Hiding it gives the space to Title, Artist and Album." wide={false}>
-                <SetToggle label="Date added column" on={showDateAdded} onToggle={toggleDateAdded} />
-              </SetRow>
-              <SetRow title="Play counts in lists" note="Adds a plays column to album and artist pages. Stats always counts plays either way." wide={false}>
-                <SetToggle label="Play counts in lists" on={showPlayCounts} onToggle={toggleShowPlayCounts} />
-              </SetRow>
             </div>
             {onClearLibrary || onClearEverything ? (
               <>
@@ -478,11 +490,10 @@ const TOUR = [
     body: 'A quick look at each part of Settings. Each one opens as we go, and anything you change sticks right away. Leave the tour whenever you like.' },
   { cat: 'colour', mark: true, title: 'Color',
     points: [
-      ['Immerse', 'a slow gradient from the cover behind the Now Playing bar and side panel'],
-      ['Library pages', 'the background of Songs, Albums and Artists'],
-      ['Side panel and Now Playing bar', 'plain, one color, or tinted by the cover'],
-      ['Color intensity', 'how strong cover colors get, from grayscale to full'],
+      ['Dark mode', 'one switch for a dark look on every page'],
       ['Accent', 'buttons, toggles and the scrubber: white, the cover’s color, or one you pick'],
+      ['Immerse', 'a slow gradient from the cover behind the bar, the side panel and your library'],
+      ['Bar, panel and pages', 'each surface plain, one color, or tinted by the cover'],
     ] },
   { cat: 'font', mark: true, title: 'Font',
     points: [
@@ -491,19 +502,15 @@ const TOUR = [
     ] },
   { cat: 'layout', mark: true, title: 'Layout',
     points: [
-      ['Album and playlist layouts', 'six ways to lay out those pages, set separately'],
-      ['Home page', 'show or hide Home; hidden, countdowns move to New Releases'],
-      ['Album songs', 'just the songs you own, or the whole album'],
-      ['Page background', 'from each cover or one fixed shade, plus header alignment for Classic'],
-      ['Sidebar and window', 'the active-tab marker, and Standard or Compact layout'],
-      ['Playing indicator', 'what marks the playing song in every list: Bars, Beacon or Signal'],
-      ['Also here', 'the compact bar visualizer, where notifications appear, and list density'],
+      ['Pages', 'show or hide Home, the album and playlist layouts, and whole albums or just your songs'],
+      ['Lists', 'row height, the playing indicator (Bars, Beacon or Signal), and the Date added and plays columns'],
+      ['Window', 'Standard or Compact, the sidebar’s active-tab marker, and where notifications appear'],
+      ['Compact mode', 'the visualizer in the library bar'],
     ] },
   { cat: 'library', mark: true, title: 'Library',
     points: [
       ['Auto-follow artists', 'artists with more than 5 songs in your library are followed for you, a few at a time'],
       ['Spotify links', 'copy a Spotify link anywhere and Studio offers to open it'],
-      ['Columns', 'show or hide Date added, and play counts on album and artist pages'],
       ['Clear Library', 'removes songs and playlists but keeps your listening history'],
       ['Delete Everything', 'wipes it all, history included, and starts setup again'],
     ] },

@@ -8,6 +8,46 @@
 
 export const CHANGELOG = [
   {
+    version: '0.0.6',
+    date: '2026-10-13',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Dark Mode', text: 'One click in the top bar gives every page, menu and popup the same dark look, with a little sparkle when it turns on.' },
+          { lead: 'Immerse', text: 'Now also flows behind the Songs, Albums and Artists pages, as one gradient across the whole window. It moves more smoothly and fades in and out instead of cutting.' },
+          { lead: 'Poster Layout', text: 'Rebuilt so covers look their best.', sub: [
+            'Covers from Spotify are now saved in HD, so they stay sharp at any size.',
+            'The cover is placed to keep its subject in view. Drag it to move it, double-click to reset.',
+            'Titles stay readable on bright or busy covers.',
+          ] },
+          { lead: 'Lyric Highlight', text: 'Color the playing line with your accent color. Turn it on from the Lyrics tab.' },
+          { lead: 'Playlist Layout', text: 'Playlists can have their own layout, separate from albums. Find it in Settings → Layout.' },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Smoother', text: 'Starting a song, opening the side panel and switching to compact mode are now animated and no longer stutter.' },
+          { lead: 'Layouts', text: 'Cleaner buttons that only show their background on hover, accent colors that follow your Accent setting, and Spine and Letterbox have been removed.' },
+          { lead: 'Discord', text: 'Covers reach Discord faster and arrive together with the song, and more Spotify covers show up without an imgbb key.' },
+          { lead: 'Window', text: 'Grab any empty space in the top bar to move the window.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed lyrics bouncing as the line changed.',
+          'Fixed the … menu getting cut off and not closing when clicking elsewhere.',
+          'Fixed menus, notifications and Boost not matching dark mode.',
+          'Fixed faint bands behind the cover in fullscreen.',
+          'Fixed the visualizer flickering when opening search.',
+          'Fixed many more UI inconsistencies.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.5',
     date: '2026-10-12',
     sections: [

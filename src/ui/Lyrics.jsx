@@ -573,11 +573,19 @@ function SyncedLyrics({
   selection = null,
   onSelectLine,    // (idx) → toggle / extend selection
   onSelectStart,   // (idx) → enter selection mode anchored at idx
+  activeColor = null, // "r, g, b": the playing line in this colour instead of white
 }) {
   const containerRef = useRef(null);
   const lineRefs = useRef([]);
   const [offset, setOffset] = useState(0);
-  const activeIdx = activeLyricIndex(lines, currentTime);
+  /* The line can only step back for a real seek. A clock that wobbles back
+     a few tenths of a second (a late position report) would otherwise
+     light the previous line again for a moment and bounce the view. */
+  const rawIdx = activeLyricIndex(lines, currentTime);
+  const held = useRef({ idx: -1, time: 0, lines: null });
+  let activeIdx = rawIdx;
+  if (held.current.lines === lines && rawIdx < held.current.idx && held.current.time - currentTime < 0.5) activeIdx = held.current.idx;
+  held.current = { idx: activeIdx, time: Math.max(currentTime, activeIdx === held.current.idx ? held.current.time : 0), lines };
 
   // Ensure refs array matches lines length.
   if (lineRefs.current.length !== lines.length) {
@@ -590,6 +598,14 @@ function SyncedLyrics({
   // When the user is picking lines to share we FREEZE the offset — having
   // the lyric column auto-scroll under your finger would make it impossible
   // to select a stable range.
+  const [boxH, setBoxH] = useState(0);
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c) return undefined;
+    const ro = new ResizeObserver(() => setBoxH(c.clientHeight));
+    ro.observe(c);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => {
     if (selecting) return; // hold position while selecting
     const container = containerRef.current;
@@ -608,7 +624,7 @@ function SyncedLyrics({
     const elTop = el.offsetTop;
     const elH = el.offsetHeight;
     setOffset(-(elTop - containerH / 2 + elH / 2));
-  }, [activeIdx, lines.length, selecting]);
+  }, [activeIdx, lines.length, selecting, boxH]);
 
   // Entering selection mode: transform switches off and native scrolling
   // takes over — hand the current position across so the view doesn't jump.
@@ -714,7 +730,7 @@ function SyncedLyrics({
             styleOpacity = 0.85;
             styleWeight = 400;
           } else {
-            styleColor = isActive ? '#fff' : isPast ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.45)';
+            styleColor = isActive ? (activeColor ? `rgb(${activeColor})` : '#fff') : isPast ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.45)';
             styleOpacity = isActive ? 1 : isPast ? 0.7 : 0.85;
             styleWeight = isActive ? 700 : 400;
           }
@@ -766,7 +782,15 @@ function SyncedLyrics({
                   }}
                 />
               ) : null}
-              {line.text}
+              {/* The line's height is set by an invisible bold copy of it,
+                  so turning bold when it plays (or back when it's done)
+                  can't make it wrap differently and shift the lines around
+                  it. That shift, after the centering offset was already
+                  measured, is what made the lyrics give a little bounce. */}
+              <span style={{ display: 'grid' }}>
+                <span aria-hidden style={{ gridArea: '1 / 1', visibility: 'hidden', fontWeight: 700 }}>{line.text}</span>
+                <span style={{ gridArea: '1 / 1' }}>{line.text}</span>
+              </span>
             </div>
           );
         })}

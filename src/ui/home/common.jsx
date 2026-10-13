@@ -114,6 +114,24 @@ export const MenuItem = React.memo(function MenuItem({ icon, label, sub, danger,
 /* formatTotalMs() moved to mediaUtils.js — the artist page states a
    catalogue's runtime the same way an album states its own. */
 
+/* Dragging songs within a playlist to reorder them. `onMove(id, toIndex)`;
+   null turns it off (a filtered list, an album). Spread props(i, id) on each
+   row and add cls(i) to its className: the dragged row dims and a line marks
+   where it will land. */
+export function useRowDrag(onMove) {
+  const [drag, setDrag] = React.useState(null); // { from, over, id }
+  if (!onMove) return { props: () => ({}), cls: () => '' };
+  const props = (i, id) => ({
+    draggable: true,
+    onDragStart: (e) => { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(id)); } catch { /* ignore */ } setDrag({ from: i, over: i, id }); },
+    onDragOver: (e) => { if (!drag) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (drag.over !== i) setDrag((d) => (d ? { ...d, over: i } : d)); },
+    onDrop: (e) => { e.preventDefault(); if (drag && drag.from !== i) onMove(drag.id, i); setDrag(null); },
+    onDragEnd: () => setDrag(null),
+  });
+  const cls = (i) => (!drag ? '' : i === drag.from ? ' is-dragged' : i === drag.over ? (drag.from < i ? ' is-drop-after' : ' is-drop-before') : '');
+  return { props, cls };
+}
+
 /* The one playing indicator, used by every list: Bars, Beacon or Signal,
    whichever is picked in Settings → Layout (playingIndicator.js). Paused
    holds it still. `acc` is an "r, g, b" string; `color` any CSS color, for

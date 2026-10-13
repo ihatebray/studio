@@ -153,13 +153,19 @@ function CompactVisualizer({
     const fit = () => {
       const r = canvas.getBoundingClientRect();
       const e = engine.current;
-      e.dpr = Math.min(2, window.devicePixelRatio || 1);
-      e.w = Math.max(1, Math.round(r.width));
-      e.h = Math.max(1, Math.round(r.height));
-      canvas.width = e.w * e.dpr;
-      canvas.height = e.h * e.dpr;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(1, Math.round(r.width));
+      const h = Math.max(1, Math.round(r.height));
+      if (w === e.w && h === e.h && dpr === e.dpr) return;
+      e.dpr = dpr; e.w = w; e.h = h;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      /* Resizing a canvas wipes it, and this runs after the frame's draw
+         but before the screen updates: while the box is animating (the
+         search field opening beside it) every frame showed blank. Paint
+         straight back, without moving the animation on (dt 0). */
+      draw(0);
       kick();
-      if (!engine.current.running) draw(0.016);
     };
     const ro = new ResizeObserver(fit);
     ro.observe(canvas);

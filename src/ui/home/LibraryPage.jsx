@@ -1,14 +1,14 @@
 import React from 'react';
 import { pageTone, pageWash, readableAccent, recordDeep, recordWashSource } from '../../lib/coverTheme.js';
-import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
+import { formatTotalMs } from '../../lib/mediaUtils.js';
 import ArtistGrid from '../ArtistGrid.jsx';
 import ArtistPage from '../ArtistPage.jsx';
-import { ExplicitBadge, PauseIcon, PlayIcon } from '../sharedUI.jsx';
-import { PlayingBars } from './common.jsx';
-import { DetailAction, LibHeader, LibRow, RowPlayButton } from './Library.jsx';
-import RecordPage, { isAllCaps, recordLayoutOf } from './RecordPage.jsx';
+import { PlayIcon } from '../sharedUI.jsx';
+import { LibHeader, LibRow } from './Library.jsx';
+import RecordPage, { recordLayoutOf } from './RecordPage.jsx';
 import { coverLayers } from '../../lib/coverUrl.js';
-import ScrollJump from './ScrollJump.jsx';
+import { DARK } from './constants.js';
+import { AnimatedGradientBg, FadeLayer } from '../VisualEffects.jsx';
 
 export default function LibraryPage({
   LIB_OVERSCAN,
@@ -23,7 +23,6 @@ export default function LibraryPage({
   coverFor,
   coverOverride,
   currentTrack,
-  detailAlign,
   detailData,
   detailFilter,
   detailGenres,
@@ -36,6 +35,7 @@ export default function LibraryPage({
   filteredLibArtists,
   fmtAdded,
   immerse,
+  immersePalette = null,
   importing,
   isFollowing,
   isPlaying,
@@ -61,6 +61,7 @@ export default function LibraryPage({
   onImportFolder,
   onPlayTrack,
   onRemoveFromPlaylist,
+  onMovePlaylistSong,    // (trackId, toIndex) on a playlist's page, or null
   onToggleFavorite,
   onTogglePlay,
   onUpdateAlbumMetadata,
@@ -91,8 +92,6 @@ export default function LibraryPage({
   theme,
   toggleFollow,
 }) {
-  // The classic playlist view's song list, for its top/end arrows.
-  const classicScrollRef = React.useRef(null);
   const view = libView;
   /* The hero shows the LIBRARY, always — not the playing track. The
      Now Playing bar already reports that, and two places saying the
@@ -108,11 +107,17 @@ export default function LibraryPage({
      whole cover, or the most prominent colour actually in it. */
   /* 'fixed' skips sampling entirely — the page is the colour you
      chose, whatever is playing. */
-  /* Immerse is the bar and the panel — the chrome around the music.
-     The library pages stay black under it: they're a list you read,
-     and a moving gradient behind three hundred rows competes with
-     the thing it's meant to frame. */
+  /* Immerse takes over the library pages' colour: they show the same
+     moving field as the bar and the panel (see immerseField below), so the
+     page's own wash stands down. Album, playlist and artist pages keep their
+     own colours. */
   const pageMode = detailPage || immerse ? 'off' : theme.pageSurface;
+  const immerseField = immerse && !detailPage && currentTrack;
+  // The song the field was last drawn for, so it can still draw while it
+  // fades out after the track goes away.
+  const lastImmerseTrackRef = React.useRef(null);
+  if (currentTrack) lastImmerseTrackRef.current = currentTrack;
+  const lastImmerseTrack = currentTrack || lastImmerseTrackRef.current;
   const wrapperFixed = pageMode === 'colour';
   const usesCover = pageMode === 'cover' || pageMode === 'coverFull';
   const npWashOn = currentTrack && usesCover && npWashTheme;
@@ -127,16 +132,14 @@ export default function LibraryPage({
      lightness while leaving hue and saturation alone. Using the pick
      raw here (what it did before) gave the page and the chrome the
      same value and collapsed the gap. */
+  /* A record's own color stands in for the cover's, so it only applies
+     where the cover's would: with Library pages on Cover art or Full
+     color. Off, Color and Dark mode leave the page alone. */
   const npWashRgb = wrapperFixed
     ? theme.pageColour
-    : (coverOverride
+    : (coverOverride && currentTrack && usesCover
       ? pageWash(pageTone(coverOverride))
       : (npWashOn ? pageWash(autoRgb) : null));
-  /* Aurora needs several colours at once. Any cover that yielded only
-     one falls back to a single bloom rather than an empty layer. */
-  const npAurora = (npWashOn && theme.coverColour === 'aurora'
-    ? (npWashTheme.palette || []).slice(0, 4).map((c) => pageWash(c))
-    : []);
   const rows = libRows;
   /* The docked Queue / Lyrics / Info panel used to force the search
      onto a row of its own, because the old header couldn't fit a
@@ -174,6 +177,22 @@ export default function LibraryPage({
           colour system rather than two that resemble each other.
           Fades out by the tracklist since this is a list, not a
           record page that owns its whole background. */}
+      {/* ---- Immerse ----
+          The page's slice of the one field the bar and the panel show (see
+          VisualEffects, "One sky"), so the colour runs on from them. A list
+          is read, not looked at, so a scrim sits over it: lightest at the
+          top, settling darker where the rows are, and the field moves slowly
+          enough that it never pulls the eye off a title. */}
+      <FadeLayer show={!!immerseField} style={{ zIndex: 0, overflow: 'hidden', borderRadius: 'inherit' }}>
+        {lastImmerseTrack ? (
+          <AnimatedGradientBg field
+            accent={immersePalette?.accent || accent}
+            mid={immersePalette?.mid || accent.split(',').map((n) => Math.round(Number(n) * 0.82)).join(', ')}
+            wash={immersePalette?.wash || accent.split(',').map((n) => Math.round(Number(n) * 0.45)).join(', ')}
+            coverUrl={coverFor(lastImmerseTrack)} isPlaying={isPlaying} vignette={false} brightness={1} />
+        ) : null}
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.24) 0%, rgba(0,0,0,0.44) 34%, rgba(0,0,0,0.56) 100%)' }} />
+      </FadeLayer>
       {npWashRgb ? (
         <>
           {/* The constant tint. The gradient above it used to stop
@@ -198,15 +217,7 @@ export default function LibraryPage({
           {pageMode !== 'coverFull' && !wrapperFixed ? (
             <div key={npWashRgb} aria-hidden style={{
               position: 'absolute', top: 0, left: 0, right: 0, height: 430, zIndex: 0, pointerEvents: 'none',
-              background: npAurora.length > 1
-                ? npAurora.map((c, i) => {
-                  const spots = ['12% 0%', '86% 10%', '34% 46%', '96% 62%'];
-                  const sizes = ['62% 58%', '54% 52%', '58% 48%', '48% 44%'];
-                  return `radial-gradient(${sizes[i]} at ${spots[i]}, rgba(${c},0.80) 0%, rgba(${c},0) 100%)`;
-                }).join(', ')
-                : `linear-gradient(180deg, rgba(${npWashRgb},0.85) 0%, rgba(${npWashRgb},0.55) 26%, rgba(${npWashRgb},0.30) 58%, rgba(${npWashRgb},0) 100%)`,
-              WebkitMaskImage: npAurora.length > 1 ? 'linear-gradient(180deg, #000 0%, #000 46%, transparent 100%)' : 'none',
-              maskImage: npAurora.length > 1 ? 'linear-gradient(180deg, #000 0%, #000 46%, transparent 100%)' : 'none',
+              background: `linear-gradient(180deg, rgba(${npWashRgb},0.85) 0%, rgba(${npWashRgb},0.55) 26%, rgba(${npWashRgb},0.30) 58%, rgba(${npWashRgb},0) 100%)`,
               animation: 'stFadeIn 0.6s ease both',
             }} />
           ) : null}
@@ -262,12 +273,17 @@ export default function LibraryPage({
              from `accent` — that's sampled from whatever is currently
              playing, so opening an album while a different song ran
              painted the page in the wrong record's colour. */
-          /* 'fixed' uses the colour you chose; 'cover' samples the
-             artwork. Both go through pageWash so a fixed pick gets
-             the same saturation/lightness treatment and can't be set
-             to something unreadable. */
-          const wash = theme.detailMode === 'fixed'
-            ? pageWash(theme.detailColor)
+          /* 'fixed' is the colour you chose, exactly: no lightening or
+             saturation treatment (black stays black). 'cover' samples
+             the artwork and goes through pageWash so text stays
+             readable on any sleeve. */
+          const fixedPage = theme.detailMode === 'fixed';
+          /* Dark mode: the app's own dark, with a lighter shade for the
+             parts of a layout that need to stand apart (Sticky
+             column's panel). */
+          const darkPage = theme.detailMode === 'dark';
+          const wash = darkPage ? DARK.raised : fixedPage
+            ? (theme.detailColor || '70, 84, 190')
             /* Was `dt.mid || dt.accent` — the PREVIOUS colour
                engine's average, written out inline here while the
                now-playing bar had long since moved to the
@@ -283,389 +299,64 @@ export default function LibraryPage({
              — reading it off the old engine's average while the
              wash came from the new one left the lower half of every
              page painted in the wrong colour. */
-          const deep = dt ? recordDeep(dt) : '10, 10, 14';
-          const pageAcc = dt ? dt.accent : accent;
-          const pageAccUI = readableAccent(pageAcc);
-          const recordLayout = recordLayoutOf(detailData.kind === 'playlist' ? (theme.playlistLayout ?? theme.recordLayout) : theme.recordLayout);
-          if (recordLayout !== 'classic') {
-            const isPl = detailData.kind === 'playlist';
-            return (
-              <RecordPage
-                layout={recordLayout}
-                data={detailData}
-                tracks={detailTracks}
-                wash={wash}
-                deep={deep}
-                accUI={pageAccUI}
-                palette={theme.detailMode === 'fixed' ? [] : (dt?.palette || []).slice(0, 4).map((c) => pageWash(c))}
-                genres={detailGenres}
-                libDetailKey={libDetail.key}
-                currentTrack={currentTrack}
-                isPlaying={isPlaying}
-                onPlayTrack={onPlayTrack}
-                onTogglePlay={onTogglePlay}
-                onToggleFavorite={onToggleFavorite}
-                onRemoveFromPlaylist={onRemoveFromPlaylist}
-                canManage={canManage}
-                openRowMenu={openRowMenu}
-                coverFor={coverFor}
-                playCountFor={playCountFor}
-                showPlayCounts={showPlayCounts}
-                libAlbums={libAlbums}
-                libArtists={libArtists}
-                onOpenAlbum={(key) => setLibDetail({ kind: 'album', key })}
-                onOpenArtist={(key) => setLibDetail({ kind: 'artist', key })}
-                onBack={() => setLibDetail(null)}
-                onChangeCover={isPl ? () => setPlCoverFor(libDetail.key) : null}
-                onEditAlbum={!isPl && onUpdateAlbumMetadata ? () => setAlbumEditScope({
-                  key: libDetail.key,
-                  album: detailData.title,
-                  artist: detailData.by,
-                  coverArt: detailData.art,
-                  sampleTrack: detailData.tracks[0],
-                  trackIds: detailData.tracks.map((t) => t.id),
-                  discNumber: null,
-                }) : null}
-                onEditPlaylist={isPl ? () => setRenamePl({ id: libDetail.key, name: detailData.title }) : null}
-                onDeletePlaylist={isPl ? () => setDeletePl({ id: libDetail.key, name: detailData.title }) : null}
-                moreOpen={detailMore}
-                setMoreOpen={setDetailMore}
-                bridge={mySpotifyBridge}
-                fullAlbum={theme.albumSongs === 'full'}
-                onPlayNext={onPlayNext}
-                onAddToQueue={onAddToQueue}
-                onAddToPlaylist={onAddToPlaylist}
-              />
-            );
-          }
-          /* Same columns for both kinds now. The album name earns a
-             column once the artwork is stated once in the header
-             instead of repeated on every row. */
-          /* Brief, Detail pages: stop repeating what the page already
-             said. On an album the ALBUM column goes entirely, and the
-             per-row artist goes when every track shares one; the freed
-             space becomes a PLAYS column when that setting is on. A
-             playlist genuinely needs artist and album, so it keeps both. */
-          const oneArtist = detailData.kind === 'album'
-            && new Set(detailData.tracks.map((t) => (t.artist || '').toLowerCase())).size <= 1;
-          const showAlbumCol = detailData.kind !== 'album';
-          const showPlaysCol = showPlayCounts && detailData.kind === 'album';
-          const cols = [
-            '44px',
-            'minmax(200px,2.4fr)',
-            showAlbumCol ? 'minmax(140px,1.5fr)' : null,
-            showPlaysCol ? '72px' : null,
-            '72px',
-            '52px',
-          ].filter(Boolean).join(' ');
-          const totalMs = detailData.tracks.reduce((n, t) => n + (Number(t.duration) || 0) * 1000, 0);
-          const tilePal = detailData.mosaic && theme.detailMode !== 'fixed' && (dt?.palette || []).length > 1
-            ? [0, 1, 2, 3].map((i) => pageWash(dt.palette[i] || dt.palette[0]))
-            : null;
+          const deep = darkPage ? DARK.page : fixedPage ? (theme.detailColor || '70, 84, 190') : dt ? recordDeep(dt) : '10, 10, 14';
+          const isPl = detailData.kind === 'playlist';
+          /* The color that marks the playing song is your accent, as it is
+             everywhere else: white when Accent is White, the playing song's
+             color when it follows the artwork, your pick when Fixed. The
+             page's cover never overrides it. */
+          const pageAccUI = readableAccent(accent);
+          const recordLayout = recordLayoutOf(isPl ? (theme.playlistLayout ?? theme.recordLayout) : theme.recordLayout);
           return (
-            <div style={{
-              position: 'relative', flex: 1, minWidth: 0, minHeight: 0, height: '100%',
-              display: 'flex', flexDirection: 'column', overflow: 'hidden',
-              /* No radius of its own — the wrapper already rounds the
-                 corners, and a second one drew a panel inside a panel. */
-            }}>
-              {/* The wash. Full strength at the top, settling as it
-                  descends — the reference is a real colour field, not
-                  a tint, so this never resolves to black. */}
-              <div aria-hidden style={{
-                position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-                /* Stronger and no black veil over the top. The veil
-                   that used to sit here dragged every colour toward
-                   brown-grey, which is why the page never looked like
-                   the reference's saturated field. Contrast for the
-                   text comes from `deep` at the bottom instead. */
-                /* Holds colour the whole way down. It used to land on
-                   `deep` at 0.96 by the bottom, which is effectively
-                   black — the reference stays a blue field behind the
-                   entire tracklist, only settling slightly. */
-                background: `linear-gradient(180deg, rgba(${wash},0.85) 0%, rgba(${wash},0.55) 26%, rgba(${wash},0.34) 58%, rgba(${wash},0.28) 100%), rgba(${deep},0.72)`,
-              }} />
-              {/* A four-cover playlist: each cover's colour from its own
-                  corner, over the first cover's wash (it's top left). */}
-              {tilePal ? (
-                <div aria-hidden style={{
-                  position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-                  background: [
-                    `radial-gradient(60% 60% at 100% 0%, rgba(${tilePal[1]},0.6), rgba(${tilePal[1]},0) 100%)`,
-                    `radial-gradient(55% 55% at 0% 100%, rgba(${tilePal[2]},0.45), rgba(${tilePal[2]},0) 100%)`,
-                    `radial-gradient(55% 55% at 100% 100%, rgba(${tilePal[3]},0.45), rgba(${tilePal[3]},0) 100%)`,
-                  ].join(', '),
-                }} />
-              ) : null}
-
-              {/* Back sits in the top-LEFT corner, where every other album
-                  layout and the artist page keep it. Out of flow; the
-                  header starts below it. */}
-              <button type="button" onClick={() => setLibDetail(null)} title="Back" aria-label="Back"
-                style={{
-                  position: 'absolute', top: 14, left: 14, zIndex: 3,
-                  width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  borderRadius: '50%', border: 'none', cursor: 'pointer',
-                  background: 'rgba(0,0,0,0.34)', color: 'rgba(var(--st-text-rgb), 0.85)',
-                }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
-              </button>
-
-              <div style={{ position: 'relative', zIndex: 1, /* 54px top: clearance for the back arrow in the top-left. */
-              display: 'flex', gap: 26, padding: '54px 22px 0', minHeight: 0, flex: 1 }}>
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-
-                  {/* Artwork sits WITH the title. It used to float in a
-                      card on the right while every track row repeated
-                      the same 42px thumbnail — the art belongs to the
-                      record, so it's stated once, here. */}
-                  {/* Alignment is a setting while we compare. The text
-                      block is shorter than the 150px cover, so the
-                      leftover height has to land somewhere: flex-end
-                      puts it above (label mid-artwork), flex-start
-                      below, centre splits it. */}
-                  <div style={{ display: 'flex', alignItems: detailAlign, gap: 24 }}>
-                    {/* On a playlist the artwork IS the cover control —
-                        clicking it opens the picker. Discoverable
-                        where you'd actually reach for it, rather than
-                        as one icon among five in the action row. */}
-                    <div
-                      onClick={detailData.kind === 'playlist' ? () => setPlCoverFor(libDetail.key) : undefined}
-                      title={detailData.kind === 'playlist' ? 'Change cover' : undefined}
-                      className={detailData.kind === 'playlist' ? 'sth-plcover' : undefined}
-                      style={{
-                        position: 'relative', width: 190, height: 190, borderRadius: 9, flexShrink: 0, overflow: 'hidden',
-                        cursor: detailData.kind === 'playlist' ? 'pointer' : 'default',
-                        background: detailData.mosaic
-                          ? detailData.mosaic.map((a, i) => `url("${a}") ${['0 0', '100% 0', '0 100%', '100% 100%'][i]}/50% 50% no-repeat`).join(', ')
-                          : detailData.art ? coverLayers(detailData.art, ' center/cover') : `linear-gradient(140deg, rgba(${wash},0.7), rgba(${wash},0.25))`,
-                        /* The fullscreen stage's artBoxShadow, exactly.
-                           I'd used an OFFSET drop shadow last time —
-                           the stage uses two centred halos with no
-                           offset (tight 5px, then 13px spread 7),
-                           which radiates evenly on all sides instead
-                           of pooling below. That's the glow, and the
-                           zero-blur ring is what stops it banding on
-                           a dark background. */
-                        /* Softened from the stage's values. There the
-                           artwork is the whole screen against a dark
-                           backdrop and can carry a heavy halo; here
-                           it sits beside text on a coloured wash, so
-                           the same opacities read as a dark smear
-                           around it. Same geometry, lighter. */
-                        /* No white ring or lit top edge. Those help on
-                           the fullscreen stage, where the artwork
-                           floats alone — but on art that's already
-                           light at the edges, or has a white border of
-                           its own, they read as a stray outline. The
-                           halo alone separates it from the wash. */
-                        boxShadow: [
-                          '0 0 5px 1px rgba(0,0,0,0.52)',
-                          '0 0 14px 6px rgba(0,0,0,0.48)',
-                        ].join(', '),
-                      }}>
-                      {detailData.kind === 'playlist' ? (
-                        <div className="sth-plcover-veil">
-                          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
-                          </svg>
-                          <span style={{ fontSize: 11.5, fontWeight: 650, marginTop: 7 }}>Change cover</span>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.6)' }}>
-                        {detailData.kind === 'album' ? 'Album' : 'Playlist'}
-                      </div>
-                      {/* Scales with the cover: at 35px against 190px
-                          artwork the title read as a caption beside a
-                          picture rather than the page's subject. */}
-                      <div style={{ fontSize: 44, fontWeight: 800, color: 'var(--st-text)', letterSpacing: '-0.025em', lineHeight: 1.05, marginTop: 3, marginLeft: '-0.05em' }}>{isAllCaps(detailData.title) ? <span className="rp-caps" style={{ fontSize: '0.88em', letterSpacing: '0.015em' }}>{detailData.title}</span> : detailData.title}</div>
-                      <div style={{ fontSize: 14, color: 'rgba(var(--st-sub-rgb), 0.62)', marginTop: 11 }}>
-                        By{' '}
-                        {/* The credit is a link, not a caption — an
-                            artist name should be a way to their page
-                            from wherever it appears. Falls back to
-                            plain text for playlists and for credits
-                            that don't resolve to a library artist. */}
-                        {(() => {
-                          const who = detailData.kind === 'album' ? String(detailData.by || '') : '';
-                          const hit = who
-                            ? libArtists.find((a) => who.toLowerCase().startsWith(a.key))
-                            : null;
-                          if (!hit) return <span style={{ color: 'var(--st-text)', fontWeight: 600 }}>{detailData.by}</span>;
-                          return (
-                            <button type="button" onClick={() => setLibDetail({ kind: 'artist', key: hit.key })}
-                              title={`Go to ${hit.name}`}
-                              style={{ border: 'none', background: 'transparent', padding: 0, font: 'inherit', fontSize: 14, fontWeight: 600, color: 'var(--st-text)', cursor: 'pointer', textDecorationColor: 'rgba(var(--st-fg-rgb), 0.4)', textUnderlineOffset: 3 }}
-                              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}>
-                              {detailData.by}
-                            </button>
-                          );
-                        })()}
-                        {` · ${detailData.tracks.length} songs${formatTotalMs(totalMs) ? ` · ${formatTotalMs(totalMs)}` : ''}`}
-                      </div>
-                      {detailGenres.length ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 11 }}>
-                          {detailGenres.map((g) => (
-                            <span key={g} style={{ fontSize: 12, padding: '6px 14px', borderRadius: 999, background: 'rgba(var(--st-fg-rgb), 0.10)', border: '1px solid rgba(var(--st-fg-rgb), 0.08)', color: 'rgba(var(--st-text-rgb), 0.78)' }}>{g}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '16px 0 14px' }}>
-                    {/* The same white Play button as the other album and playlist layouts. */}
-                    {/* Playing from here: Pause, which pauses rather than starting over. */}
-                    {(() => {
-                      const here = !!currentTrack && detailData.tracks.some((t) => t.id === currentTrack.id);
-                      const pause = here && isPlaying;
-                      return (
-                    <button type="button" onClick={() => (here && onTogglePlay ? onTogglePlay() : onPlayTrack?.(detailData.tracks[0], detailData.tracks))}
-                      aria-label={`${pause ? 'Pause' : 'Play'} ${detailData.title}`}
-                      style={{
-                        height: 46, padding: '0 24px 0 20px', borderRadius: 12, border: 'none', cursor: 'pointer', flexShrink: 0,
-                        display: 'inline-flex', alignItems: 'center', gap: 9, font: 'inherit', fontWeight: 800, fontSize: 15,
-                        background: '#fff', color: '#000', transition: 'transform 0.12s ease',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.03)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; }}>
-                      {pause ? <PauseIcon size={15} /> : <PlayIcon size={15} />}{pause ? 'Pause' : 'Play'}
-                    </button>
-                      );
-                    })()}
-                    <DetailAction title="Shuffle" onClick={() => { const sh = [...detailData.tracks].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); }}>
-                      <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
-                    </DetailAction>
-                    {/* Add-to-playlist and Add-songs removed from this
-                        row. Adding is per-track work and now lives in
-                        the right-click menu, where you're already
-                        pointing at the track you mean. */}
-                    {detailData.kind === 'album' && onUpdateAlbumMetadata ? (
-                      /* Opens the SAME AlbumMetadataEditor the overlay
-                         uses — album name, artist, year, genre, cover,
-                         explicit — applied across every track on the
-                         record. It was built and only ever wired to
-                         the overlay. */
-                      <DetailAction title="Edit album details" onClick={() => setAlbumEditScope({
-                        key: libDetail.key,
-                        album: detailData.title,
-                        artist: detailData.by,
-                        coverArt: detailData.art,
-                        sampleTrack: detailData.tracks[0],
-                        trackIds: detailData.tracks.map((t) => t.id),
-                        discNumber: null,
-                      })}>
-                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
-                      </DetailAction>
-                    ) : null}
-                    {detailData.kind === 'playlist' ? (
-                      <>
-                        <DetailAction title="Edit playlist" onClick={() => setRenamePl({ id: libDetail.key, name: detailData.title })}>
-                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
-                        </DetailAction>
-                        {/* Destructive delete moved into the overflow —
-                            it used to sit two icons from Play. */}
-                        <DetailAction title="More" onClick={() => setDetailMore((v) => !v)}>
-                          <path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth="2.6" />
-                        </DetailAction>
-                        {detailMore ? (
-                          <span style={{ position: 'relative' }}>
-                            <span style={{ position: 'absolute', top: 6, left: -60, zIndex: 20, width: 210, padding: 5, borderRadius: 12, background: '#000', border: '1px solid var(--border)', boxShadow: '0 22px 60px rgba(0,0,0,0.7)' }}>
-                              <button type="button" className="sth-mi" style={{ color: 'var(--danger)' }}
-                                onClick={() => { setDetailMore(false); setDeletePl({ id: libDetail.key, name: detailData.title }); }}>
-                                Delete playlist
-                              </button>
-                            </span>
-                          </span>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </div>
-
-                  <div className="sth-ltable" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                    <div className="sth-lrow sth-lrow-head" style={{ gridTemplateColumns: cols }}>
-                      <div>#</div>
-                      <div>Title</div>
-                      {showAlbumCol ? <div className="sth-lcol-album">Album</div> : null}
-                      {showPlaysCol ? <div style={{ textAlign: 'right' }}>Plays</div> : null}
-                      <div style={{ textAlign: 'right' }}>Time</div>
-                      {/* A long playlist's top/end arrows, in the headings rather
-                          than over the songs. */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        {detailData.kind === 'playlist' ? <ScrollJump scrollRef={classicScrollRef} watch={detailTracks.length} size={24} /> : null}
-                      </div>
-                    </div>
-                    <div className="sth-libscroll sth-lfade" ref={classicScrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-                      {detailTracks.map((t, i) => {
-                        const playing = currentTrack?.id === t.id;
-                        return (
-                          <div key={t.id} className={`sth-lrow${playing ? ' is-playing' : ''}`}
-                            /* 40px art + 7px padding ≈ 56px rows. I had
-                               tightened these to 38px against a much
-                               smaller screenshot; measured against the
-                               full-size reference and scaled to this
-                               window, 57px is the real figure. */
-                            style={{ gridTemplateColumns: cols, padding: '7px 8px' }}
-                            onDoubleClick={() => onPlayTrack?.(t, detailTracks)}
-                            onContextMenu={canManage ? (e) => openRowMenu(e, t) : undefined}>
-                            <div className="sth-lrow-n" style={{ height: 42 }}>
-                              {playing
-                                ? <PlayingBars acc={pageAccUI} playing={isPlaying} />
-                                : <span className="sth-lrow-num">{detailData.kind === 'album' ? (t.trackNumber || i + 1) : i + 1}</span>}
-                              <RowPlayButton
-                                playing={playing} isPlaying={isPlaying} title={t.title}
-                                onPlay={() => onPlayTrack?.(t, detailTracks)} onTogglePlay={onTogglePlay}
-                              />
-                            </div>
-                            {/* No per-row artwork: on an album every
-                                thumbnail is the same image, and the
-                                header states it once at 150px. */}
-                            <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                                  <span style={{ fontSize: 15, fontWeight: 600, color: playing ? `rgb(${pageAccUI})` : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
-                                  {t.explicit ? <ExplicitBadge /> : null}
-                                </div>
-                                {oneArtist ? null : (
-                                  <div style={{ fontSize: 13, color: 'rgba(var(--st-sub-rgb), 0.5)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.artist}</div>
-                                )}
-                              </div>
-                            </div>
-                            {showAlbumCol ? <div className="sth-lrow-dim sth-lcol-album">{t.album}</div> : null}
-                            {showPlaysCol ? <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{playCountFor(t.id)}</div> : null}
-                            <div className="sth-lrow-dim st-num" style={{ textAlign: 'right' }}>{formatTime(t.duration)}</div>
-                            <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-                              {onToggleFavorite ? (
-                                /* Always visible — a heart you can't see
-                                   is a heart whose state you can't read. */
-                                <button type="button" className="sth-lrow-more" onClick={() => onToggleFavorite(t.id)}
-                                  title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                                  style={{ opacity: 1, color: t.isFavorite ? `rgb(${pageAccUI})` : 'rgba(var(--st-fg-rgb), 0.4)' }}>
-                                  <svg width="15" height="15" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
-                                  </svg>
-                                </button>
-                              ) : null}
-                              {detailData.kind === 'playlist' && onRemoveFromPlaylist ? (
-                                <button type="button" className="sth-lrow-more" onClick={() => onRemoveFromPlaylist(libDetail.key, t.id)}
-                                  title="Remove from playlist">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      <div style={{ height: 14 }} />
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
+            <RecordPage
+              layout={recordLayout}
+              data={detailData}
+              tracks={detailTracks}
+              wash={wash}
+              deep={deep}
+              exact={fixedPage || darkPage}
+              dark={darkPage}
+              accUI={pageAccUI}
+              palette={fixedPage || darkPage ? [] : (dt?.palette || []).slice(0, 4).map((c) => pageWash(c))}
+              genres={detailGenres}
+              libDetailKey={libDetail.key}
+              currentTrack={currentTrack}
+              isPlaying={isPlaying}
+              onPlayTrack={onPlayTrack}
+              onTogglePlay={onTogglePlay}
+              onToggleFavorite={onToggleFavorite}
+              onRemoveFromPlaylist={onRemoveFromPlaylist}
+              onMovePlaylistSong={onMovePlaylistSong}
+              canManage={canManage}
+              openRowMenu={openRowMenu}
+              coverFor={coverFor}
+              playCountFor={playCountFor}
+              showPlayCounts={showPlayCounts}
+              libAlbums={libAlbums}
+              libArtists={libArtists}
+              onOpenAlbum={(key) => setLibDetail({ kind: 'album', key })}
+              onOpenArtist={(key) => setLibDetail({ kind: 'artist', key })}
+              onBack={() => setLibDetail(null)}
+              onChangeCover={isPl ? () => setPlCoverFor(libDetail.key) : null}
+              onEditAlbum={!isPl && onUpdateAlbumMetadata ? () => setAlbumEditScope({
+                key: libDetail.key,
+                album: detailData.title,
+                artist: detailData.by,
+                coverArt: detailData.art,
+                sampleTrack: detailData.tracks[0],
+                trackIds: detailData.tracks.map((t) => t.id),
+                discNumber: null,
+              }) : null}
+              onEditPlaylist={isPl ? () => setRenamePl({ id: libDetail.key, name: detailData.title }) : null}
+              onDeletePlaylist={isPl ? () => setDeletePl({ id: libDetail.key, name: detailData.title }) : null}
+              moreOpen={detailMore}
+              setMoreOpen={setDetailMore}
+              bridge={mySpotifyBridge}
+              fullAlbum={theme.albumSongs === 'full'}
+              onPlayNext={onPlayNext}
+              onAddToQueue={onAddToQueue}
+              onAddToPlaylist={onAddToPlaylist}
+            />
           );
         })()
       ) : view === 'artists' ? (

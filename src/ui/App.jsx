@@ -719,7 +719,8 @@ export default function App() {
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return null;
-      const ctx = new Ctx();
+      // Usually opened ahead of time (see the warm-up below).
+      const ctx = audioCtxRef.current || new Ctx();
 
       // Wire one element into a source + its own crossfade gain. Each element
       // MUST get its own MediaElementSource (the binding is permanent and
@@ -883,6 +884,26 @@ export default function App() {
     if (ev?.event === 'levels' && Number.isFinite(ev.gr)) helperReductionRef.current = { db: ev.gr, at: Date.now() };
   }), []);
 
+  /* Opening the audio device is the slow part of building the graph (tens to
+     hundreds of milliseconds on Windows), and it used to happen the moment
+     the first song started, freezing the Now Playing bar and side panel as
+     they came in. Opened once the app is idle instead, and left suspended:
+     it costs nothing until the first play resumes it and wires the graph. */
+  useEffect(() => {
+    const warm = () => {
+      if (audioCtxRef.current) return;
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        const ctx = new Ctx();
+        ctx.suspend?.().catch?.(() => {});
+        audioCtxRef.current = ctx;
+      } catch { /* built on first play instead */ }
+    };
+    const id = typeof requestIdleCallback === 'function' ? requestIdleCallback(warm, { timeout: 4000 }) : setTimeout(warm, 1500);
+    return () => { if (typeof cancelIdleCallback === 'function') cancelIdleCallback(id); else clearTimeout(id); };
+  }, []);
+
   // Resume the audio context whenever playback begins — Chrome auto-suspends
   // it on inactivity, and after a tab backgrounds-then-foregrounds the
   // analyser stops producing data until resumed.
@@ -905,8 +926,9 @@ export default function App() {
         catch { gainNode.gain.value = gainBoost; }
       }
     }
+    // Only once the graph exists: a context warmed up early stays asleep until it has work.
     const ctx = audioCtxRef.current;
-    if (ctx && ctx.state === 'suspended') {
+    if (ctx && analyserRef.current && ctx.state === 'suspended') {
       ctx.resume().catch(() => { /* ignore */ });
     }
   }, [isPlaying, beatReactive, gainBoost, transitionMode, ensureAnalyser]);
@@ -1601,6 +1623,16 @@ export default function App() {
     });
   }, [currentIndex]);
 
+  /** Take one song out of the queue. Never the one playing: the queue
+   *  menu only offers it for what's up next. */
+  const removeFromQueue = useCallback((index) => {
+    if (index === currentIndex) return;
+    setQueue((prev) => {
+      if (index < 0 || index >= prev.length) return prev;
+      return prev.filter((_, i) => i !== index);
+    });
+    if (index < currentIndex) setCurrentIndex((i) => i - 1);
+  }, [currentIndex]);
 
 
 
@@ -1728,6 +1760,9 @@ export default function App() {
         t.coverArt,
       ].find(isPublicHttpUrl) || '';
       if (publicUrl) return { studioUrl: null, publicUrl };
+      // A Spotify song's own cover is public already: the lookup gets it from
+      // Spotify, no upload needed. (Custom covers returned above.)
+      if (spotifyIdOf(t)) return { studioUrl: null, publicUrl: '' };
       // mergeCoverArt keeps the studio-cover:// path in coverArtLocal when it
       // swaps coverArt for a freshly parsed data: URI.
       return { studioUrl: [t.coverArtLocal, t.coverArt].find(isStudio) || null, publicUrl: '' };
@@ -1737,9 +1772,9 @@ export default function App() {
     const imgurKey = studioUrl ? `imgur:${studioUrl}` : null;
     const cachedImgur = imgurKey ? (discordArtworkCacheRef.current.get(imgurKey) || '') : '';
 
-    // Songs with no art of their own at all: the cover lookup (by artist,
-    // album and title). Never for local or custom art: those only ever go
-    // through imgbb.
+    // Songs with no public art: the cover lookup (Spotify's link preview for
+    // Spotify songs, then iTunes by artist, album and title). Never for
+    // local or custom art: those only ever go through imgbb.
     const cacheKey = `${(track.artist || '').trim()}|${(track.album || '').trim()}|${(track.title || '').trim()}`.toLowerCase();
     const cachedRemote = studioUrl ? '' : discordArtworkCacheRef.current.get(cacheKey);
     const coverArtUrl = localCoverUrl || cachedImgur || cachedRemote || '';
@@ -1756,13 +1791,28 @@ export default function App() {
     // What a late cover is added to: always the newest state of this song
     // (a pause while the upload ran must not be undone by it).
     discordPayloadRef.current = { trackId, payload };
-    const pushLate = (url) => {
+    /* A cover that arrives late becomes part of the song's current state,
+       so whatever is sent next for this song (a held send, a pause) keeps
+       it instead of going back to no cover. */
+    const keepCover = (url) => {
       const cur = discordPayloadRef.current;
-      if (!url || cur?.trackId !== trackId) return; // moved on
-      api.discordSetActivity({ ...cur.payload, coverArtUrl: url }).catch(() => { /* ignore */ });
+      if (!url || cur?.trackId !== trackId) return null;
+      cur.payload = { ...cur.payload, coverArtUrl: url };
+      return cur;
+    };
+    const pushLate = (url) => {
+      const cur = keepCover(url);
+      if (!cur) return; // moved on, or nothing to add
+      api.discordSetActivity(cur.payload).catch(() => { /* ignore */ });
     };
 
     const uploading = !!(studioUrl && !cachedImgur && effectiveImgbbApiKey && api.discordResolveCoverUrl);
+    /* Its cover is being looked up (a song with no art of its own): worth
+       waiting for too, so the song reaches Discord once, with its cover,
+       instead of twice. Discord only takes about five updates per 20s. */
+    const lookingUp = !studioUrl && !localCoverUrl && (cachedRemote === undefined || cachedRemote === null)
+      && !!api.discordLookupArtwork && !!(track.artist || track.album || track.title);
+    const coverComing = uploading || lookingUp;
     /* A new song whose cover is still uploading: give the upload up to 2.5s
        from the song change before telling Discord, so it goes straight to
        the right cover instead of a blank one first. Measured from the song
@@ -1770,11 +1820,36 @@ export default function App() {
        than once (the song, then playback starting). */
     const holdFor = discordHoldUntilRef.current - Date.now();
     let holdTimer = null;
-    if (uploading && holdFor > 0) {
+    let retryTimer = null;
+    if (coverComing && holdFor > 0) {
       holdTimer = setTimeout(() => { holdTimer = null; api.discordSetActivity(discordPayloadRef.current?.payload || payload).catch(() => { /* ignore */ }); }, holdFor);
     } else {
       api.discordSetActivity(payload).catch(() => { /* ignore */ });
     }
+
+    /* Look a cover up (main asks Spotify's link preview, then iTunes, and
+       remembers the answer across launches). One lookup per song: the
+       next-song prefetch and the song itself share it. */
+    const keyOf = (t) => `${(t.artist || '').trim()}|${(t.album || '').trim()}|${(t.title || '').trim()}`.toLowerCase();
+    const lookupCover = (t) => {
+      const key = keyOf(t);
+      const flight = `lookup:${key}`;
+      if (discordUploadsRef.current.has(flight)) return discordUploadsRef.current.get(flight);
+      discordArtworkCacheRef.current.set(key, null); // in flight
+      const p = api.discordLookupArtwork({ title: t.title || '', artist: t.artist || '', album: t.album || '', spotifyId: spotifyIdOf(t) || t.spotifyId || '' })
+        .then((res) => {
+          const url = res?.url || '';
+          // Busy or offline is not an answer: forget it, so it's asked again.
+          const retry = !url && !!(res?.retry || res?.error);
+          if (retry) discordArtworkCacheRef.current.delete(key);
+          else discordArtworkCacheRef.current.set(key, url);
+          return { url, retry };
+        })
+        .catch(() => { discordArtworkCacheRef.current.delete(key); return { url: '', retry: true }; })
+        .finally(() => { discordUploadsRef.current.delete(flight); });
+      discordUploadsRef.current.set(flight, p);
+      return p;
+    };
 
     /* Upload to imgbb: once per image (main keeps the result on disk by the
        image's hash); a failure is tried again on a later play. */
@@ -1797,38 +1872,47 @@ export default function App() {
     if (uploading) {
       upload(studioUrl).then((url) => {
         if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        keepCover(url);
         const cur = discordPayloadRef.current;
         if (cur?.trackId !== trackId) return;
         // In time: one update with the cover. Late, or failed: the song goes
         // up without it (if it hasn't already) and the cover follows.
-        api.discordSetActivity(url ? { ...cur.payload, coverArtUrl: url } : cur.payload).catch(() => { /* ignore */ });
+        api.discordSetActivity(cur.payload).catch(() => { /* ignore */ });
       });
     }
-    // The next song's cover, uploaded ahead so it's ready when it starts.
+    /* The next song's cover, readied ahead (uploaded, or looked up) so it's
+       there the moment the song starts: one Discord update, cover and all. */
     const next = queue[currentIndex + 1];
-    if (next && effectiveImgbbApiKey && api.discordResolveCoverUrl) {
+    if (next) {
       const n = artFor(next);
-      if (n.studioUrl) upload(n.studioUrl);
+      if (n.studioUrl) {
+        if (effectiveImgbbApiKey && api.discordResolveCoverUrl) upload(n.studioUrl);
+      } else if (!n.publicUrl && api.discordLookupArtwork && !discordArtworkCacheRef.current.has(keyOf(next)) && (next.artist || next.title)) {
+        lookupCover(next);
+      }
     }
 
-    /* The cover lookup: only for a song with no art of its own and no
-       custom cover. */
-    if (
-      !studioUrl && !localCoverUrl
-      && !discordArtworkCacheRef.current.has(cacheKey)
-      && api.discordLookupArtwork
-      && (track.artist || track.album || track.title)
-    ) {
-      discordArtworkCacheRef.current.set(cacheKey, null); // in flight
-      api.discordLookupArtwork({ title: track.title || '', artist: track.artist || '', album: track.album || '' })
-        .then((res) => {
-          const url = res?.url || '';
-          discordArtworkCacheRef.current.set(cacheKey, url);
-          pushLate(url);
-        })
-        .catch(() => { discordArtworkCacheRef.current.set(cacheKey, ''); });
+    /* The cover lookup: only for a song with no public art and no custom
+       cover. Joins the prefetch's lookup if that's still running. */
+    if (lookingUp) {
+      const run = (retries) => lookupCover(track).then(({ url, retry }) => {
+        if (holdTimer) {
+          // Still holding the song for it: send the song once, cover and all.
+          clearTimeout(holdTimer); holdTimer = null;
+          keepCover(url);
+          const cur = discordPayloadRef.current;
+          if (cur?.trackId === trackId) api.discordSetActivity(cur.payload).catch(() => { /* ignore */ });
+        } else pushLate(url);
+        // Busy: ask once more in a while, if the song is still on.
+        if (retry && retries > 0) {
+          retryTimer = setTimeout(() => {
+            if (discordPayloadRef.current?.trackId === trackId && !discordArtworkCacheRef.current.has(cacheKey)) run(retries - 1);
+          }, 20000);
+        }
+      });
+      run(1);
     }
-    return () => { if (holdTimer) clearTimeout(holdTimer); };
+    return () => { if (holdTimer) clearTimeout(holdTimer); if (retryTimer) clearTimeout(retryTimer); };
     // Note: we deliberately depend on currentTrack identity + isPlaying
     // + seekNonce only, NOT currentTime. currentTime ticks every audio
     // frame and would spam Discord. Track changes and play/pause both
@@ -2487,6 +2571,19 @@ export default function App() {
     return r;
   };
 
+  /* A playlist's songs in a new order. Shown at once; put back if saving
+     fails. */
+  const reorderPlaylistTracks = async (playlistId, trackIds) => {
+    const api = typeof window !== 'undefined' ? window.electronAPI : null;
+    if (!api?.reorderPlaylistTracks) return { ok: false, error: 'Not supported' };
+    const before = (playlists || []).find((p) => p.id === playlistId)?.trackIds || null;
+    setPlaylists((ls) => ls.map((p) => (p.id === playlistId ? { ...p, trackIds } : p)));
+    const r = await api.reorderPlaylistTracks(playlistId, trackIds);
+    if (r?.ok && Array.isArray(r.trackIds)) setPlaylists((ls) => ls.map((p) => (p.id === playlistId ? { ...p, trackIds: r.trackIds } : p)));
+    else if (before) setPlaylists((ls) => ls.map((p) => (p.id === playlistId ? { ...p, trackIds: before } : p)));
+    return r;
+  };
+
   const deletePlaylist = async (id) => {
     const api = window.electronAPI;
     if (!api?.deletePlaylist) return { ok: false, error: 'Not supported' };
@@ -2600,6 +2697,7 @@ export default function App() {
         onRenamePlaylist={renamePlaylist}
         onUpdatePlaylist={updatePlaylist}
         onRemoveFromPlaylist={removeTrackFromPlaylist}
+        onReorderPlaylist={reorderPlaylistTracks}
         onImportFiles={importFiles}
         onImportSpotify={() => setSpotifyImportOpen(true)}
         spotifyImportOpen={spotifyImportOpen}
@@ -2653,6 +2751,7 @@ export default function App() {
         /* Already existed and was never wired to anything — the queue panel
            had no way to ask for a move until now. */
         onReorderQueue={reorderQueue}
+        onRemoveFromQueue={removeFromQueue}
         imgbbApiKey={imgbbApiKey}
         onSetImgbbApiKey={setImgbbApiKey}
         uiFontId={uiFontId}

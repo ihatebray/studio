@@ -249,6 +249,9 @@ const CSS = `
 .msp-mcd-i.is-tint { border-color: rgba(255,255,255,0.12); background: linear-gradient(120deg, rgba(var(--t), 0.95), rgba(var(--t), 0.45)); }
 .msp-mcd-i.is-tint b, .msp-mcd-i.is-tint .tm { color: #fff; }
 .msp-mcd-i.is-tint small { color: rgba(255,255,255,0.72); }
+/* Dark mode keeps the countdown cards plain, like the rest of the page. */
+[data-dark] .msp-mcd-i.is-tint { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1); }
+[data-dark] .msp-mcd-i.is-tint small { color: rgba(255,255,255,0.6); }
 .msp-mcd-i img, .msp-mcd-i .ph { width: 40px; height: 40px; border-radius: 7px; object-fit: cover; flex-shrink: 0; background: rgba(var(--st-fg-rgb), 0.1); }
 .msp-mcd-i .tx { display: flex; flex-direction: column; min-width: 0; max-width: 170px; }
 .msp-mcd-i b { font-size: 13px; font-weight: 700; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -572,7 +575,8 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
   }, [focus]);
   if (row.notOut) {
     return (
-      <div ref={ref} className={cx('msp-row', 'is-locked', !showArt && 'no-art')} aria-disabled title="Not out yet">
+      <div ref={ref} className={cx('msp-row', 'is-locked', !showArt && 'no-art')} aria-disabled title="Not out yet"
+        onContextMenu={(e) => bridge.openMenu?.(e, row)}>
         <span className="n">{n}</span>
         {showArt ? <Art src={row.albumArtUrl} /> : null}
         <span style={{ minWidth: 0 }}>
@@ -588,6 +592,7 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
   }
   return (
     <div ref={ref} className={cx('msp-row', on && 'on', !showArt && 'no-art', focus && 'is-focus')} role="button" tabIndex={0}
+      onContextMenu={(e) => bridge.openMenu?.(e, row)}
       onClick={() => bridge.playRows(list, index, { context })}
       onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}>
       <span className="n">{on ? <PlayingBars playing={bridge.isPlaying} /> : n}</span>
@@ -1405,6 +1410,7 @@ export function SpotifyHome({ bridge }) {
                   <div className="msp-grid is-small is-clip" style={{ '--rows': 2 }}>
                     {data.allTime.slice(0, 20).map((t, i) => (
                       <div key={t.spotifyId} className="msp-tile" role="button" tabIndex={0}
+                        onContextMenu={(e) => bridge.openMenu?.(e, t)}
                         onClick={() => bridge.playRows(data.allTime, i)} onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(data.allTime, i); }}>
                         <Art src={t.albumArtUrl}>
                           <span className="msp-rank">{i + 1}</span>
@@ -1536,6 +1542,7 @@ function ReleaseTracks({ release, bridge, context }) {
         const on = bridge.isCurrent(r);
         return (
           <div key={`${r.spotifyId}:${i}`} className={cx('msp-trow', on && 'on')} role="button" tabIndex={0}
+            onContextMenu={(e) => bridge.openMenu?.(e, { ...r, album: r.album || release.name, albumId: r.albumId || release.albumId })}
             onClick={() => bridge.playRows(rows, i, { context })}
             onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(rows, i, { context }); }}>
             <span className="n">{on ? <PlayingBars playing={bridge.isPlaying} /> : <><span className="num">{i + 1}</span><span className="pl">{Icon.play(11)}</span></>}</span>

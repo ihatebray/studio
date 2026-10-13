@@ -36,13 +36,15 @@ const CSS = `
 .stv-boost.on:hover, .stv-boost.on.open { background: rgba(255,255,255,0.14); }
 .stv-boost .stv-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent, #fff); box-shadow: 0 0 6px var(--accent, #fff); }
 
-.stv-pop { position: fixed; z-index: 9000; box-sizing: border-box; width: 272px; padding: 14px 14px 12px; border-radius: 14px;
-  background: rgba(22,22,24,0.985); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 22px 60px rgba(0,0,0,0.55);
+.stv-pop { position: fixed; z-index: 9000; box-sizing: border-box; width: 272px; padding: 16px 16px 14px; border-radius: 14px;
+  /* Solid, in the app's card colour like every other floating layer: the
+     old near-opaque grey let the page's text show through it. */
+  background: var(--surface, #0A0A0B); border: 1px solid var(--border, rgba(255,255,255,0.1)); box-shadow: 0 22px 60px rgba(0,0,0,0.55);
   color: #fff; font-size: 12px; transform-origin: bottom right; animation: stv-in .14s ease-out;
   -webkit-app-region: no-drag; }
 @keyframes stv-in { from { opacity: 0; transform: translateY(4px) scale(.98); } to { opacity: 1; transform: none; } }
-.stv-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
-.stv-title { font-size: 12px; font-weight: 700; color: rgba(255,255,255,0.86); }
+.stv-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.stv-title { font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.9); }
 .stv-read { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; }
 .stv-read.off { color: rgba(255,255,255,0.4); }
 
@@ -55,26 +57,27 @@ const CSS = `
   box-shadow: 0 1px 4px rgba(0,0,0,0.6); pointer-events: none; transition: transform .12s ease; }
 .stv-range:hover .stv-knob, .stv-range input:focus-visible ~ .stv-knob { transform: scale(1.12); }
 .stv-range input:focus-visible ~ .stv-knob { box-shadow: 0 0 0 3px rgba(255,255,255,0.25), 0 1px 4px rgba(0,0,0,0.6); }
-.stv-ticks { position: relative; height: 14px; margin-top: 2px; }
+.stv-ticks { position: relative; height: 14px; margin-top: 4px; }
 .stv-ticks span { position: absolute; transform: translateX(-50%); font-size: 9.5px; color: rgba(255,255,255,0.38); font-variant-numeric: tabular-nums; }
 
-.stv-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 10px 0 12px; padding: 3px;
+.stv-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 14px 0 0; padding: 3px;
   border-radius: 9px; background: rgba(255,255,255,0.05); }
-.stv-presets button { height: 24px; border: none; border-radius: 6px; background: transparent; color: rgba(255,255,255,0.6);
+.stv-presets button { height: 26px; border: none; border-radius: 6px; background: transparent; color: rgba(255,255,255,0.6);
   font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums; }
 .stv-presets button:hover { color: #fff; background: rgba(255,255,255,0.06); }
 .stv-presets button.on { color: #000; background: #fff; }
 
-.stv-meter { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; }
+/* The limiter is a readout, not a control: set off below a hairline. */
+.stv-meter { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.07); }
 .stv-meter-label { font-size: 10.5px; font-weight: 700; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.06em; }
 .stv-meter-bar { display: grid; grid-template-columns: repeat(12, 1fr); gap: 2px; height: 8px; direction: rtl; }
 .stv-meter-bar i { border-radius: 1.5px; background: rgba(255,255,255,0.08); transition: background .08s linear; }
 .stv-meter-bar i.lit { background: rgba(255,255,255,0.85); }
 .stv-meter-bar i.lit.hot { background: rgb(255,170,90); }
 .stv-meter-bar i.lit.over { background: rgb(243,114,114); }
-.stv-meter-val { min-width: 48px; text-align: right; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); }
+.stv-meter-val { min-width: 56px; text-align: right; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); }
 .stv-meter-val.idle { color: rgba(255,255,255,0.35); font-weight: 600; }
-.stv-note { margin-top: 10px; font-size: 11px; line-height: 1.45; color: rgba(255,255,255,0.45); }
+.stv-note { margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: rgba(255,255,255,0.5); }
 `;
 
 function BoostIcon() {

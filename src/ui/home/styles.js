@@ -260,6 +260,36 @@ export const HOME_CSS = `
            click-to-expand, so the hand cursor was promising an action that
            no longer exists. */
         .sth-npbar { position: fixed; left: var(--np-bar-left, 238px); right: 12px; bottom: 12px; height: 84px; z-index: 30; border-radius: 14px; overflow: hidden; background: var(--np-bar-bg, #20242f); border: none; animation: sthBarIn 0.28s cubic-bezier(0.22,1,0.36,1) both; }
+        /* The side panel slides the whole way in from the window's edge, and
+           back out, on the same curve and timing the content uses to make
+           room for it, so the two edges travel together. */
+        /* Entering and leaving compact mode. The frame measurements every
+           surface reads are registered as lengths, so when the mode changes
+           they glide instead of jumping: the card grows into the space while
+           the top bar and sidebar slide off on the same curve and timing
+           (sthTopOut / sthSideOut), each edge travelling with the card's edge
+           beside it. Leaving compact is the same motion in reverse. */
+        @property --shell-top { syntax: '<length>'; inherits: true; initial-value: 62px; }
+        @property --gutter { syntax: '<length>'; inherits: true; initial-value: 16px; }
+        @property --gap { syntax: '<length>'; inherits: true; initial-value: 12px; }
+        @property --np-bar-left { syntax: '<length>'; inherits: true; initial-value: 236px; }
+        @property --content-left { syntax: '<length>'; inherits: true; initial-value: 236px; }
+        @property --np-reserve { syntax: '<length>'; inherits: true; initial-value: 16px; }
+        /* Only while switching modes. Left on all the time, it also glided the
+           room kept for the Now Playing bar when a song started, re-laying out
+           the whole page every frame of that half second, which is what made
+           the bar and panel judder in. */
+        .sth-root.is-mode-anim { transition: --shell-top 0.46s cubic-bezier(0.32,0.72,0,1), --gutter 0.46s cubic-bezier(0.32,0.72,0,1),
+          --gap 0.46s cubic-bezier(0.32,0.72,0,1), --np-bar-left 0.46s cubic-bezier(0.32,0.72,0,1),
+          --content-left 0.46s cubic-bezier(0.32,0.72,0,1), --np-reserve 0.46s cubic-bezier(0.32,0.72,0,1); }
+        @keyframes sthTopOut { from { transform: none; } to { transform: translateY(-100%); } }
+        @keyframes sthTopIn { from { transform: translateY(-100%); } to { transform: none; } }
+        @keyframes sthSideOut { from { transform: none; } to { transform: translateX(-100%); } }
+        @keyframes sthSideIn { from { transform: translateX(-100%); } to { transform: none; } }
+        @media (prefers-reduced-motion: reduce) { .sth-root { transition: none; } }
+        @keyframes sthDockIn { from { opacity: 0.4; transform: translateX(calc(100% + 24px)); } to { opacity: 1; transform: none; } }
+        @keyframes sthDockOut { from { opacity: 1; transform: none; } to { opacity: 0.4; transform: translateX(calc(100% + 24px)); } }
+        @media (prefers-reduced-motion: reduce) { @keyframes sthDockIn { from { opacity: 0; } to { opacity: 1; } } @keyframes sthDockOut { from { opacity: 1; } to { opacity: 0; } } }
         @keyframes sthPanelIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
         /* Popovers grow from the control that opened them, rather than sliding
            in from the right the way the docked panel does. */
@@ -588,7 +618,7 @@ export const HOME_CSS = `
            cluster still aligns. */
         .sth-libsortmenu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
           min-width: 176px; padding: 5px; border-radius: 11px;
-          background: rgba(22, 22, 24, 0.98); border: 1px solid rgba(var(--st-fg-rgb), 0.11);
+          background: var(--surface); border: 1px solid var(--border);
           box-shadow: 0 14px 38px rgba(0, 0, 0, 0.5);
           display: flex; flex-direction: column; gap: 1px; }
         .sth-libsortitem { display: block; width: 100%; text-align: left; padding: 8px 11px;
@@ -807,6 +837,10 @@ export const HOME_CSS = `
            so the play button can take its place. Without the .st-ind rule the
            bars stayed put and the button appeared on top of them. */
         .sth-lrow:hover .sth-lrow-num, .sth-lrow:hover .st-ind { opacity: 0; }
+        /* Reordering a playlist's songs by dragging (useRowDrag). */
+        .sth-lrow.is-dragged { opacity: 0.4; }
+        .sth-lrow.is-drop-before { box-shadow: inset 0 2px 0 rgb(var(--accent-rgb)); }
+        .sth-lrow.is-drop-after { box-shadow: inset 0 -2px 0 rgb(var(--accent-rgb)); }
         .sth-lrow:hover .sth-lrow-play { display: flex; }
         .sth-lrow-more { width: 28px; height: 28px; border-radius: 7px; border: none; background: transparent; color: rgba(var(--st-fg-rgb), 0.4); cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.14s ease, color 0.14s ease; }
         .sth-lrow:hover .sth-lrow-more { opacity: 1; }
@@ -951,7 +985,10 @@ export const HOME_CSS = `
         .sth-full-tab.on { background: rgba(255,255,255,0.14); color: #fff; font-weight: 700; }
         .sth-full-body { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; gap: 14px; padding: 0 14px 14px; }
         .sth-full-stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; padding: 8px 24px 20px; }
-        .sth-full-cover { flex-shrink: 1; width: min(46vh, 460px, 72%); aspect-ratio: 1 / 1; min-height: 0; border-radius: 14px; border: none; padding: 0; background-color: rgba(255,255,255,0.06); background-size: cover; background-position: center; box-shadow: 0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06); transition: width 0.3s cubic-bezier(0.22,1,0.36,1); }
+        .sth-full-cover { flex-shrink: 1; width: min(46vh, 460px, 72%); aspect-ratio: 1 / 1; min-height: 0; border-radius: 14px; border: none; padding: 0; background-color: rgba(255,255,255,0.06); background-size: cover; background-position: center; box-shadow: 0 0 0 1px rgba(255,255,255,0.07), 0 2px 4px rgba(0,0,0,0.45), 0 10px 24px rgba(0,0,0,0.35); transition: width 0.3s cubic-bezier(0.22,1,0.36,1); }
+        /* The cover's shadow stays short and defined. A long soft one (it was
+           80px) fades over so much near-black that 8-bit colour steps show as
+           rings around the art; a tight edge plus a short drop still lifts it. */
         .sth-full.has-panel .sth-full-cover { width: min(40vh, 400px, 80%); }
         .sth-full-meta { width: 100%; max-width: 560px; margin-top: 26px; text-align: center; min-width: 0; }
         .sth-full-title { display: block; max-width: 100%; margin: 0 auto; font-size: clamp(22px, 3.2vh, 32px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1046,6 +1083,14 @@ export const HOME_CSS = `
         .sth-side-pl { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 7px 12px; border-radius: var(--r-ctl-m); border: none; cursor: pointer; background: transparent; font: inherit; transition: background 140ms ease; }
         .sth-side-pl:hover { background: rgba(255,255,255,0.04); }
         .sth-side-pl.on { background: rgba(255,255,255,0.08); }
+        /* The song menu's playlist list (Add to playlist). */
+        .sth-pl-pick { display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 9px; border: none; border-radius: 8px; background: transparent;
+          color: rgba(var(--st-fg-rgb), 0.88); font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; cursor: pointer; transition: background 0.12s ease; }
+        .sth-pl-pick:hover { background: rgba(var(--st-fg-rgb), 0.08); }
+        .sth-pl-pick .pc { width: 26px; height: 26px; border-radius: 5px; flex-shrink: 0; background: rgba(var(--accent-rgb), 0.3) center/cover; }
+        .sth-pl-pick .pc.is-new { display: flex; align-items: center; justify-content: center; background: rgba(var(--st-fg-rgb), 0.08); }
+        .sth-pl-pick .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .sth-pl-pick .ok { flex-shrink: 0; color: rgb(var(--accent-rgb)); }
         .sth-side-pl .art { width: 34px; height: 34px; border-radius: var(--r-art-s); flex-shrink: 0; background-size: cover; background-position: center; }
         .sth-side-pl .nm { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sth-side-pl .ct { font-size: 11.5px; color: var(--text-faint); margin-top: 1px; }

@@ -13,7 +13,7 @@ import { LyricsPickerButton } from './LyricsPicker.jsx';
 const MetadataEditor = React.lazy(() => import('./MetadataEditor.jsx').then((m) => ({ default: m.MetadataEditor })));
 const AlbumMetadataEditor = React.lazy(() => import('./MetadataEditor.jsx').then((m) => ({ default: m.AlbumMetadataEditor })));
 const LyricShare = React.lazy(() => import('./LyricShare.jsx'));
-import { sampleCoverTheme, recordWashSource, washSourceFor, setColourIntensity, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
+import { sampleCoverTheme, recordWashSource, washSourceFor, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
 import { titleCollator, parseGenres } from '../lib/mediaUtils.js';
 import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
@@ -22,6 +22,7 @@ import { CompactVizContext, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './Com
 import { VIZ_IDS } from '../lib/compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases, SpotifyLinkPanel } from './MySpotify.jsx';
 import NotificationsButton from './Notifications.jsx';
+import DarkModeButton from './home/DarkModeButton.jsx';
 import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from '../lib/studioFollows.js';
 import { notePlayContext } from '../lib/playContext.js';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT } from '../lib/accentTokens.js';
@@ -29,9 +30,9 @@ import { api, fmtMs } from '../lib/format.js';
 import { CoverColourTab } from './home/Settings.jsx';
 import { CoverLightbox, NowPlayingBar, NowPlayingFullView, NowPlayingPanelDock } from './home/NowPlaying.jsx';
 import { HOME_CSS } from './home/styles.js';
-import { LEGACY_SECTIONS, LIB_VIEWS, MY_SPOTIFY, MY_SPOTIFY_IDS, NP_BAR_DEFAULT, NP_PANEL_W, SIDEBAR_W, THEME_DEFAULTS, TOPBAR_H } from './home/constants.js';
+import { DARK, LEGACY_SECTIONS, LIB_VIEWS, MY_SPOTIFY, MY_SPOTIFY_IDS, NP_BAR_DEFAULT, NP_PANEL_W, SIDEBAR_W, THEME_DEFAULTS, TOPBAR_H, viewTheme } from './home/constants.js';
 import WindowControls from './WindowControls.jsx';
-import { MenuItem, Modal, albumKeyOf, primaryArtistOf } from './home/common.jsx';
+import { MenuItem, Modal, albumKeyOf, hexToRgb, primaryArtistOf } from './home/common.jsx';
 import SettingsPage from './home/SettingsPage.jsx';
 import LibraryPage from './home/LibraryPage.jsx';
 import { ImportMenuItem } from './home/Library.jsx';
@@ -48,6 +49,7 @@ export default function StudioHome({
   queue = [],
   queueIndex = -1,
   onReorderQueue,
+  onRemoveFromQueue,
   albumCoverOverrides = {},
   currentTrack = null,
   isPlaying = false,
@@ -76,6 +78,7 @@ export default function StudioHome({
   onAddTracksToPlaylist, // (playlistId, trackIds)
   onRenamePlaylist,      // (id, name)
   onRemoveFromPlaylist,  // (playlistId, trackId)
+  onReorderPlaylist,     // (playlistId, trackIds) — its songs in a new order
   onSetAlbumCover,       // (albumKey, dataUrl|null) → App: cover override
   onUpdatePlaylist,      // (id, {coverArt}) → App: playlist fields
   onClearLibrary,        // ({deleteFiles}) → App: wipe the library. Play
@@ -133,6 +136,11 @@ export default function StudioHome({
          with no UI left to change it. Coerced on load rather than deleted, so
          the key keeps its documented shape for the code that reads it. */
       delete saved.coverColour;
+      delete saved.colourIntensity; // retired: cover colors use one strength, picked colors are exact
+      /* The old default for a picked page or panel colour was near-black
+         (14, 13, 18), so choosing Color looked like it did nothing. Anyone
+         still on it gets the new default; a colour you picked is kept. */
+      for (const k of ['pageColour', 'panelColour']) if (saved[k] === '14, 13, 18') delete saved[k];
       const next = { ...THEME_DEFAULTS, ...saved, coverColour: 'auto' };
       if (raw) { try { localStorage.setItem('studio:theme', JSON.stringify(next)); } catch { /* ignore */ } }
       return next;
@@ -221,6 +229,30 @@ export default function StudioHome({
      navigation, search, settings and window dragging all still work without
      reserving any space. Ctrl/Cmd+Shift+C toggles it from anywhere. */
   const [compactMode, setCompactMode] = useState(() => { try { return localStorage.getItem('studio:compact') === '1'; } catch { return false; } });
+  /* Switching window layout plays one motion (styles.js, "Entering and
+     leaving compact mode"). Going compact, the top bar and sidebar keep
+     their docked places while they slide off, and only take their compact
+     (hidden, peek-on-hover) form once they're gone; coming back, they slide
+     in from where the compact ones were parked. */
+  const [modeAnim, setModeAnim] = useState(null); // 'to-compact' | 'to-standard' | null
+  const modeSeen = useRef(false);                 // a switch has happened since launch
+  const prevCompact = useRef(compactMode);
+  useLayoutEffect(() => {
+    if (prevCompact.current === compactMode) return undefined;
+    prevCompact.current = compactMode;
+    modeSeen.current = true;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setModeAnim(null); return undefined; }
+    setModeAnim(compactMode ? 'to-compact' : 'to-standard');
+    const t = setTimeout(() => setModeAnim(null), 480);
+    return () => clearTimeout(t);
+  }, [compactMode]);
+  // The chrome is in its compact form only once it has finished leaving.
+  const chromeCompact = compactMode && modeAnim !== 'to-compact';
+  /* The frame measurements glide only while the mode changes (styles.js).
+     True from the render that flips the mode, before the effect above sets
+     modeAnim, so the change itself is what glides. */
+  const modeMoving = modeAnim != null || prevCompact.current !== compactMode;
+  const MODE_EASE = '0.46s cubic-bezier(0.32,0.72,0,1) both';
   const pickCompactMode = useCallback((on) => {
     const n = !!on;
     setCompactMode(n);
@@ -269,7 +301,9 @@ export default function StudioHome({
      existing call site (readableAccent(accent), rgba(${accent}, a)) keeps
      working — it's now the clamped FILL variant. */
   const [accentSrc, setAccentSrc] = useState(() => lastAccentSource() || NEUTRAL_ACCENT);
-  const accentTokens = useMemo(() => deriveAccent(accentSrc, theme.colourIntensity), [accentSrc, theme.colourIntensity]);
+  /* A picked accent keeps its own saturation; one from a cover is held to
+     the usual ceiling so a loud sleeve doesn't flood the controls. */
+  const accentTokens = useMemo(() => deriveAccent(accentSrc, accentMode === 'fixed'), [accentSrc, accentMode]);
   const accent = accentTokens.fill;
   useEffect(() => { applyAccent(accentTokens); }, [accentTokens]);
 
@@ -317,7 +351,11 @@ export default function StudioHome({
   useEffect(() => { if (!homeOn && section === 'sp-home') pickSection('sp-releases'); }, [homeOn, section, pickSection]);
 
   /* ---------- Row menu + metadata editor (shared by library views) --------- */
-  const [rowMenu, setRowMenu] = useState(null); // { x, y, track }
+  const [rowMenu, setRowMenu] = useState(null); // { x, y, track | row, queueIndex? }
+  /* The song menu's playlist list: open, what's typed to find one, and the
+     name of a new one being made (null when not). */
+  const [plSub, setPlSub] = useState(null);
+  const plSubTimer = useRef(null);
   const [editingTrack, setEditingTrack] = useState(null);
   /* Clearing is irreversible, so it's gated behind a typed confirmation rather
      than a single click — this is the one action in Settings that can't be
@@ -427,7 +465,7 @@ export default function StudioHome({
   }, [lyricSel, lyricsData]);
 
 
-  const closeMenu = useCallback(() => { setRowMenu(null); }, []);
+  const closeMenu = useCallback(() => { setRowMenu(null); setPlSub(null); }, []);
 
   /* The click-away listener must IGNORE presses inside the menu.
      `mousedown` on window fires BEFORE a button's `onClick`, so an unguarded
@@ -459,6 +497,7 @@ export default function StudioHome({
     };
   }, [rowMenu, closeMenu]);
 
+
   /* Stable identity so LibRow's memo can actually skip — an inline arrow would
      be a new function every render and defeat the comparison entirely. The
      refs let the callback stay dependency-free while still seeing the current
@@ -469,7 +508,10 @@ export default function StudioHome({
    * ~60 cards. Only the visible window plus an overscan margin is rendered;
    * spacer divs above and below preserve the true scroll height so the
    * scrollbar still behaves. */
-  const LIB_ROW_H = 50;
+  /* The Songs list's row height, which the virtualiser counts in: it has
+     to be the height the rows really are (.sth-lrow, var(--row-h)), per
+     List density. A fixed 50 against 54px rows let long lists drift. */
+  const LIB_ROW_H = listDensity === 'compact' ? 40 : listDensity === 'roomy' ? 64 : 54;
   const LIB_OVERSCAN = 10;
   const [libScrollTop, setLibScrollTop] = useState(0);
   const [libViewH, setLibViewH] = useState(700);
@@ -507,11 +549,34 @@ export default function StudioHome({
     onPlayTrackRef.current?.(t, libRowsRef.current || undefined, 'list');
   }, []);
 
-  const openRowMenu = useCallback((e, track) => {
+  /* A library list's row. On a playlist's page the menu also knows which
+     playlist, for Move up / Move down / Remove from playlist. `extra` can
+     carry a Spotify `row` instead of a track (an album's songs you don't
+     have). */
+  const libDetailRef = useRef(null);
+  const openRowMenu = useCallback((e, track, extra = null) => {
     e.preventDefault();
     e.stopPropagation();
-    setRowMenu({ x: e.clientX, y: e.clientY, track });
+    setPlSub(null);
+    const d = libDetailRef.current;
+    setRowMenu({ x: e.clientX, y: e.clientY, track, ...(extra || {}), playlistId: track && d?.kind === 'playlist' ? d.key : null });
   }, []);
+  /* The same menu for a Spotify row (My Spotify, artist pages, search) and
+     for a song in the queue (`queueIndex`, its place in the whole queue). */
+  const openSongMenu = useCallback((e, { track = null, row = null, queueIndex = null } = {}) => {
+    e.preventDefault();
+    e.stopPropagation();
+    /* A song streaming from Spotify (in the queue, say) is a Spotify row as
+       far as the menu goes: it can be saved and filed. */
+    if (track?.streamOnly && spotifyIdOf(track)) {
+      row = { spotifyId: spotifyIdOf(track), title: track.title, artists: track.artist, album: track.album || '', albumArtUrl: track.coverArt || '', durationMs: (track.duration || 0) * 1000, explicit: !!track.explicit };
+      track = null;
+    }
+    if (!track && !row?.spotifyId) return;
+    setPlSub(null);
+    setRowMenu({ x: e.clientX, y: e.clientY, track, row, queueIndex });
+  }, []);
+  const openQueueMenu = useCallback((e, track, queueIndex) => openSongMenu(e, { track, queueIndex }), [openSongMenu]);
 
   const canManage = !!(onUpdateTrackMetadata || onRemoveFromLibrary);
 
@@ -1340,7 +1405,6 @@ export default function StudioHome({
      the page uses. It read `.mid` directly before, which is the flat average —
      so with any extraction other than Average, the bar and the page behind it
      pulled different colours out of the same cover. */
-  setColourIntensity(theme.colourIntensity);
   /* Per-cover overrides, loaded once. An override wins over extraction for
      every surface that takes its colour from the artwork — the point is that
      one correction fixes the record everywhere, not just where you made it.
@@ -1426,7 +1490,7 @@ export default function StudioHome({
      The sampled colour carries the artwork's own lightness, and Spotify's bar
      doesn't — measured across seven covers theirs sits near 0.24 regardless of
      how dark or bright the sleeve is. barTone pins that and caps saturation;
-     pageWash still runs afterwards as the text-contrast and colour-intensity
+     pageWash still runs afterwards as the text-contrast and saturation
      guard, it just rarely has anything left to do at this lightness.
      Page washes deliberately do NOT go through this — a full-page field at low
      alpha is a different problem from a small solid bar under white text. */
@@ -1455,7 +1519,30 @@ export default function StudioHome({
    * The colours come straight from the sleeve's palette rather than from one
    * sampled value scaled up and down, so the gradient is the record's own
    * colours instead of three shades of a single average. */
-  const immerse = npAnimatedBg && !!currentTrack;
+  /* Dark mode stands in for every surface setting (see viewTheme), Immerse
+     included: pages get the dark view of the theme, Settings the real one. */
+  const dark = !!theme.darkMode;
+  const vtheme = useMemo(() => viewTheme(theme), [theme]);
+  const npAnim = npAnimatedBg && !dark;
+  const immerse = npAnim && !!currentTrack;
+  /* The top bar is the window's handle. Electron works its draggable area
+     out from layout, and a slide done with a transform (compact mode's peek,
+     entering and leaving compact) isn't a layout change: the area can stay
+     wherever the bar was when the slide began, off screen, until something
+     else lays the page out. So when a slide ends, the region is switched off
+     for a frame and back on, which makes Electron measure it again. */
+  const topbarRegion = chromeCompact && chromePeek !== 'top' ? 'no-drag' : 'drag';
+  const topbarRegionRef = useRef(topbarRegion);
+  topbarRegionRef.current = topbarRegion;
+  const refreshDragRegion = useCallback((e) => {
+    if (e.target !== e.currentTarget || topbarRegionRef.current !== 'drag') return;
+    const el = e.currentTarget;
+    el.style.setProperty('-webkit-app-region', 'no-drag');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.setProperty('-webkit-app-region', topbarRegionRef.current);
+    }));
+  }, []);
+  // What Immerse listens to (VisualEffects, "One sky"): the playing song.
   const immersePalette = useMemo(() => {
     const pal = (npWashTheme?.palette || []).filter(Boolean);
     if (coverOverride) {
@@ -1486,6 +1573,7 @@ export default function StudioHome({
   }, [currentTrack, npWashTheme, coverOverride, accentMode, accentFixed]);
 
   const [libDetail, setLibDetail] = useState(null);   // { kind:'album'|'playlist', key } | null
+  libDetailRef.current = libDetail; // read by openRowMenu
   const [detailFilter, setDetailFilter] = useState('');
   const [detailMore, setDetailMore] = useState(false);
   /* Play counts per track, for the optional PLAYS column on detail pages. */
@@ -1501,16 +1589,6 @@ export default function StudioHome({
   /* Vertical alignment of the header text against the cover. Persisted and
      switchable in Settings so the three options can be compared on real
      records rather than by rebuilding each time. */
-  const [detailAlign, setDetailAlign] = useState(() => {
-    try {
-      const v = localStorage.getItem('studio:detailAlign');
-      return ['flex-start', 'center', 'flex-end'].includes(v) ? v : 'center';
-    } catch { return 'center'; }
-  });
-  const pickDetailAlign = useCallback((v) => {
-    setDetailAlign(v);
-    try { localStorage.setItem('studio:detailAlign', v); } catch { /* ignore */ }
-  }, []);
   const [renamePl, setRenamePl] = useState(null);     // { id, name } | null
   const [deletePl, setDeletePl] = useState(null);     // { id, name } | null
   const [albumEditScope, setAlbumEditScope] = useState(null);  // AlbumMetadataEditor scope
@@ -1525,7 +1603,6 @@ export default function StudioHome({
   const [plPicker, setPlPicker] = useState(null);
   const [plPickerQuery, setPlPickerQuery] = useState('');
   const [plPickerNew, setPlPickerNew] = useState(null); // typed name while creating, or null
-  const [plPickerBusy, setPlPickerBusy] = useState(false);
   // Clear the filter when you open a different record — carrying it over makes
   // a full album look half-empty.
   useEffect(() => { setDetailFilter(''); }, [libDetail?.key]);
@@ -2001,6 +2078,24 @@ export default function StudioHome({
     return list.filter((t) => `${t.title || ''} ${t.artist || ''} ${t.album || ''}`.toLowerCase().includes(q));
   }, [detailData, detailFilter]);
 
+  /* Moving a song within a playlist (drag on its page, or Move up / Move
+     down from the menu). Off while the page is filtered: the rows on screen
+     aren't the playlist's order then. */
+  const movePlaylistSong = useCallback((playlistId, trackId, to) => {
+    const pl = playlists.find((p) => p.id === playlistId);
+    if (!pl || !onReorderPlaylist) return;
+    const ids = [...(pl.trackIds || [])];
+    const from = ids.indexOf(trackId);
+    if (from < 0 || to < 0 || to >= ids.length || from === to) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    onReorderPlaylist(playlistId, ids);
+  }, [playlists, onReorderPlaylist]);
+  const moveInOpenPlaylist = useMemo(() => (
+    libDetail?.kind === 'playlist' && onReorderPlaylist && !detailFilter.trim()
+      ? (trackId, to) => movePlaylistSong(libDetail.key, trackId, to)
+      : null
+  ), [libDetail, onReorderPlaylist, detailFilter, movePlaylistSong]);
+
   /** Genres present on the open record, for the pill row. One pill per genre:
    *  a track tagged "Emo Rap; Alternative Rock" contributes two, rather than
    *  rendering the raw delimited string inside a single pill. */
@@ -2141,27 +2236,12 @@ export default function StudioHome({
 
   /* ---------- Playlist picker ------------------------------------------
    *
-   * Filing a song used to be a submenu inside the row menu: a scrolling
-   * strip of playlists, one click per playlist, and the menu closing on the
-   * first pick so filing a song in three lists meant opening the menu three
-   * times. It also had no way to say "actually, not that one" — the only
-   * route back out was the playlist's own detail page.
-   *
-   * A sheet with checkboxes fixes both. Ticks are STAGED and applied on
-   * Done, which is what makes multi-select worth having: one confirmation,
-   * one toast, and Cancel genuinely cancels.
-   *
-   * `initial` is the set of playlists that already held the song when the
-   * sheet opened. Done diffs against it, so a box you tick and untick again
-   * costs nothing, and unticking one that was already ticked REMOVES the
-   * song — which is what a checkbox promises and the old submenu couldn't
-   * honour.
+   * The Now Playing bar's add-to-playlist button. One click files the song:
+   * a playlist without it gets it, one with it (ticked) loses it, and the
+   * picker closes. The song menu's Add to playlist works the same way.
    */
   const openPlaylistPicker = useCallback((track, anchor) => {
     if (!track) return;
-    const inPl = (playlists || [])
-      .filter((p) => (p.trackIds || []).includes(track.id))
-      .map((p) => p.id);
     setPlPickerQuery('');
     setPlPickerNew(null);
     /* Anchored, not centred. This is a menu — it belongs beside the control
@@ -2171,8 +2251,8 @@ export default function StudioHome({
        filing it from. `anchor` is { x, y, above }, in the same terms the row
        menu uses, so a picker opened FROM that menu lands exactly where it
        was standing. */
-    setPlPicker({ track, initial: inPl, sel: inPl, ...(anchor || {}) });
-  }, [playlists]);
+    setPlPicker({ track, ...(anchor || {}) });
+  }, []);
 
   // Escape closes the picker. Registered on the window rather than the panel
   // so it works before anything inside has been focused.
@@ -2189,67 +2269,47 @@ export default function StudioHome({
     return () => window.removeEventListener('keydown', onKey);
   }, [plPicker]);
 
-  const togglePlPick = useCallback((id) => {
-    setPlPicker((cur) => {
-      if (!cur) return cur;
-      const has = cur.sel.includes(id);
-      return { ...cur, sel: has ? cur.sel.filter((x) => x !== id) : [...cur.sel, id] };
-    });
-  }, []);
+  /* The song as a library copy to file: a song you're only streaming is
+     saved first (it plays through your account; nothing is downloaded). */
+  const libCopyFor = useCallback(async (track) => {
+    if (!track?.streamOnly) return track;
+    const sid = spotifyIdOf(track);
+    if (!sid) return null;
+    return downloadSpotifyRow({ spotifyId: sid, title: track.title, artists: track.artist, album: track.album || '', albumArtUrl: track.coverArt || '', durationMs: (track.duration || 0) * 1000, explicit: !!track.explicit }, { noPicker: true });
+  }, [downloadSpotifyRow]);
 
-  const commitPlaylistPicker = useCallback(async () => {
+  /* One click files it: a playlist without the song gets it, one with it
+     (ticked) loses it, and the picker closes. */
+  const pickPlaylistNow = useCallback(async (id) => {
     const cur = plPicker;
     if (!cur) return;
-    const add = cur.sel.filter((id) => !cur.initial.includes(id));
-    const remove = cur.initial.filter((id) => !cur.sel.includes(id));
-    if (!add.length && !remove.length) { setPlPicker(null); return; }
-    setPlPickerBusy(true);
-    let failed = 0;
-    try {
-      /* Sequential, not Promise.all. Each write goes through IPC to a
-         SQLite handle in the main process that serialises anyway, and
-         firing them together only makes a failure harder to attribute. */
-      for (const id of add) {
-        const r = await onAddTracksToPlaylist?.(id, [cur.track.id]);
-        if (r && r.ok === false) failed += 1;
-      }
-      for (const id of remove) {
-        const r = await onRemoveFromPlaylist?.(id, cur.track.id);
-        if (r && r.ok === false) failed += 1;
-      }
-    } catch { failed += 1; } finally {
-      setPlPickerBusy(false);
-      setPlPicker(null);
+    const pl = (playlists || []).find((p) => p.id === id);
+    const has = (pl?.trackIds || []).includes(cur.track.id);
+    setPlPicker(null);
+    if (has) {
+      const r = await onRemoveFromPlaylist?.(id, cur.track.id);
+      pushToast?.(r && r.ok === false ? { message: `Couldn’t remove it from ${pl?.name || 'that playlist'}.`, kind: 'error' } : { message: `Removed from ${pl?.name || 'playlist'}` });
+      return;
     }
-    const nameOf = (id) => (playlists || []).find((p) => p.id === id)?.name || 'playlist';
-    if (failed) {
-      pushToast?.({ message: 'Some playlists could not be updated.', kind: 'error' });
-    } else if (add.length === 1 && !remove.length) {
-      pushToast?.({ message: `Added to ${nameOf(add[0])}.` });
-    } else if (remove.length === 1 && !add.length) {
-      pushToast?.({ message: `Removed from ${nameOf(remove[0])}.` });
-    } else {
-      // Mixed, or several of one kind — a count says more than a list of
-      // names that would run off the end of the toast.
-      const n = add.length + remove.length;
-      pushToast?.({ message: `Updated ${n} playlist${n === 1 ? '' : 's'}.` });
-    }
-  }, [plPicker, playlists, onAddTracksToPlaylist, onRemoveFromPlaylist, pushToast]);
+    const song = await libCopyFor(cur.track);
+    if (!song) return;
+    const r = await onAddTracksToPlaylist?.(id, [song.id]);
+    pushToast?.(r && r.ok === false ? { message: `Couldn’t add it to ${pl?.name || 'that playlist'}.`, kind: 'error' } : { message: `Added to ${pl?.name || 'playlist'}` });
+  }, [plPicker, playlists, onAddTracksToPlaylist, onRemoveFromPlaylist, pushToast, libCopyFor]);
 
-  /* Creating from inside the sheet commits the PLAYLIST immediately, then
-     ticks it. The song still isn't filed until Done — the two are separate
-     actions, and a new empty playlist surviving Cancel is correct. */
+  /* A new playlist from the picker, with the song already in it. */
   const createFromPlPicker = useCallback(async () => {
     const name = (plPickerNew || '').trim();
-    if (!name) return;
+    const cur = plPicker;
+    if (!name || !cur) return;
+    setPlPickerNew(null);
+    setPlPicker(null);
     const r = await onCreatePlaylist?.({ name });
-    if (r?.ok && r.id) {
-      setPlPickerNew(null);
-      setPlPicker((cur) => (cur ? { ...cur, sel: [...cur.sel, r.id] } : cur));
-    } else {
-      pushToast?.({ message: 'Could not create that playlist.', kind: 'error' });
-    }
-  }, [plPickerNew, onCreatePlaylist, pushToast]);
+    if (!r?.ok || !r.id) { pushToast?.({ message: 'Could not create that playlist.', kind: 'error' }); return; }
+    const song = await libCopyFor(cur.track);
+    if (song) await onAddTracksToPlaylist?.(r.id, [song.id]);
+    pushToast?.({ message: `Added to ${name}` });
+  }, [plPickerNew, plPicker, onCreatePlaylist, onAddTracksToPlaylist, pushToast, libCopyFor]);
   const createPlaylistNow = useCallback(async () => {
     const name = (newPlaylist?.name || '').trim();
     if (!name || !onCreatePlaylist) return;
@@ -2359,9 +2419,11 @@ export default function StudioHome({
         || spotifyPlayable(row).id === currentTrack.id),
       isPlaying: !!isPlaying,
       onOpenArtist: openArtistAnywhere,
+      // Right-click on a Spotify row: the song menu (play, queue, playlists…).
+      openMenu: (e, row) => openSongMenu(e, { row }),
       onConnect: () => { pickSection('settings'); setSetCat('connections'); },
     };
-  }, [libBySpotifyId, ownedTrackFor, dlState, favorites, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection]);
+  }, [libBySpotifyId, ownedTrackFor, dlState, favorites, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection, openSongMenu]);
 
   /* ---------- Spotify links (spotifyLinks.js) ----------------------------
      Ctrl+V anywhere in Studio, or pasting into search, opens a Spotify link;
@@ -2551,7 +2613,7 @@ export default function StudioHome({
        top of the window read as a seam once the content became its own panel —
        the panel floated on a lighter patch instead of on the shell. */
     <CompactVizContext.Provider value={compactVizCtx}>
-    <div className={compactMode ? 'sth-root is-compact' : 'sth-root'} style={{
+    <div className={`sth-root${compactMode ? ' is-compact' : ''}${modeMoving ? ' is-mode-anim' : ''}`} data-dark={dark ? '' : undefined} style={{
       position: 'absolute', inset: 0, overflow: 'hidden',
       /* Every themed colour resolves from these four. Defined once on the root
          so the whole tree — including the class-based styles below — picks them
@@ -2566,8 +2628,9 @@ export default function StudioHome({
          writes them on :root and cross-fades them on track change. Setting
          them inline on this div shadowed the fade and snapped the colour. */
       background: `rgb(${theme.bg})`,
-      '--np-bar-bg': npBarColor,
+      '--np-bar-bg': dark ? DARK.bar : npBarColor,
       '--np-bar-left': compactMode ? 'var(--gutter)' : `${SIDEBAR_W}px`,
+      '--content-left': compactMode ? 'var(--gutter)' : `${SIDEBAR_W}px`,
       /* Where the content card and the side panel start. Compact drops the
          top bar out of the layout, so both begin one gutter from the top. */
       '--shell-top': compactMode ? 'var(--gutter)' : `${TOPBAR_H}px`,
@@ -2588,8 +2651,7 @@ export default function StudioHome({
       '--np-reserve': `calc(${currentTrack
         ? (compactMode ? `${10 + 86 + 10}px` : `${16 + 86 + 12}px`)
         : (compactMode ? '10px' : '16px')} + var(--st-toast-lane, 0px))`,
-      '--row-h': listDensity === 'compact' ? '40px' : listDensity === 'roomy' ? '64px' : '54px',
-      '--row-art': listDensity === 'compact' ? '30px' : listDensity === 'roomy' ? '48px' : '40px',
+      '--row-h': `${LIB_ROW_H}px`,
     }}>
       <StudioMotionStyles />
       <style>{HOME_CSS}</style>
@@ -2607,8 +2669,8 @@ export default function StudioHome({
           the release grid gains a column at most sizes.
           64px tall: enough to clear the frameless window's 36px invisible
           drag strip without eating into the content. */}
-      <header className={`sth-topbar${compactMode ? ' is-compact' : ''}${compactMode && chromePeek === 'top' ? ' is-peek' : ''}`}
-        aria-hidden={compactMode && chromePeek !== 'top' ? true : undefined}
+      <header className={`sth-topbar${chromeCompact ? ' is-compact' : ''}${chromeCompact && chromePeek === 'top' ? ' is-peek' : ''}`}
+        aria-hidden={chromeCompact && chromePeek !== 'top' ? true : undefined}
         style={{
         /* Above the side panel (5): the bar's dropdowns (notifications and the
            rest) open over it. At 3 they slid underneath. */
@@ -2633,12 +2695,17 @@ export default function StudioHome({
         alignItems: 'center', gap: 16, padding: 0,
         background: `rgb(${theme.bg})`,
         borderBottom: 'none',
-        animation: compactMode ? 'none' : 'stFadeIn 0.6s ease both',
+        animation: modeAnim === 'to-compact' ? `sthTopOut ${MODE_EASE}`
+          : !compactMode ? (modeSeen.current ? `sthTopIn ${MODE_EASE}` : 'stFadeIn 0.6s ease both')
+          : 'none',
         /* Hidden in compact: no drag region at all. A transformed-away drag
            element can still claim its untransformed box at the OS hit-test,
            which would swallow clicks across the top of the card. */
-        WebkitAppRegion: compactMode && chromePeek !== 'top' ? 'no-drag' : 'drag',
-      }}>
+        WebkitAppRegion: topbarRegion,
+      }}
+        onAnimationEnd={refreshDragRegion}
+        onTransitionEnd={refreshDragRegion}
+      >
         {/* My Library belongs on the same visual baseline as Home and Discover.
             It still reserves the full sidebar column, so the primary tabs begin
             exactly at the content wrapper's left edge. */}
@@ -2665,7 +2732,12 @@ export default function StudioHome({
 
         {/* Column 3: mirrors column 1's width, so whatever sits here can't
             pull the search off centre. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, minWidth: 0, paddingRight: 10, WebkitAppRegion: 'no-drag' }}>
+        {/* The empty stretch before the buttons is part of the handle: only
+            the buttons themselves are no-drag. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0, paddingRight: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, WebkitAppRegion: 'no-drag' }}>
+          {/* Dark mode, one click from anywhere (see DarkModeButton). */}
+          <DarkModeButton on={dark} onToggle={() => setThemeKey('darkMode', !dark)} />
           <NotificationsButton />
           <button
             type="button"
@@ -2687,6 +2759,7 @@ export default function StudioHome({
           </button>
           <WindowControls inline />
         </div>
+        </div>
       </header>
 
       {/* ============ Library sidebar =====================================
@@ -2705,7 +2778,8 @@ export default function StudioHome({
         /* Compact: a floating card over the content, parked off the left edge
            until the pointer touches it. Same background as the shell so it
            reads as the sidebar you already know, lifted. */
-        ...(compactMode ? {
+        animation: modeAnim === 'to-compact' ? `sthSideOut ${MODE_EASE}` : modeAnim === 'to-standard' ? `sthSideIn ${MODE_EASE}` : undefined,
+        ...(chromeCompact ? {
           top: 'var(--gutter)', left: 'var(--gutter)', bottom: 'var(--np-reserve)',
           width: SIDEBAR_W - 16, zIndex: 45, padding: '6px 8px 8px',
           background: `rgb(${theme.bg})`, border: '1px solid var(--border)', borderRadius: 'var(--r-card)',
@@ -2717,7 +2791,7 @@ export default function StudioHome({
             : 'transform 0.18s ease, visibility 0s linear 0.18s',
         } : null),
       }}
-      aria-hidden={compactMode && chromePeek !== 'side' ? true : undefined}>
+      aria-hidden={chromeCompact && chromePeek !== 'side' ? true : undefined}>
         {/* LIBRARY heading — the point of the change: the sidebar reads as one
             category rather than the leftovers of a split navigation. */}
         <div className="sth-side-eyebrow"><span className="st-eyebrow">My Spotify</span></div>
@@ -2830,7 +2904,7 @@ export default function StudioHome({
         // first pixel below the bar and sticky children align to it.
         /* Always below the top bar. */
         position: 'absolute', top: 'var(--shell-top)',
-        bottom: 0, left: compactMode ? 'var(--gutter)' : SIDEBAR_W, right: 0, zIndex: 1,
+        bottom: 0, left: 'var(--content-left)', right: 0, zIndex: 1,
         display: 'flex', flexDirection: 'column',
         /* Reserve the dock's width so the content narrows instead of being
            covered. The shelves re-measure through HomeRow's ResizeObserver, so
@@ -2839,7 +2913,10 @@ export default function StudioHome({
            card's --gutter margin sits outside this, so the card ends exactly
            one gap from the panel's edge. */
         paddingRight: (npPanelOpen && currentTrack) ? NP_PANEL_W + 12 : 0,
-        transition: 'padding-right 0.26s cubic-bezier(0.22,1,0.3,1)',
+        /* No glide on this edge. Gliding it re-laid out the whole page (every
+           row of a long list) on every frame of the panel's slide, which is
+           what made opening it judder. The content makes room in one step and
+           the panel slides into the space, or away over it, on the GPU. */
       }}>
         {/* ---- Search bar ----------------------------------------------------
             Lifted out of the scrolling content into a persistent bar at the
@@ -2890,7 +2967,6 @@ export default function StudioHome({
               coverFor={coverFor}
               coverOverride={coverOverride}
               currentTrack={currentTrack}
-              detailAlign={detailAlign}
               detailData={detailData}
               detailFilter={detailFilter}
               detailGenres={detailGenres}
@@ -2903,6 +2979,7 @@ export default function StudioHome({
               filteredLibArtists={filteredLibArtists}
               fmtAdded={fmtAdded}
               immerse={immerse}
+              immersePalette={immersePalette}
               importing={importing}
               isFollowing={isFollowing}
               isPlaying={isPlaying}
@@ -2928,6 +3005,7 @@ export default function StudioHome({
               onImportFolder={onImportFolder}
               onPlayTrack={onPlayTrack}
               onRemoveFromPlaylist={onRemoveFromPlaylist}
+              onMovePlaylistSong={moveInOpenPlaylist}
               onToggleFavorite={onToggleFavorite}
               onTogglePlay={onTogglePlay}
               onUpdateAlbumMetadata={onUpdateAlbumMetadata}
@@ -2955,7 +3033,7 @@ export default function StudioHome({
               setSetCat={setSetCat}
               showDateAdded={showDateAdded}
               showPlayCounts={showPlayCounts}
-              theme={theme}
+              theme={vtheme}
               toggleFollow={toggleFollow}
             />
           ) : null}
@@ -2976,7 +3054,6 @@ export default function StudioHome({
               compactViz={compactViz}
               compactVizCover={compactVizCover}
               connState={connState}
-              detailAlign={detailAlign}
               discordAppId={discordAppId}
               discordHideWhenPaused={discordHideWhenPaused}
               discordPresenceDetail={discordPresenceDetail}
@@ -3004,7 +3081,6 @@ export default function StudioHome({
               pickAccentMode={pickAccentMode}
               pickCompactMode={pickCompactMode}
               pickCompactViz={pickCompactViz}
-              pickDetailAlign={pickDetailAlign}
               pickListDensity={pickListDensity}
               pickNpBarColor={pickNpBarColor}
               rawAccent={rawAccent}
@@ -3037,12 +3113,80 @@ export default function StudioHome({
            library" in the same red — an easy misclick between two very
            different outcomes. */}
       {rowMenu ? (() => {
-        const t = rowMenu.track;
-        const albumTracks = t?.album
+        /* The song menu, for any song anywhere: a library row (`track`), a
+           Spotify row from My Spotify, an artist page or search (`row`), or a
+           queue entry (`queueIndex`). A Spotify row you have a copy of is
+           treated as that copy. */
+        const row = rowMenu.row || null;
+        const owned = rowMenu.track || (row ? (libBySpotifyId.get(row.spotifyId) || ownedTrackFor(row.title, row.artists, row.album || '')) : null);
+        const saved = !!owned && !owned.streamOnly;
+        const t = owned || (row ? spotifyPlayable(row) : null);
+        if (!t) return null;
+        const inQueue = Number.isInteger(rowMenu.queueIndex);
+        const acc = readableAccent(accent);
+        const albumTracks = saved && t?.album
           ? library.filter((x) => (x.album || '').toLowerCase() === (t.album || '').toLowerCase()
               && primaryArtistOf(x).toLowerCase() === primaryArtistOf(t).toLowerCase())
           : [];
-        const close = () => { setRowMenu(null); };
+        const close = () => { setRowMenu(null); setPlSub(null); };
+        const inPls = saved ? playlists.filter((p) => (p.trackIds || []).includes(t.id)) : [];
+        const sid = row?.spotifyId || t.spotifyId || spotifyIdOf(t) || null;
+        const artistName = row ? String(row.artists || '').split(', ')[0] : primaryArtistOf(t);
+        const sep = <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.08)', margin: '4px 3px' }} />;
+        /* The library copy to file, saving a Spotify song first (it plays
+           through your account; nothing is downloaded). */
+        const songForPlaylist = async () => (saved ? t : (row ? await downloadSpotifyRow(row, { noPicker: true }) : null));
+        const togglePlaylist = async (pl) => {
+          const has = saved && (pl.trackIds || []).includes(t.id);
+          close();
+          if (has) {
+            const r = await onRemoveFromPlaylist?.(pl.id, t.id);
+            pushToast?.(r && r.ok === false ? { message: `Couldn’t remove it from ${pl.name}.`, kind: 'error' } : { message: `Removed from ${pl.name}` });
+            return;
+          }
+          const song = await songForPlaylist();
+          if (!song) return;
+          const r = await onAddTracksToPlaylist?.(pl.id, [song.id]);
+          pushToast?.(r && r.ok === false ? { message: `Couldn’t add it to ${pl.name}.`, kind: 'error' } : { message: `Added to ${pl.name}` });
+        };
+        const createWithSong = async (name) => {
+          const n = String(name || '').trim();
+          if (!n) return;
+          close();
+          const r = await onCreatePlaylist?.({ name: n });
+          if (!r?.ok || !r.id) { pushToast?.({ message: 'Couldn’t create that playlist.', kind: 'error' }); return; }
+          const song = await songForPlaylist();
+          if (song) await onAddTracksToPlaylist?.(r.id, [song.id]);
+          pushToast?.({ message: `Added to ${n}` });
+        };
+        const goAlbum = () => {
+          close();
+          if (saved && albumKeyOf(t) !== '::' && libAlbums.some((a) => a.key === albumKeyOf(t))) { pickSection('library'); setLibDetail({ kind: 'album', key: albumKeyOf(t) }); return; }
+          const albumId = row?.albumId || t.albumId || null;
+          if (albumId) openSpotifyLink({ kind: 'album', id: albumId, name: row?.album || t.album || '', image: row?.albumArtUrl || coverFor(t) || null });
+          else openPalette(`${t.album || t.title} ${artistName}`.trim());
+        };
+        const copyLink = async () => {
+          close();
+          if (sid) {
+            try { await navigator.clipboard.writeText(`https://open.spotify.com/track/${sid}`); pushToast?.({ message: 'Spotify link copied' }); } catch { /* ignore */ }
+            return;
+          }
+          await copySpotifyLink(t);
+        };
+        const plHere = rowMenu.playlistId ? playlists.find((p) => p.id === rowMenu.playlistId) : null;
+        const plAt = plHere ? (plHere.trackIds || []).indexOf(t.id) : -1;
+        const qMax = queue.length - 1;
+        const qMin = queueIndex + 1;
+        const menuLeft = Math.max(8, Math.min(rowMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1400) - 252));
+        const subOnLeft = menuLeft + 240 + 244 > (typeof window !== 'undefined' ? window.innerWidth : 1400);
+        const q = (plSub?.query || '').trim().toLowerCase();
+        const shownPls = q ? playlists.filter((p) => p.name.toLowerCase().includes(q)) : playlists;
+        const chev = (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5, flexShrink: 0 }}>
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        );
         return createPortal(
           <>
             <div onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }}
@@ -3052,29 +3196,18 @@ export default function StudioHome({
               ref={keepMenuOnScreen}
               style={{
                 position: 'fixed', zIndex: 401,
-                /* Clamped so the menu never opens off-screen near an edge.
-                   Math.max as well as Math.min: the min alone kept the menu
-                   off the RIGHT edge and let it go negative on the left, so
-                   a right-click near the window edge of a narrow window put
-                   the first few options past x=0 where they couldn't be
-                   clicked. */
-                left: Math.max(8, Math.min(rowMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1400) - 252)),
-                /* Two anchorings, because the menu now has two kinds of
-                   trigger. A library row is somewhere in the middle of the
-                   screen and the menu drops from the cursor. A now-playing
-                   bar button is pinned to the bottom edge, and a menu that
-                   drops from there would open underneath the window — so it
-                   grows UP from the button instead, with `bottom` rather than
-                   `top` so the submenu expanding doesn't push it off-screen. */
+                /* Clamped so the menu never opens off-screen near an edge. */
+                left: menuLeft,
+                /* A row drops the menu from the cursor; a Now Playing bar
+                   button is pinned to the bottom edge, so its menu grows up. */
                 ...(rowMenu.above
                   ? { bottom: Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 900) - rowMenu.y) }
                   : { top: Math.min(rowMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 900) - 320) }),
-                /* #000 with a hairline, matching the content wrapper and the
-                   Now Playing panel. rgb(20,20,24) was lighter than every other
-                   surface in the app, so the menu read as borrowed from
-                   somewhere else. */
-                width: 236, padding: 5, borderRadius: 12,
-                background: '#000', border: '1px solid rgba(var(--st-fg-rgb), 0.11)',
+                width: 240, padding: 5, borderRadius: 12,
+                /* Every floating layer (menus, pickers, notifications,
+                   toasts) is the app's own card colour, so they sit in the
+                   same family as the pages under them. */
+                background: 'var(--surface)', border: '1px solid var(--border)',
                 boxShadow: '0 22px 60px rgba(0,0,0,0.7)',
                 animation: 'stFadeUp 0.13s ease both',
               }}
@@ -3082,126 +3215,204 @@ export default function StudioHome({
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px 10px' }}>
                 <div style={{ width: 34, height: 34, borderRadius: 6, flexShrink: 0, background: coverFor(t) ? `url("${coverFor(t)}") center/cover` : 'rgba(var(--st-fg-rgb), 0.08)' }} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t?.title}</div>
-                  <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t?.artist}</div>
+                  <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
+                  <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {[t.artist, t.album].filter(Boolean).join(' · ')}
+                  </div>
                 </div>
               </div>
               <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.08)', margin: '0 3px 4px' }} />
 
-              {onPlayTrack ? (
-                <MenuItem accentRgb={readableAccent(accent)} onClick={() => { onPlayTrack(t, library, 'list'); close(); }}
-                  icon={<path d="M8 6.5v11l9.5-5.5z" />} label="Play" />
+              {/* On a playlist's page: its place in the playlist, first. */}
+              {plHere ? (
+                <>
+                  {onReorderPlaylist && plAt > 0 ? (
+                    <MenuItem accentRgb={acc} onClick={() => { movePlaylistSong(plHere.id, t.id, plAt - 1); close(); }}
+                      icon={<path d="M12 19V5M6 11l6-6 6 6" />} label="Move up" />
+                  ) : null}
+                  {onReorderPlaylist && plAt < (plHere.trackIds || []).length - 1 ? (
+                    <MenuItem accentRgb={acc} onClick={() => { movePlaylistSong(plHere.id, t.id, plAt + 1); close(); }}
+                      icon={<path d="M12 5v14M6 13l6 6 6-6" />} label="Move down" />
+                  ) : null}
+                  {onRemoveFromPlaylist ? (
+                    <MenuItem accentRgb={acc} onClick={() => { onRemoveFromPlaylist(plHere.id, t.id); pushToast?.({ message: `Removed from ${plHere.name}` }); close(); }}
+                      icon={<><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M8.5 12h7" /></>} label="Remove from playlist" />
+                  ) : null}
+                  {sep}
+                </>
               ) : null}
-              {/* Queue actions sit directly under Play — they're the same
-                  verb deferred, and grouping them means the three ways to
-                  start a track are in one place instead of scattered down
-                  the menu.
-                  Both confirm with a toast: the queue panel is often closed,
-                  and an action with no visible effect reads as a no-op that
-                  people then repeat. */}
-              {onPlayNext ? (
-                <MenuItem accentRgb={readableAccent(accent)}
-                  onClick={() => {
-                    onPlayNext(t);
-                    pushToast?.({ message: `Playing next: ${t?.title || 'track'}` });
-                    close();
-                  }}
-                  icon={<><path d="M4 6h10M4 12h10M4 18h6" /><path d="M17.5 14.5v6M14.5 17.5h6" /></>}
-                  label="Play next" />
+
+              {/* In the queue: where it sits, first. */}
+              {inQueue ? (
+                <>
+                  {onReorderQueue && rowMenu.queueIndex > qMin ? (
+                    <MenuItem accentRgb={acc} onClick={() => { onReorderQueue(rowMenu.queueIndex, rowMenu.queueIndex - 1); close(); }}
+                      icon={<path d="M12 19V5M6 11l6-6 6 6" />} label="Move up" />
+                  ) : null}
+                  {onReorderQueue && rowMenu.queueIndex < qMax ? (
+                    <MenuItem accentRgb={acc} onClick={() => { onReorderQueue(rowMenu.queueIndex, rowMenu.queueIndex + 1); close(); }}
+                      icon={<path d="M12 5v14M6 13l6 6 6-6" />} label="Move down" />
+                  ) : null}
+                  {onRemoveFromQueue ? (
+                    <MenuItem accentRgb={acc} onClick={() => { onRemoveFromQueue(rowMenu.queueIndex); close(); }}
+                      icon={<><path d="M4 6h16M4 12h10M4 18h7" /><path d="M15 16l5 5M20 16l-5 5" /></>} label="Remove from queue" />
+                  ) : null}
+                  {sep}
+                </>
+              ) : (
+                <>
+                  {onPlayTrack ? (
+                    <MenuItem accentRgb={acc}
+                      onClick={() => { if (row) mySpotifyBridge.playRows([row], 0); else onPlayTrack(t, library, 'list'); close(); }}
+                      icon={<path d="M8 6.5v11l9.5-5.5z" />} label="Play" />
+                  ) : null}
+                  {/* The queue's two verbs. Both confirm with a toast: the
+                      queue panel is often closed. */}
+                  {onPlayNext ? (
+                    <MenuItem accentRgb={acc}
+                      onClick={() => { onPlayNext(t); pushToast?.({ message: `Playing next: ${t.title || 'song'}` }); close(); }}
+                      icon={<><path d="M4 6h10M4 12h10M4 18h6" /><path d="M17.5 14.5v6M14.5 17.5h6" /></>}
+                      label="Play next" />
+                  ) : null}
+                  {onAddToQueue ? (
+                    <MenuItem accentRgb={acc}
+                      onClick={() => { onAddToQueue(t); pushToast?.({ message: `Added to queue: ${t.title || 'song'}` }); close(); }}
+                      icon={<><path d="M4 6h16M4 12h16M4 18h9" /><path d="M17 15.5v5.5" /><path d="M14.2 18.2h5.6" /></>}
+                      label="Add to queue" />
+                  ) : null}
+                  {sep}
+                </>
+              )}
+
+              {/* Add to playlist: hover (or click) opens your playlists beside
+                  the menu; clicking one adds the song there and then, and
+                  clicking one that has it (ticked) takes it out. */}
+              {onAddTracksToPlaylist && !row?.notOut ? (
+                <div style={{ position: 'relative' }}
+                  onMouseEnter={() => { clearTimeout(plSubTimer.current); setPlSub((c) => c || { query: '', naming: null }); }}
+                  onMouseLeave={() => { clearTimeout(plSubTimer.current); plSubTimer.current = setTimeout(() => setPlSub((c) => (c && (c.query || c.naming != null) ? c : null)), 220); }}>
+                  <MenuItem accentRgb={acc} onClick={() => setPlSub((c) => c || { query: '', naming: null })}
+                    icon={<><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M12 8.5v7M8.5 12h7" /></>}
+                    label="Add to playlist"
+                    trailing={<>{inPls.length ? <span style={{ fontSize: 11, color: 'rgba(var(--st-fg-rgb), 0.38)', whiteSpace: 'nowrap' }}>In {inPls.length}</span> : null}{chev}</>} />
+                  {plSub ? (
+                    <div data-rowmenu="" className="sth-libscroll" onWheel={(e) => e.stopPropagation()}
+                      style={{
+                        position: 'absolute', top: -6, [subOnLeft ? 'right' : 'left']: 'calc(100% + 9px)',
+                        width: 236, maxHeight: 340, overflowY: 'auto', padding: 5, borderRadius: 12,
+                        background: 'var(--surface)', border: '1px solid var(--border)', boxShadow: '0 22px 60px rgba(0,0,0,0.7)',
+                        animation: 'stFadeUp 0.12s ease both',
+                      }}>
+                      {playlists.length > 7 ? (
+                        <input className="st-input" autoFocus placeholder="Find a playlist" value={plSub.query}
+                          onChange={(e) => setPlSub((c) => ({ ...c, query: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && shownPls[0]) togglePlaylist(shownPls[0]); }}
+                          style={{ width: '100%', height: 32, fontSize: 12.5, marginBottom: 4 }} />
+                      ) : null}
+                      {plSub.naming != null ? (
+                        <input className="st-input" autoFocus placeholder="Playlist name" value={plSub.naming}
+                          onChange={(e) => setPlSub((c) => ({ ...c, naming: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') createWithSong(plSub.naming);
+                            if (e.key === 'Escape') { e.stopPropagation(); setPlSub((c) => ({ ...c, naming: null })); }
+                          }}
+                          style={{ width: '100%', height: 32, fontSize: 12.5, marginBottom: 4 }} />
+                      ) : onCreatePlaylist ? (
+                        <button type="button" className="sth-pl-pick" onClick={() => setPlSub((c) => ({ ...c, naming: '' }))}>
+                          <span className="pc is-new">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+                          </span>
+                          <span className="nm">New playlist</span>
+                        </button>
+                      ) : null}
+                      {shownPls.map((pl) => {
+                        const has = saved && (pl.trackIds || []).includes(t.id);
+                        const first = !pl.coverArt && pl.trackIds?.length ? library.find((x) => x.id === pl.trackIds[0]) : null;
+                        const art = pl.coverArt || (first ? coverFor(first) : null);
+                        return (
+                          <button key={pl.id} type="button" className={`sth-pl-pick${has ? ' is-in' : ''}`} onClick={() => togglePlaylist(pl)}
+                            title={has ? `In ${pl.name}. Click to remove it.` : `Add to ${pl.name}`}>
+                            <span className="pc" style={{ backgroundImage: art ? `url("${art}")` : undefined }} />
+                            <span className="nm">{pl.name}</span>
+                            {has ? (
+                              <svg className="ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                      {!shownPls.length ? <div style={{ padding: '8px 10px', fontSize: 12, color: 'rgba(var(--st-fg-rgb), 0.4)' }}>{playlists.length ? 'No playlist by that name.' : 'No playlists yet.'}</div> : null}
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
-              {onAddToQueue ? (
-                <MenuItem accentRgb={readableAccent(accent)}
-                  onClick={() => {
-                    onAddToQueue(t);
-                    pushToast?.({ message: `Added to queue: ${t?.title || 'track'}` });
-                    close();
-                  }}
-                  icon={<><path d="M4 6h16M4 12h16M4 18h9" /><path d="M17 15.5v5.5" /><path d="M14.2 18.2h5.6" /></>}
-                  label="Add to queue" />
+              {!saved && row && !row.notOut ? (
+                <MenuItem accentRgb={acc} onClick={() => { downloadSpotifyRow(row, { noPicker: true }); close(); }}
+                  icon={<><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></>} label="Save to library" />
               ) : null}
-              {/* Playlists inline, NOT a second dialog.
-                  The separate sheet never appeared: it renders inside the
-                  library panel, and `.sth-scroll` animates on mount while its
-                  is-page variant is overflow:hidden — an animated ancestor
-                  becomes the containing block for position:fixed, so the sheet
-                  was clipped out of sight. This menu is already portalled to
-                  document.body and visibly works, so the list goes here and
-                  depends on nothing new. */}
-              {onAddTracksToPlaylist ? (
-                <MenuItem accentRgb={readableAccent(accent)}
-                  onClick={() => {
-                    /* Take over the menu's exact position. The picker is a
-                       continuation of this menu, not a new surface arriving
-                       from somewhere else, so it should appear where the
-                       menu was rather than jumping. */
-                    const at = { x: rowMenu.x, y: rowMenu.y, above: rowMenu.above };
-                    close();
-                    openPlaylistPicker(t, at);
-                  }}
-                  icon={<><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M12 8.5v7M8.5 12h7" /></>}
-                  label="Add to playlist"
-                  sub={(() => {
-                    /* How many lists already hold it, stated up front. The
-                       submenu made you open it to find that out. */
-                    const n = (playlists || []).filter((p) => (p.trackIds || []).includes(t.id)).length;
-                    return n ? `In ${n} playlist${n === 1 ? '' : 's'}` : undefined;
-                  })()}
-                  trailing={(
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
-                      <path d="M9 6l6 6-6 6" />
-                    </svg>
-                  )} />
-              ) : null}
-              {onToggleFavorite ? (
-                <MenuItem accentRgb={readableAccent(accent)} onClick={() => { onToggleFavorite(t.id); close(); }}
+              {saved && onToggleFavorite ? (
+                <MenuItem accentRgb={acc} onClick={() => { onToggleFavorite(t.id); close(); }}
                   icon={<path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />}
-                  label={t?.isFavorite ? 'Remove from favorites' : 'Add to favorites'} />
+                  label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} />
               ) : null}
-              <MenuItem accentRgb={readableAccent(accent)}
-                onClick={async () => { await copySpotifyLink(t); close(); }}
+              {sep}
+              {artistName ? (
+                <MenuItem accentRgb={acc} onClick={() => { close(); openArtistAnywhere({ name: artistName, spotifyId: row?.artistIds?.[0] || null }); }}
+                  icon={<><circle cx="12" cy="8" r="4" /><path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5" /></>} label="Go to artist" />
+              ) : null}
+              {t.album || row?.albumId ? (
+                <MenuItem accentRgb={acc} onClick={goAlbum}
+                  icon={<><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" /></>} label="Go to album" />
+              ) : null}
+              <MenuItem accentRgb={acc} onClick={copyLink}
                 icon={<><path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v14" /></>}
                 label="Copy Spotify link"
                 sub={sharing === t.id ? 'Looking up…' : undefined} />
-              {onUpdateTrackMetadata ? (
-                <MenuItem accentRgb={readableAccent(accent)} onClick={() => { setEditingTrack(t); close(); }}
+              {saved && onUpdateTrackMetadata && !rowMenu.bar ? (
+                <MenuItem accentRgb={acc} onClick={() => { setEditingTrack(t); close(); }}
                   icon={<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />}
                   label="Edit info" />
               ) : null}
 
-              {/* Moved here out of the Now Playing bar (brief): expanded
-                  player, immerse and the per-record colour. */}
+              {/* From the Now Playing bar's "…": the player's own options. */}
               {rowMenu.bar ? (
                 <>
-                  <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.08)', margin: '4px 3px' }} />
-                  <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); setNpFull((v) => !v); }}
+                  {sep}
+                  <MenuItem accentRgb={acc} onClick={() => { close(); setNpFull((v) => !v); }}
                     icon={<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />}
                     label={npFull ? 'Exit fullscreen' : 'Fullscreen'} sub="Ctrl+Shift+F" />
-                  <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); toggleNpAnimatedBg(); }}
-                    icon={<path d="M12 3.2c3.4 3.6 5.4 6.2 5.4 8.9a5.4 5.4 0 1 1-10.8 0c0-2.7 2-5.3 5.4-8.9z" />}
-                    label={npAnimatedBg ? 'Turn Immerse off' : 'Turn Immerse on'} />
-                  {/* The colour tray hangs off the Now Playing bar, which isn't
-                      mounted in fullscreen — so the item goes with it. */}
-                  {!npFull ? (
-                  <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); setColourTrayOpen(true); }}
+                  <MenuItem accentRgb={acc} onClick={() => { close(); setThemeKey('darkMode', !dark); }}
+                    icon={<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />}
+                    label={dark ? 'Turn Dark mode off' : 'Turn Dark mode on'} />
+                  {/* Immerse and the record's color both paint surfaces Dark
+                      mode keeps dark, so they wait until it's off. */}
+                  {!dark ? (
+                    <MenuItem accentRgb={acc} onClick={() => { close(); toggleNpAnimatedBg(); }}
+                      icon={<path d="M12 3.2c3.4 3.6 5.4 6.2 5.4 8.9a5.4 5.4 0 1 1-10.8 0c0-2.7 2-5.3 5.4-8.9z" />}
+                      label={npAnimatedBg ? 'Turn Immerse off' : 'Turn Immerse on'} />
+                  ) : null}
+                  {/* The color tray hangs off the Now Playing bar, which isn't
+                      mounted in fullscreen, so the item goes with it. */}
+                  {!npFull && !dark ? (
+                    <MenuItem accentRgb={acc} onClick={() => { close(); setColourTrayOpen(true); }}
                       icon={<><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" /></>}
                       label="Color for this record" sub={coverOverride ? 'Custom color set' : 'Picked from the artwork'} />
                   ) : null}
-                  <MenuItem accentRgb={readableAccent(accent)} onClick={() => { close(); toggleCompactMode(); }}
+                  <MenuItem accentRgb={acc} onClick={() => { close(); toggleCompactMode(); }}
                     icon={<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 15h18" /></>}
                     label={compactMode ? 'Exit compact mode' : 'Compact mode'} sub="Ctrl+Shift+C" />
                 </>
               ) : null}
-              {onRemoveFromLibrary && !rowMenu.bar ? (
+              {saved && onRemoveFromLibrary && !rowMenu.bar && !inQueue ? (
                 <>
-                  <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.08)', margin: '4px 3px' }} />
-                  <MenuItem accentRgb={readableAccent(accent)} danger onClick={() => { onRemoveFromLibrary([t.id]); close(); }}
+                  {sep}
+                  <MenuItem accentRgb={acc} danger onClick={() => { onRemoveFromLibrary([t.id]); close(); }}
                     icon={<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />}
-                    label="Remove song" />
+                    label="Remove from library" />
                   {albumTracks.length > 1 ? (
-                    <MenuItem accentRgb={readableAccent(accent)} danger onClick={() => { onRemoveFromLibrary(albumTracks.map((x) => x.id)); close(); }}
+                    <MenuItem accentRgb={acc} danger onClick={() => { onRemoveFromLibrary(albumTracks.map((x) => x.id)); close(); }}
                       icon={<><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M9 15l6-6M9 9l6 6" /></>}
                       label="Remove whole album"
-                      sub={`${t.album} · ${albumTracks.length} tracks`} />
+                      sub={`${t.album} · ${albumTracks.length} songs`} />
                   ) : null}
                 </>
               ) : null}
@@ -3541,13 +3752,13 @@ export default function StudioHome({
           gainBoost={gainBoost}
           onSetGainBoost={onSetGainBoost}
           getGainReduction={getGainReduction}
-          animatedBg={npAnimatedBg}
+          animatedBg={npAnim}
           /* Immerse off: the bar is its own colour, or the cover's, per the
              one setting that governs it. Immerse on: the animated artwork
              gradient takes over and nothing else applies. */
-          solidWash={!immerse && theme.barSurface === 'cover' ? npBarSolidWash : null}
+          solidWash={!immerse && vtheme.barSurface === 'cover' ? npBarSolidWash : null}
           immersePalette={immersePalette}
-          immerseOn={npAnimatedBg}
+          immerseOn={npAnim}
           onToggleImmerse={toggleNpAnimatedBg}
           onFullscreen={() => setNpFull(true)}
           onToggleQueue={() => toggleNpPanel('queue')}
@@ -3590,12 +3801,14 @@ export default function StudioHome({
         coverFor={coverFor}
         isPlaying={isPlaying}
         onReorderQueue={onReorderQueue}
+        onQueueMenu={openQueueMenu}
         /* "Up next" starts one past the current track, and reorder works in
            absolute queue positions — this is the offset between the two. */
         queueOffset={queueIndex >= 0 ? queueIndex + 1 : 0}
-        surface={immerse ? 'immerse' : theme.panelSurface}
+        surface={immerse ? 'immerse' : vtheme.panelSurface}
         immersePalette={immersePalette}
-        barWash={npBarSolidWash}
+        /* Match bar: whatever the bar is showing, its fixed colour included. */
+        barWash={vtheme.barSurface === 'cover' ? npBarSolidWash : (hexToRgb(dark ? DARK.bar : npBarColor) || npBarSolidWash)}
         customColor={theme.panelColour}
         upNext={queueIndex >= 0 ? queue.slice(queueIndex + 1) : []}
         onSelectTrack={(t) => onPlayTrack?.(t, queue)}
@@ -3620,6 +3833,7 @@ export default function StudioHome({
 
       {npFull && currentTrack ? (
         <NowPlayingFullView
+          dark={dark}
           track={currentTrack}
           art={coverFor(currentTrack)}
           accent={accent}
@@ -3650,7 +3864,7 @@ export default function StudioHome({
           onCopyLink={copySpotifyLink}
           copyBusy={sharing === currentTrack.id}
           onZoomCover={openCoverZoom}
-          animatedBg={npAnimatedBg}
+          animatedBg={npAnim}
           immersePalette={immersePalette}
           tab={npFullTab}
           onTab={pickNpFullTab}
@@ -3659,6 +3873,7 @@ export default function StudioHome({
           upNext={queueIndex >= 0 ? queue.slice(queueIndex + 1) : []}
           onSelectTrack={(t) => onPlayTrack?.(t, queue)}
           onReorderQueue={onReorderQueue}
+          onQueueMenu={openQueueMenu}
           queueOffset={queueIndex >= 0 ? queueIndex + 1 : 0}
           lyricsData={lyricsData}
           onLyricsSaved={onLyricsSaved}
@@ -3893,17 +4108,6 @@ export default function StudioHome({
         /* Search appears only once the list is long enough to need it. A
            search box above three playlists is furniture. */
         const showSearch = all.length > 7;
-        const added = plPicker.sel.filter((id) => !plPicker.initial.includes(id)).length;
-        const removed = plPicker.initial.filter((id) => !plPicker.sel.includes(id)).length;
-        const dirty = added + removed;
-        /* The primary button states the OUTCOME rather than saying "Done".
-           With staged multi-select the whole risk is losing track of what
-           you ticked, and a button that reads "Add to 3 playlists" closes
-           that gap without a summary line. */
-        const doneLabel = !dirty ? 'Done'
-          : (removed && !added) ? `Remove from ${removed} playlist${removed === 1 ? '' : 's'}`
-            : (added && !removed) ? `Add to ${added} playlist${added === 1 ? '' : 's'}`
-              : `Update ${dirty} playlists`;
         const W = 288;
         const vw = typeof window !== 'undefined' ? window.innerWidth : 1400;
         const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
@@ -3926,12 +4130,11 @@ export default function StudioHome({
               style={{
                 position: 'fixed', zIndex: 401, left, ...vpos,
                 width: W, maxHeight: 392, display: 'flex', flexDirection: 'column',
-                /* #000 with a hairline — the row menu's surface exactly. The
-                   picker is usually opened from that menu, and a different
-                   background would make it look like it came from somewhere
-                   else. */
-                borderRadius: 12, background: '#000',
-                border: '1px solid rgba(var(--st-fg-rgb), 0.11)',
+                /* The row menu's surface exactly. The picker is usually opened
+                   from that menu, and a different background would make it
+                   look like it came from somewhere else. */
+                borderRadius: 12, background: 'var(--surface)',
+                border: '1px solid var(--border)',
                 boxShadow: '0 22px 60px rgba(0,0,0,0.7)',
                 animation: 'stFadeUp 0.13s ease both',
                 overflow: 'hidden',
@@ -3995,12 +4198,12 @@ export default function StudioHome({
                 ) : null}
 
                 {rows.map((pl) => {
-                  const on = plPicker.sel.includes(pl.id);
-                  const was = plPicker.initial.includes(pl.id);
+                  const on = (pl.trackIds || []).includes(t.id);
                   const count = (pl.trackIds || []).length;
                   return (
                     <button type="button" key={pl.id} className={`sth-plpick${on ? ' is-on' : ''}`}
-                      onClick={() => togglePlPick(pl.id)}
+                      onClick={() => pickPlaylistNow(pl.id)}
+                      title={on ? `In ${pl.name}. Click to remove it.` : `Add to ${pl.name}`}
                       aria-pressed={on}
                       style={{ '--pl-acc': acc, '--pl-acc-fg': accentTextColor(acc) }}>
                       <span className="sth-plpick-art"
@@ -4014,12 +4217,7 @@ export default function StudioHome({
                       <span className="sth-plpick-txt">
                         <span className="sth-plpick-name">{pl.name}</span>
                         <span className="sth-plpick-sub">
-                          {count} song{count === 1 ? '' : 's'}
-                          {/* Says what Done will do to THIS row. Without it a
-                              tick means either "already in here" or "about to
-                              go in here", and those are not the same. */}
-                          {on && !was ? <em> · adding</em> : null}
-                          {!on && was ? <em> · removing</em> : null}
+                          {count} song{count === 1 ? '' : 's'}{on ? ' · has this song' : ''}
                         </span>
                       </span>
                       <span className="sth-plpick-box" aria-hidden>
@@ -4038,16 +4236,6 @@ export default function StudioHome({
                 ) : null}
               </div>
 
-              <div style={{ display: 'flex', gap: 6, padding: '8px 9px', borderTop: '1px solid rgba(var(--st-fg-rgb), 0.08)' }}>
-                <button type="button" onClick={() => setPlPicker(null)} disabled={plPickerBusy}
-                  style={{ flex: 1, padding: '7px 10px', borderRadius: 8, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'transparent', color: 'rgba(var(--st-sub-rgb), 0.7)', fontSize: 11.5, fontWeight: 650 }}>
-                  Cancel
-                </button>
-                <button type="button" onClick={commitPlaylistPicker} disabled={plPickerBusy}
-                  style={{ flex: 1.7, padding: '7px 10px', borderRadius: 8, cursor: 'pointer', border: 'none', background: dirty ? `rgb(${acc})` : 'rgba(var(--st-fg-rgb), 0.09)', color: dirty ? accentTextColor(acc) : 'rgba(var(--st-sub-rgb), 0.55)', fontSize: 11.5, fontWeight: 700, opacity: plPickerBusy ? 0.5 : 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'background 0.15s ease, color 0.15s ease' }}>
-                  {plPickerBusy ? 'Saving…' : doneLabel}
-                </button>
-              </div>
             </div>
           </Modal>
         );
@@ -4129,7 +4317,7 @@ export default function StudioHome({
           <div onClick={() => setRenamePl(null)}
             style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.82)' }}>
             <div onClick={(e) => e.stopPropagation()}
-              style={{ width: 'min(400px, 92vw)', borderRadius: 15, padding: '18px 20px', background: '#0b0b0d', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)' }}>
+              style={{ width: 'min(400px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--surface)', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)' }}>
               <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>Edit playlist</div>
 
               <div style={{ display: 'flex', gap: 14, marginTop: 14 }}>
@@ -4329,6 +4517,7 @@ export default function StudioHome({
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         nowPlaying={currentTrack ? { id: currentTrack.id, isRow: mySpotifyBridge.isCurrent, playing: !!isPlaying } : null}
+        onSongMenu={openSongMenu}
         library={library}
         alreadyOwned={alreadyOwned}
         coverFor={coverFor}
@@ -4365,7 +4554,7 @@ export default function StudioHome({
               embedded
               artist={art}
               accent={accent}
-              theme={theme}
+              theme={vtheme}
               playEvents={playEvents}
               currentTrack={currentTrack}
               isPlaying={isPlaying}

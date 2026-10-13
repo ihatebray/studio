@@ -12,7 +12,7 @@
  *    - produces two variants — `fill` for filled controls and `line` for text,
  *      icons, rings and thin bars (lighter, it has less area to carry colour)
  *    - computes the label colour (`ink`) for anything filled with the accent
- *    - honours Colour intensity (Off = neutral grey, Full = full strength)
+ *    - leaves a colour you picked at its own saturation
  *    - holds the last accent while idle and falls back to a neutral on a cold
  *      start, so the UI is never colourless on first launch
  *    - cross-fades the CSS variables over ~400ms on track change
@@ -90,8 +90,8 @@ function hslToRgb([h, s, l]) {
   return [t(h + 1 / 3) * 255, t(h) * 255, t(h - 1 / 3) * 255];
 }
 
-/* Saturation ceiling per Colour intensity. 'off' drains hue entirely. */
-const SAT_CAP = { off: 0, muted: 0.42, balanced: 0.72, vivid: 0.86, full: 1 };
+/* Saturation ceiling for an accent taken from a cover. */
+const COVER_SAT_CAP = 0.72;
 
 /** Raise lightness (hue fixed) until `target` contrast vs the base surface. */
 function liftTo(hsl, target) {
@@ -117,12 +117,10 @@ export function inkFor(rgb) {
  * The derived accent for one source colour.
  * @returns {{ fill: string, line: string, ink: string, ring: string }} "r, g, b" triples + ink hex
  */
-export function deriveAccent(sourceRgb, intensity = 'balanced') {
+export function deriveAccent(sourceRgb, picked = false) {
   const src = parse(sourceRgb) || parse(NEUTRAL_ACCENT);
   let [h, s, l] = rgbToHsl(src);
-  s = Math.min(s, SAT_CAP[intensity] ?? SAT_CAP.balanced);
-  /* A very desaturated source is an achromatic cover — don't invent a hue. */
-  if (intensity === 'off') s = 0;
+  if (!picked) s = Math.min(s, COVER_SAT_CAP);
   /* Don't let the lift wash everything to pastel: start no lower than 0.46. */
   l = Math.max(l, 0.46);
   const fill = liftTo([h, s, l], 4.5);

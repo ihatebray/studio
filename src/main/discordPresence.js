@@ -85,6 +85,18 @@ let invalidAppIdMarker = null; // appId we've confirmed is invalid
 const COALESCE_MS = 100;
 let coalesceTimer = null;
 let coalescedActivity = null;
+/* Discord accepts about five SET_ACTIVITY calls per 20 seconds. Past that it
+   holds or drops them on its side, and the one that suffered was usually
+   the cover: a song sends its details, then playback starting, then the
+   cover once it's uploaded, so skipping a couple of songs ran the budget
+   out right when the cover was due. Now we keep under the limit ourselves,
+   always send the newest state when a slot frees up, and skip any update
+   identical to the last one sent. */
+const NEW_SONG_SETTLE_MS = 700;
+const RATE_MAX = 5;
+const RATE_WINDOW_MS = 20000;
+const sentAt = [];
+let lastSentJson = null;
 
 function buildClient(Rpc, appId) {
   // @ryuziii/discord-rpc API
@@ -213,7 +225,10 @@ async function connect(appId) {
     // We only keep the LATEST one — older ones are stale by definition.
     const flush = pendingActivity;
     pendingActivity = null;
+    lastSentJson = null;
     if (flush) {
+      sentAt.push(Date.now());
+      lastSentJson = JSON.stringify(flush);
       await applyActivity(flush);
     }
     return { ok: true };
@@ -282,21 +297,35 @@ async function applyActivity(activity) {
   }
 }
 
-/** Send an activity, coalescing rapid bursts into one Discord IPC write. */
-function scheduleSend(activity) {
+/** Send an activity, coalescing rapid bursts into one Discord IPC write
+ *  and keeping under Discord's rate limit (see RATE_MAX). */
+function scheduleSend(activity, delay = COALESCE_MS) {
   coalescedActivity = activity;
   if (coalesceTimer) return;
   const t = setTimeout(() => {
     coalesceTimer = null;
     const a = coalescedActivity;
-    coalescedActivity = null;
     if (a == null) return;
     if (!client || !isReady) {
+      coalescedActivity = null;
       pendingActivity = a;
       return;
     }
+    const json = JSON.stringify(a);
+    if (json === lastSentJson) { coalescedActivity = null; return; }
+    const now = Date.now();
+    while (sentAt.length && now - sentAt[0] >= RATE_WINDOW_MS) sentAt.shift();
+    if (sentAt.length >= RATE_MAX) {
+      // Out of budget: wait for the oldest send to age out, then send
+      // whatever is newest by then.
+      scheduleSend(a, sentAt[0] + RATE_WINDOW_MS - now + 50);
+      return;
+    }
+    coalescedActivity = null;
+    sentAt.push(now);
+    lastSentJson = json;
     applyActivity(a).catch(() => { /* lastError already set */ });
-  }, COALESCE_MS);
+  }, delay);
   // Coalescer must not keep the event loop alive on quit.
   t.unref?.();
   coalesceTimer = t;
@@ -332,7 +361,9 @@ async function setActivity(payload) {
       coalescedActivity = null;
     }
     pendingActivity = null;
+    lastSentJson = null;
     if (client && isReady) {
+      sentAt.push(Date.now());
       return await applyActivity(null);
     }
     return { ok: true };
@@ -411,8 +442,12 @@ async function setActivity(payload) {
     return { ok: false, error: 'not connected', queued: true };
   }
 
-  // Connected — coalesce a burst of updates into one send.
-  scheduleSend(activity);
+  /* Connected: coalesce a burst of updates into one send. A new song comes
+     as a burst (its details, then playback starting a moment later), so
+     its first update waits a little longer and goes out as one. */
+  const shown = coalescedActivity || (lastSentJson ? JSON.parse(lastSentJson) : null);
+  const newSong = !shown || shown.details !== activity.details || shown.state !== activity.state;
+  scheduleSend(activity, newSong ? NEW_SONG_SETTLE_MS : COALESCE_MS);
   return { ok: true, queued: true };
 }
 

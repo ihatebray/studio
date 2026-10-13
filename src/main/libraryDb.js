@@ -2,7 +2,7 @@
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-import { storeCoverFromDataUri, storeCoverFromUrl } from './coverArtStore.js';
+import { storeCoverFromDataUri, storeCoverFromUrl, upgradeMirroredCovers } from './coverArtStore.js';
 
 let initPromise;
 let SQL;
@@ -836,7 +836,8 @@ export async function ensureLibraryOpen() {
          absent connection cannot be allowed to hold up launch for a repair
          that is purely cosmetic. Fires once per session; the on-disk map
          makes every later launch a no-op. */
-      setTimeout(() => { localizeRemoteCovers(); }, 3000);
+      // Mirror remote covers, then upgrade any mirrored small to the CDN's large copy.
+      setTimeout(() => { localizeRemoteCovers().then(() => upgradeMirroredCovers()).catch(() => {}); }, 3000);
     })();
   }
   await openPromise;
@@ -2240,6 +2241,36 @@ export async function removeTrackFromPlaylist(playlistId, trackId) {
     return { ok: false, error: String(e?.message || e) };
   }
 }
+/**
+ * Put a playlist's songs in the order given (track ids, first to last).
+ * Songs in the playlist but missing from `trackIds` keep their relative
+ * order after the given ones, so a stale list can never drop a song.
+ */
+export async function reorderPlaylistTracks(playlistId, trackIds) {
+  await ensureLibraryOpen();
+  if (!db) return { ok: false, error: 'DB not open' };
+  if (!playlistId || !Array.isArray(trackIds)) return { ok: false, error: 'Invalid ids' };
+  try {
+    const res = db.exec(
+      'SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position ASC, added_at ASC;',
+      [playlistId],
+    );
+    const have = res?.[0]?.values?.map((r) => String(r[0])) || [];
+    const inList = new Set(have);
+    const wanted = [...new Set(trackIds.map(String))].filter((id) => inList.has(id));
+    const placed = new Set(wanted);
+    const order = [...wanted, ...have.filter((id) => !placed.has(id))];
+    order.forEach((tid, i) => {
+      db.run('UPDATE playlist_tracks SET position = ? WHERE playlist_id = ? AND track_id = ?;', [i, playlistId, tid]);
+    });
+    persistSoon();
+    return { ok: true, trackIds: order };
+  } catch (e) {
+    console.error('reorderPlaylistTracks failed', e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
 /** Delete a playlist. Cascades to playlist_tracks via FK. */
 export async function deletePlaylist(id) {
   await ensureLibraryOpen();
