@@ -350,3 +350,17 @@ export function colorFilePath(url) {
     return file;
   }
 }
+
+/** The web address a saved cover is a copy of (a Spotify or iTunes cover
+ *  saved with a song), or null for art that came from you or from a file.
+ *  Discord shows a copy straight from that address; only art of your own
+ *  needs uploading. */
+export function mirroredFrom(local) {
+  if (typeof local !== 'string' || !local.startsWith('studio-cover://')) return null;
+  loadRemoteMap();
+  const key = local.split('?')[0];
+  for (const [remote, stored] of Object.entries(remoteMap)) {
+    if (stored === key && /^https:\/\//i.test(remote) && remote.length <= 256) return remote;
+  }
+  return null;
+}

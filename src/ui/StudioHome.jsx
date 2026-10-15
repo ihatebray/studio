@@ -18,6 +18,7 @@ import { titleCollator, parseGenres } from '../lib/mediaUtils.js';
 import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
 import { spotifyIdOf } from '../lib/spotifyMediaElement.js';
+import { connectTwitchChat, twitchChannelOf } from '../lib/twitchChat.js';
 import { CompactVizContext, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from '../lib/compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases, SpotifyLinkPanel } from './MySpotify.jsx';
@@ -2588,6 +2589,73 @@ export default function StudioHome({
     return () => { off?.(); window.removeEventListener('focus', onFocus); api.spotifyLinkWatch(false).catch(() => {}); };
   }, [linkWatchOn, pushToast, linkCardFor]);
 
+  /* ---- Streamer Mode: song requests from Twitch chat ---------------------
+   * Viewers type "!sr" and a song name or a Spotify link. The song goes to the
+   * top of the queue (or plays, if nothing is), and the card a copied link
+   * gets (in the style picked for it) says who asked, in place of its
+   * buttons. Chat is read without signing in (twitchChat.js). Who may ask
+   * and how often are Settings → Connections → Twitch. */
+  const [twitchStatus, setTwitchStatus] = useState('off');
+  const srLive = useRef({});
+  srLive.current = { theme, currentTrack, onPlayNext, onPlayTrack, spotifyPlayable, pushToast };
+  const srChannel = theme.streamerMode ? twitchChannelOf(theme.twitchChannel) : '';
+  useEffect(() => {
+    if (!srChannel) { setTwitchStatus('off'); return undefined; }
+    const lastAsked = new Map(); // viewer → when their last request was taken
+    const request = async ({ text, user }) => {
+      const m = /^!sr\s+(.+)$/i.exec(String(text || '').trim());
+      if (!m) return;
+      const live = srLive.current;
+      const th = live.theme;
+      const who = th.srWho || 'everyone';
+      const trusted = user.broadcaster || user.mod;
+      if (!(who === 'everyone' || trusted || (who === 'subs' && (user.sub || user.vip)))) return;
+      const wait = Math.max(0, Number(th.srCooldown ?? 60)) * 1000;
+      if (wait && !trusted && Date.now() - (lastAsked.get(user.login) || 0) < wait) return;
+      lastAsked.set(user.login, Date.now());
+
+      const q = m[1].trim().slice(0, 200);
+      const api = window.electronAPI;
+      let row = null;
+      try {
+        if (/open\.spotify\.com\/|spotify:track:|spotify\.link\//i.test(q)) {
+          const info = await api?.spotifyLinkResolve?.(q);
+          if (info?.kind === 'track') row = info.rows?.[0] || null;
+        } else {
+          const rows = await api?.spotifySearch?.(q);
+          row = (Array.isArray(rows) ? rows : []).find((r) => r?.spotifyId && !String(r.spotifyId).startsWith('itunes:') && !r.notOut) || null;
+        }
+      } catch { row = null; }
+      const now = srLive.current;
+      if (!row) {
+        lastAsked.delete(user.login); // nothing was queued: they can try again straight away
+        now.pushToast?.({ message: `No song found for “${q}”, requested by ${user.name}`, kind: 'info', durationMs: 5000 });
+        return;
+      }
+      const track = now.spotifyPlayable(row);
+      const playing = !!now.currentTrack;
+      if (playing) now.onPlayNext?.([track]);
+      else now.onPlayTrack?.(track, [track]);
+      const where = playing ? 'Playing Next' : 'Playing Now';
+      now.pushToast?.({
+        message: `${row.title}${row.artists ? ` by ${row.artists}` : ''}, requested by ${user.name}: ${playing ? 'playing next' : 'playing now'}`,
+        kind: 'info', durationMs: 8000,
+        card: {
+          style: now.theme.linkCard || 'slim',
+          image: row.albumArtUrl || '', title: row.title || 'Song', sub: row.artists || '', explicit: !!row.explicit,
+          meta: [row.album, row.durationMs ? fmtMs(row.durationMs) : ''].filter(Boolean).join(' · '),
+          note: { by: user.name, text: where },
+          buttons: [],
+        },
+      });
+    };
+    let chat = null;
+    // A moment's pause, so typing the channel name doesn't connect once per letter.
+    const t = setTimeout(() => { chat = connectTwitchChat(srChannel, { onStatus: setTwitchStatus, onMessage: request }); }, 600);
+    setTwitchStatus('connecting');
+    return () => { clearTimeout(t); chat?.close(); };
+  }, [srChannel]);
+
   const barShown = !!currentTrack;
   useEffect(() => {
     const gutter = compactMode ? 10 : 16;
@@ -3044,6 +3112,7 @@ export default function StudioHome({
           {sec === 'settings' ? (
             <SettingsPage
               onPreviewLinkCard={previewLinkCard}
+              twitchStatus={twitchStatus}
               tour={settingsTour}
               onEndTour={endSettingsTour}
               accentFixed={accentFixed}

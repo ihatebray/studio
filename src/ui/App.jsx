@@ -1753,22 +1753,27 @@ export default function App() {
     const isStudio = (s) => typeof s === 'string' && s.startsWith('studio-cover://');
     const artFor = (t) => {
       const custom = albumCoverOverrides[albumKeyOf(t)];
-      if (isStudio(custom)) return { studioUrl: custom, publicUrl: '' };
-      const publicUrl = (isPublicHttpUrl(custom) && custom) || [
+      if (isStudio(custom)) return { studioUrl: custom, publicUrl: '', fallbackUrl: '' };
+      if (isPublicHttpUrl(custom)) return { studioUrl: null, publicUrl: custom, fallbackUrl: '' };
+      const webUrl = [
         t.coverArtUrl, t.coverArtRemote, t.albumArtUrl, t.spotifyAlbumImage,
         // usually a data: URL from embedded tags, but a CDN URL on Spotify rows
         t.coverArt,
       ].find(isPublicHttpUrl) || '';
-      if (publicUrl) return { studioUrl: null, publicUrl };
-      // A Spotify song's own cover is public already: the lookup gets it from
-      // Spotify, no upload needed. (Custom covers returned above.)
-      if (spotifyIdOf(t)) return { studioUrl: null, publicUrl: '' };
-      // mergeCoverArt keeps the studio-cover:// path in coverArtLocal when it
-      // swaps coverArt for a freshly parsed data: URI.
-      return { studioUrl: [t.coverArtLocal, t.coverArt].find(isStudio) || null, publicUrl: '' };
+      /* The song's own saved cover comes first: it's what Studio shows for
+         it, including a cover you changed it to. Main tells the two kinds
+         apart (discord:resolveCoverUrl): a saved copy of the Spotify cover is
+         shown from Spotify, no key needed; a cover you set goes up through
+         imgbb. If that can't happen (no key, or the upload fails), the web
+         cover, or the cover lookup, stands in. mergeCoverArt keeps the
+         studio-cover:// path in coverArtLocal when it swaps coverArt for a
+         freshly parsed data: URI. */
+      const ownArt = [t.coverArtLocal, t.coverArt].find(isStudio) || null;
+      if (ownArt) return { studioUrl: ownArt, publicUrl: '', fallbackUrl: webUrl };
+      return { studioUrl: null, publicUrl: webUrl, fallbackUrl: '' };
     };
     const effectiveImgbbApiKey = (imgbbApiKey || '').trim();
-    const { studioUrl, publicUrl: localCoverUrl } = artFor(track);
+    const { studioUrl, publicUrl: localCoverUrl, fallbackUrl } = artFor(track);
     const imgurKey = studioUrl ? `imgur:${studioUrl}` : null;
     const cachedImgur = imgurKey ? (discordArtworkCacheRef.current.get(imgurKey) || '') : '';
 
@@ -1806,7 +1811,8 @@ export default function App() {
       api.discordSetActivity(cur.payload).catch(() => { /* ignore */ });
     };
 
-    const uploading = !!(studioUrl && !cachedImgur && effectiveImgbbApiKey && api.discordResolveCoverUrl);
+    // No key needed to ask: a saved copy of a Spotify cover resolves without one.
+    const uploading = !!(studioUrl && !cachedImgur && api.discordResolveCoverUrl);
     /* Its cover is being looked up (a song with no art of its own): worth
        waiting for too, so the song reaches Discord once, with its cover,
        instead of twice. Discord only takes about five updates per 20s. */
@@ -1870,8 +1876,12 @@ export default function App() {
       return p;
     };
     if (uploading) {
-      upload(studioUrl).then((url) => {
+      upload(studioUrl).then((uploaded) => {
         if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        // Couldn't go up (no key, or a failed upload): the song's web cover
+        // stands in, or for a Spotify song, the cover lookup.
+        const url = uploaded || fallbackUrl;
+        if (!url && spotifyIdOf(track) && api.discordLookupArtwork) lookupCover(track).then(({ url: found }) => pushLate(found));
         keepCover(url);
         const cur = discordPayloadRef.current;
         if (cur?.trackId !== trackId) return;
@@ -1886,7 +1896,7 @@ export default function App() {
     if (next) {
       const n = artFor(next);
       if (n.studioUrl) {
-        if (effectiveImgbbApiKey && api.discordResolveCoverUrl) upload(n.studioUrl);
+        if (api.discordResolveCoverUrl) upload(n.studioUrl);
       } else if (!n.publicUrl && api.discordLookupArtwork && !discordArtworkCacheRef.current.has(keyOf(next)) && (next.artist || next.title)) {
         lookupCover(next);
       }
@@ -1918,7 +1928,7 @@ export default function App() {
     // frame and would spam Discord. Track changes and play/pause both
     // re-anchor on their own; seekNonce covers user seeks within a song.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue[currentIndex]?.id, isPlaying, seekNonce, discordPresenceEnabled, effectiveDiscordAppId, discordPresenceDetail, discordHideWhenPaused, albumCoverOverrides, imgbbApiKey]);
+  }, [queue[currentIndex]?.id, queue[currentIndex]?.coverArt, isPlaying, seekNonce, discordPresenceEnabled, effectiveDiscordAppId, discordPresenceDetail, discordHideWhenPaused, albumCoverOverrides, imgbbApiKey]);
 
   /**
    * Clear the entire library. `deleteFiles=true` also trashes audio files the
@@ -2057,6 +2067,9 @@ export default function App() {
     try {
       const fromDb = await api.loadLibrary();
       setLibrary(fromDb);
+      // The cover as saved (a studio-cover:// file), not the picture the editor
+      // sent: Discord and the color sampling need the saved one.
+      const saved = 'coverArt' in fields ? fromDb?.find?.((x) => x.id === id) : null;
       // Also patch the live queue so "currently playing" info updates without a skip
       setQueue((prev) => prev.map((t) => {
         if (t.id !== id) return t;
@@ -2066,7 +2079,7 @@ export default function App() {
         if (typeof fields.album === 'string') next.album = fields.album.trim() || t.album;
         if ('year' in fields) next.year = fields.year || null;
         if ('genre' in fields) next.genre = fields.genre || '';
-        if ('coverArt' in fields) next.coverArt = fields.coverArt || null;
+        if ('coverArt' in fields) { next.coverArt = saved?.coverArt || fields.coverArt || null; delete next.coverArtLocal; }
         if ('trackNumber' in fields) next.trackNumber = fields.trackNumber || null;
         if ('discNumber' in fields) next.discNumber = fields.discNumber || null;
         return next;

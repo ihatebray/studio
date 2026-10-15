@@ -14,6 +14,7 @@ import Changelog from '../Changelog.jsx';
 
 export default function SettingsPage({
   onPreviewLinkCard,
+  twitchStatus = 'off',
   tour = false,
   onEndTour,
   uiFontId,
@@ -425,6 +426,45 @@ export default function SettingsPage({
                 ) : null}
               </section>
             ) : null}
+            <section className="sth-conn">
+              <div className="sth-conn-head">
+                <div>
+                  <h2>Twitch <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
+                  <p>Streamer Mode: viewers request songs in your chat with <SetLit>!sr</SetLit> and a song name or a Spotify link. Each one goes to the top of your queue. Studio only reads your chat; it never posts or signs in.</p>
+                </div>
+                <span className={`st-status ${twitchStatus === 'listening' ? 'ok' : 'off'}`}>
+                  {!theme.streamerMode ? 'Off'
+                    : twitchStatus === 'listening' ? 'Listening'
+                      : twitchStatus === 'reconnecting' ? 'Reconnecting'
+                        : twitchStatus === 'connecting' ? 'Connecting'
+                          : 'Add your channel'}
+                </span>
+              </div>
+              <div className="sth-set-list">
+                <SetRow title="Streamer Mode" wide={false}
+                  note={theme.streamerMode
+                    ? (twitchStatus === 'listening' ? `Listening to twitch.tv/${String(theme.twitchChannel || '').trim().replace(/^#/, '')}. Requests show up as a card, like a copied link.` : 'Add your channel below to start listening.')
+                    : 'Take song requests from your Twitch chat.'}>
+                  <SetToggle label="Streamer Mode" on={!!theme.streamerMode} onToggle={() => setThemeKey('streamerMode', !theme.streamerMode)} />
+                </SetRow>
+                <SetRow title="Channel" note="Your Twitch channel name, as in twitch.tv/name.">
+                  <input className="st-input" placeholder="e.g. yourname" value={theme.twitchChannel || ''}
+                    onChange={(e) => setThemeKey('twitchChannel', e.target.value)} spellCheck={false} aria-label="Twitch channel" />
+                </SetRow>
+                {theme.streamerMode ? (
+                  <>
+                    <SetRow title="Who can request" note="You and your mods always can.">
+                      <SetSeg label="Who can request" value={theme.srWho || 'everyone'} onPick={(v) => setThemeKey('srWho', v)}
+                        options={[['everyone', 'Everyone'], ['subs', 'Subs and VIPs'], ['mods', 'Mods only']]} />
+                    </SetRow>
+                    <SetRow title="Cooldown" note="How long each viewer waits between requests. You and your mods never wait.">
+                      <SetSeg label="Cooldown" value={Number(theme.srCooldown ?? 60)} onPick={(v) => setThemeKey('srCooldown', v)}
+                        options={[[0, 'None'], [30, '30 sec'], [60, '1 min'], [300, '5 min']]} />
+                    </SetRow>
+                  </>
+                ) : null}
+              </div>
+            </section>
             {onReplayOnboarding ? (
               <section className="sth-conn" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -525,6 +565,7 @@ const TOUR = [
       ['Spotify developer keys', 'optional backup search when your sign-in is busy'],
       ['Soulseek', 'optional second source for rarer songs'],
       ['Discord', 'show what you’re playing on your profile, set up with your own Application ID; an imgbb key adds covers of your own files'],
+      ['Twitch', 'Streamer Mode: viewers request songs in your chat with !sr'],
       ['Run setup again', 'goes back through setup; your library stays'],
     ] },
 ];

@@ -330,6 +330,8 @@ const CSS = `
   vertical-align: 2px; background: rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.85); }
 .st-tcard-sub { margin-top: 1px; font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-tcard-meta { margin-top: 2px; font-size: 11px; color: rgba(255, 255, 255, 0.48); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-tcard-note { margin-top: 3px; font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.66); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-tcard-note b { color: #fff; font-weight: 800; }
 /* The now-playing bar's buttons: a white glyph on nothing, a faint square
    behind it on hover. */
 .st-tcard-ib { flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border: none; border-radius: 8px; cursor: pointer;
@@ -431,6 +433,13 @@ function ToastCard({ card, onButton, onDismiss }) {
   const title = <div className="st-tcard-title" title={card.title}>{card.explicit ? <span className="e">E</span> : null}{card.title}</div>;
   const sub = card.sub ? <div className="st-tcard-sub" title={card.sub}>{card.sub}</div> : null;
   const blur = card.image ? <span className="st-tcard-bg" style={bgOf(card.image)} /> : null;
+  /* A song request from Twitch chat: who asked, and where it went. In place
+     of the buttons a copied link gets, since it's already been queued. */
+  const note = card.note ? (
+    <div className="st-tcard-note" title={`${card.note.text} · requested by ${card.note.by}`}>
+      {card.note.text} · requested by <b>{card.note.by}</b>
+    </div>
+  ) : null;
 
   if (style === 'large') {
     return (
@@ -444,7 +453,8 @@ function ToastCard({ card, onButton, onDismiss }) {
         <div className="st-tcard-body">
           {sub}
           {card.meta ? <div className="st-tcard-meta">{card.meta}</div> : null}
-          <div className="st-tcard-btns">
+          {note}
+          {card.buttons?.length ? <div className="st-tcard-btns">
             {(card.buttons || []).map((b) => (
               /* Save is a +, and saved a tick, here as everywhere else. */
               ICON_ONLY.has(b.icon) ? (
@@ -458,7 +468,7 @@ function ToastCard({ card, onButton, onDismiss }) {
                 </button>
               )
             ))}
-          </div>
+          </div> : null}
         </div>
       </>
     );
@@ -468,7 +478,7 @@ function ToastCard({ card, onButton, onDismiss }) {
   const row = (
     <div className="st-tcard-row">
       {style === 'strip' ? null : art}
-      <div className="st-tcard-text">{title}{sub}</div>
+      <div className="st-tcard-text">{title}{sub}{note}</div>
       {(card.buttons || []).map((b) => (
         <button key={b.label} type="button" className={`st-tcard-ib${b.primary ? ' is-primary' : ''}${b.icon === 'play' ? ' is-play' : ''}${b.pending ? ' is-pending' : ''}`} disabled={!!b.disabled}
           title={b.label} aria-label={b.label} onClick={() => onButton(b)}>

@@ -8,14 +8,42 @@
 
 export const CHANGELOG = [
   {
+    version: '0.0.7',
+    date: '2026-10-15',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Streamer Mode', text: 'Let your Twitch chat pick the music! Viewers type !sr with a song name or a Spotify link, and it plays next.', sub: [
+            'Each request pops up as a card showing the song and who asked for it.',
+            'Choose who can request and how long viewers wait between requests.',
+            'Turn it on in Settings → Connections → Twitch. No Twitch sign-in needed.',
+          ] },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Discord Covers', text: 'Covers of saved Spotify songs now reach Discord faster and no longer need an imgbb key.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed Discord showing the original cover after you changed a song’s cover.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.6',
     date: '2026-10-13',
     sections: [
       {
         heading: 'New',
         items: [
-          { lead: 'Dark Mode', text: 'One click in the top bar gives every page, menu and popup the same dark look, with a little sparkle when it turns on.' },
-          { lead: 'Immerse', text: 'Now also flows behind the Songs, Albums and Artists pages, as one gradient across the whole window. It moves more smoothly and fades in and out instead of cutting.' },
+          { lead: 'Dark Mode', text: 'We heard you like dark mode... Try it out by clicking the "Moon" icon in the top bar!' },
+          { lead: 'Immerse', text: 'Now also flows behind the Songs, Albums and Artists pages as one gradient across the whole window. It also moves more smoothly and fades in and out instead of cutting to the next.' },
           { lead: 'Poster Layout', text: 'Rebuilt so covers look their best.', sub: [
             'Covers from Spotify are now saved in HD, so they stay sharp at any size.',
             'The cover is placed to keep its subject in view. Drag it to move it, double-click to reset.',
@@ -29,9 +57,9 @@ export const CHANGELOG = [
         heading: 'Changed',
         items: [
           { lead: 'Smoother', text: 'Starting a song, opening the side panel and switching to compact mode are now animated and no longer stutter.' },
-          { lead: 'Layouts', text: 'Cleaner buttons that only show their background on hover, accent colors that follow your Accent setting, and Spine and Letterbox have been removed.' },
-          { lead: 'Discord', text: 'Covers reach Discord faster and arrive together with the song, and more Spotify covers show up without an imgbb key.' },
-          { lead: 'Window', text: 'Grab any empty space in the top bar to move the window.' },
+          { lead: 'Layouts', text: 'Cleaned up inconsistencies and removed some layouts.' },
+          { lead: 'Discord', text: 'Covers reach Discord faster and arrive together with the song.' },
+          { lead: 'Window Moving', text: 'Grab any empty space in the top bar to move the window.' },
         ],
       },
       {
@@ -39,7 +67,6 @@ export const CHANGELOG = [
         items: [
           'Fixed lyrics bouncing as the line changed.',
           'Fixed the … menu getting cut off and not closing when clicking elsewhere.',
-          'Fixed menus, notifications and Boost not matching dark mode.',
           'Fixed faint bands behind the cover in fullscreen.',
           'Fixed the visualizer flickering when opening search.',
           'Fixed many more UI inconsistencies.',

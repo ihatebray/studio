@@ -63,7 +63,7 @@ import {
 import http from 'http';
 import { downloadYoutubeAudioById, searchCandidatesForPicker } from './ytdlpImport.js';
 import { saveSoulseekCredentials, soulseekCredentialsConfigured, soulseekStatus, soulseekTestConnection, soulseekDisconnect, soulseekSearch, soulseekDownload, soulseekCancelDownload } from './soulseekClient.js';
-import { resolveCoverFilePath, colorFilePath, mimeForCoverPath, storeCoverFromDataUri } from './coverArtStore.js';
+import { resolveCoverFilePath, colorFilePath, mimeForCoverPath, storeCoverFromDataUri, mirroredFrom } from './coverArtStore.js';
 import * as discordPresence from './discordPresence.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
@@ -1529,6 +1529,11 @@ ipcMain.handle('discord:lookupArtwork', async (event, query) => {
 
 ipcMain.handle('discord:resolveCoverUrl', async (event, { studioUrl, clientId } = {}) => {
   try {
+    /* A saved copy of a Spotify (or iTunes) cover is shown straight from
+       where it came from: no upload, no key. Anything else is art you set,
+       and goes up through imgbb. */
+    const mirror = mirroredFrom(String(studioUrl || ''));
+    if (mirror) return { ok: true, url: mirror, mirror: true };
     const url = await resolveImgurCover(String(studioUrl || ''), String(clientId || ''));
     return { ok: true, url: url || '' };
   } catch (e) {
