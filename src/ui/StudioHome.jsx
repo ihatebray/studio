@@ -19,6 +19,7 @@ import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
 import { spotifyIdOf } from '../lib/spotifyMediaElement.js';
 import { connectTwitchChat, twitchChannelOf } from '../lib/twitchChat.js';
+import { blockedBy, entryLabel, sameEntry, songEntry } from '../lib/srBlock.js';
 import { CompactVizContext, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from '../lib/compactVizStyles.js';
 import { SpotifyHome, SpotifyReleases, SpotifyLinkPanel } from './MySpotify.jsx';
@@ -62,6 +63,7 @@ export default function StudioHome({
   onRemoveFromLibrary,   // (ids[]) → App: removal + queue fallout
   onToggleFavorite,      // (id) → App: optimistic favourite toggle + DB write
   onPlayNext,            // (tracks) → App: insert after the current track
+  onQueueRequest,        // (track, by) → App: a chat request, first come first served; returns its place in line
   onAddToQueue,          // (tracks) → App: append to the queue
   // Transport + volume, for the Now Playing panel's inline controls
   volume = 1,
@@ -2590,15 +2592,38 @@ export default function StudioHome({
   }, [linkWatchOn, pushToast, linkCardFor]);
 
   /* ---- Streamer Mode: song requests from Twitch chat ---------------------
-   * Viewers type "!sr" and a song name or a Spotify link. The song goes to the
-   * top of the queue (or plays, if nothing is), and the card a copied link
+   * Viewers type "!sr" and a song name or a Spotify link. Requests line up
+   * first come, first served after the current song (or play, if nothing
+   * is), skipping anything on the block list, and the card a copied link
    * gets (in the style picked for it) says who asked, in place of its
    * buttons. Chat is read without signing in (twitchChat.js). Who may ask
    * and how often are Settings → Connections → Twitch. */
   const [twitchStatus, setTwitchStatus] = useState('off');
   const srLive = useRef({});
-  srLive.current = { theme, currentTrack, onPlayNext, onPlayTrack, spotifyPlayable, pushToast };
+  srLive.current = { theme, currentTrack, queue, onPlayNext, onQueueRequest, onPlayTrack, spotifyPlayable, pushToast };
   const srChannel = theme.streamerMode ? twitchChannelOf(theme.twitchChannel) : '';
+  /* The block list (Settings → Connections → Twitch, or a song's menu). */
+  const srBlocked = Array.isArray(theme.srBlocked) ? theme.srBlocked : [];
+  /* Takes an updater, so an Undo that fires later edits the list as it is then. */
+  const setSrBlocked = useCallback((fn) => {
+    setTheme((th) => {
+      const list = Array.isArray(th.srBlocked) ? th.srBlocked : [];
+      const next = { ...th, srBlocked: fn(list) };
+      try { localStorage.setItem('studio:theme', JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  const toggleSrBlock = useCallback((entry, hit) => {
+    const drop = (l) => l.filter((b) => b !== hit && !sameEntry(b, hit));
+    const put = (e) => (l) => (l.some((b) => sameEntry(b, e)) ? l : [...l, e]);
+    if (hit) {
+      setSrBlocked(drop);
+      pushToast?.({ message: `${entryLabel(hit)} can be requested again`, action: { label: 'Undo', onClick: () => setSrBlocked(put(hit)) } });
+    } else {
+      setSrBlocked(put(entry));
+      pushToast?.({ message: `${entryLabel(entry)} can't be requested now`, action: { label: 'Undo', onClick: () => setSrBlocked((l) => l.filter((b) => !sameEntry(b, entry))) } });
+    }
+  }, [pushToast, setSrBlocked]);
   useEffect(() => {
     if (!srChannel) { setTwitchStatus('off'); return undefined; }
     const lastAsked = new Map(); // viewer → when their last request was taken
@@ -2632,13 +2657,29 @@ export default function StudioHome({
         now.pushToast?.({ message: `No song found for “${q}”, requested by ${user.name}`, kind: 'info', durationMs: 5000 });
         return;
       }
+      const blocked = blockedBy(now.theme.srBlocked, row);
+      if (blocked) {
+        lastAsked.delete(user.login);
+        now.pushToast?.({ message: `Blocked request: ${row.title}${row.artists ? ` by ${row.artists}` : ''}, from ${user.name}`, kind: 'info', durationMs: 5000 });
+        return;
+      }
       const track = now.spotifyPlayable(row);
       const playing = !!now.currentTrack;
-      if (playing) now.onPlayNext?.([track]);
-      else now.onPlayTrack?.(track, [track]);
-      const where = playing ? 'Playing Next' : 'Playing Now';
+      /* The same song twice in a row is a pile-on, not a request: if it's
+         playing or already waiting in line, it isn't added again. */
+      const same = (t) => t && (t.id === track.id || (row.spotifyId && t.spotifyId === row.spotifyId));
+      if (playing && (same(now.currentTrack) || (now.queue || []).some((t) => t?.srBy && same(t)))) {
+        lastAsked.delete(user.login);
+        now.pushToast?.({ message: `${row.title} is already ${same(now.currentTrack) ? 'playing' : 'in the queue'}, requested by ${user.name}`, kind: 'info', durationMs: 5000 });
+        return;
+      }
+      let spot = 1;
+      if (!playing) now.onPlayTrack?.(track, [track]);
+      else if (now.onQueueRequest) spot = now.onQueueRequest(track, user.name) || 1;
+      else now.onPlayNext?.([track]);
+      const where = !playing ? 'Playing Now' : spot <= 1 ? 'Playing Next' : `#${spot} in Queue`;
       now.pushToast?.({
-        message: `${row.title}${row.artists ? ` by ${row.artists}` : ''}, requested by ${user.name}: ${playing ? 'playing next' : 'playing now'}`,
+        message: `${row.title}${row.artists ? ` by ${row.artists}` : ''}, requested by ${user.name}: ${where.toLowerCase()}`,
         kind: 'info', durationMs: 8000,
         card: {
           style: now.theme.linkCard || 'slim',
@@ -3113,6 +3154,8 @@ export default function StudioHome({
             <SettingsPage
               onPreviewLinkCard={previewLinkCard}
               twitchStatus={twitchStatus}
+              onSetSrBlocked={setSrBlocked}
+              pushToast={pushToast}
               tour={settingsTour}
               onEndTour={endSettingsTour}
               accentFixed={accentFixed}
@@ -3436,6 +3479,15 @@ export default function StudioHome({
                 icon={<><path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v14" /></>}
                 label="Copy Spotify link"
                 sub={sharing === t.id ? 'Looking up…' : undefined} />
+              {theme.streamerMode && !row?.notOut ? (() => {
+                const hit = blockedBy(srBlocked, row || t);
+                return (
+                  <MenuItem accentRgb={acc} onClick={() => { close(); toggleSrBlock(hit ? null : songEntry(row || t), hit); }}
+                    icon={<><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6l12.8 12.8" /></>}
+                    label={hit ? 'Unblock from requests' : 'Block from requests'}
+                    sub={hit?.kind === 'artist' ? `Every song by ${hit.name} is blocked` : undefined} />
+                );
+              })() : null}
               {saved && onUpdateTrackMetadata && !rowMenu.bar ? (
                 <MenuItem accentRgb={acc} onClick={() => { setEditingTrack(t); close(); }}
                   icon={<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />}

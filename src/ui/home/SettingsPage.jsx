@@ -11,10 +11,13 @@ import { LayoutChoice, recordLayoutOf } from './RecordPage.jsx';
 import { SetHowTo, SetLit, SetRow, SetSeg, SetToggle, SpotifyAccountPanel, StudioColorPicker } from './Settings.jsx';
 import { checkForUpdate, installUpdate, useUpdate } from '../updates.js';
 import Changelog from '../Changelog.jsx';
+import { BlockedSongsControl, BlockedSongsManager, countText as blockedCount } from './BlockedSongs.jsx';
 
 export default function SettingsPage({
   onPreviewLinkCard,
   twitchStatus = 'off',
+  onSetSrBlocked,
+  pushToast,
   tour = false,
   onEndTour,
   uiFontId,
@@ -86,6 +89,8 @@ export default function SettingsPage({
   };
   const indicator = useIndicatorStyle();
   const [tourStep, setTourStep] = useState(0);
+  const [blockedOpen, setBlockedOpen] = useState(false);
+  const blocked = Array.isArray(theme.srBlocked) ? theme.srBlocked : [];
   const tourCat = tour ? TOUR[tourStep]?.cat : null;
   useEffect(() => { if (tourCat) setSetCat(tourCat); }, [tourCat]); // eslint-disable-line react-hooks/exhaustive-deps
   const navBtn = (id, label, icon) => (
@@ -430,7 +435,7 @@ export default function SettingsPage({
               <div className="sth-conn-head">
                 <div>
                   <h2>Twitch <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
-                  <p>Streamer Mode: viewers request songs in your chat with <SetLit>!sr</SetLit> and a song name or a Spotify link. Each one goes to the top of your queue. Studio only reads your chat; it never posts or signs in.</p>
+                  <p>Streamer Mode: viewers request songs in your chat with <SetLit>!sr</SetLit> and a song name or a Spotify link. Requests line up first come, first served after the song that's playing. Studio only reads your chat; it never posts or signs in.</p>
                 </div>
                 <span className={`st-status ${twitchStatus === 'listening' ? 'ok' : 'off'}`}>
                   {!theme.streamerMode ? 'Off'
@@ -461,6 +466,15 @@ export default function SettingsPage({
                       <SetSeg label="Cooldown" value={Number(theme.srCooldown ?? 60)} onPick={(v) => setThemeKey('srCooldown', v)}
                         options={[[0, 'None'], [30, '30 sec'], [60, '1 min'], [300, '5 min']]} />
                     </SetRow>
+                    <SetRow title="Blocked songs" wide={false}
+                      note={blocked.length
+                        ? `Chat can't request ${blockedCount(blocked)}. You can also block a song from its menu.`
+                        : 'Songs and artists chat can\u2019t request. You can also block a song from its menu.'}>
+                      <BlockedSongsControl list={blocked} onManage={() => setBlockedOpen(true)} />
+                    </SetRow>
+                    {blockedOpen ? (
+                      <BlockedSongsManager list={blocked} onChange={onSetSrBlocked} pushToast={pushToast} onClose={() => setBlockedOpen(false)} />
+                    ) : null}
                   </>
                 ) : null}
               </div>

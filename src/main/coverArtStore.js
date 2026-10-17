@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { app, net, nativeImage } from 'electron';
-import { hiResCover } from '../lib/coverUrl.js';
+import { colorCover, hiResCover } from '../lib/coverUrl.js';
 
 const COVER_DIR_NAME = 'cover-cache';
 
@@ -330,11 +330,61 @@ function originalSizeFor(local) {
   return originalSizes.get(local) || 0;
 }
 
+/* One picture per artwork for colors.
+ *
+ * Colors are read from a grid of the picture's own pixels, so the same
+ * artwork at 300px, at 640px, and as a 640px copy resized here from the large
+ * file gives three different grids, and can give three different colors. A
+ * song's cover reached the reader as any of those depending on how and when
+ * it was saved: Spotify's address (300 or 640) until the copy was made, the
+ * resized copy after a restart. That is why one song changed color across a
+ * restart and songs from one album didn't match.
+ *
+ * So a cover that came from Spotify or iTunes is always read from the CDN's
+ * own 640px (iTunes 600px) file: the renderer asks for that size when it has
+ * the web address (coverTheme.js), and here the saved copy fetches those
+ * exact bytes once and keeps them beside the cover. Offline, it falls back to
+ * resizing the large file, as before, and tries again next time. */
+const colorFetchFailed = new Map(); // cover file → when the fetch last failed
+function colorSourceOf(local) {
+  loadRemoteMap();
+  for (const [remote, stored] of Object.entries(remoteMap)) {
+    if (stored !== local || !/^https:\/\//i.test(remote)) continue;
+    const canon = colorCover(remote);
+    if (canon) return canon;
+  }
+  return null;
+}
+
 /** The file to read a cover's colors from (see above). */
-export function colorFilePath(url) {
+export async function colorFilePath(url) {
   const file = resolveCoverFilePath(url);
   if (!file) return null;
-  const size = originalSizeFor(String(url).split('?')[0]);
+  const local = String(url).split('?')[0];
+  const canon = colorSourceOf(local);
+  if (canon) {
+    const out = `${file}.cdn-color.jpg`;
+    try { await fs.promises.access(out); return out; } catch { /* not made yet */ }
+    const failedAt = colorFetchFailed.get(file) || 0;
+    if (Date.now() - failedAt > 10 * 60 * 1000) {
+      try {
+        const res = await net.fetch(canon);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (!buf.length) throw new Error('empty');
+        await fs.promises.writeFile(out, buf);
+        return out;
+      } catch {
+        colorFetchFailed.set(file, Date.now());
+      }
+    }
+  }
+  return legacyColorFile(file, local);
+}
+
+/* Offline fallback: the large file resized to the size it was first saved at. */
+function legacyColorFile(file, local) {
+  const size = originalSizeFor(local);
   if (!size) return file;
   const out = `${file}.color.jpg`;
   try {

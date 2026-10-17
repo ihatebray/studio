@@ -96,6 +96,7 @@ export const THEME_DEFAULTS = {
   twitchChannel: '',
   srWho: 'everyone',        // who can request: 'everyone' | 'subs' (subs and VIPs) | 'mods'
   srCooldown: 60,           // seconds each viewer waits between requests; 0 = none
+  srBlocked: [],            // songs and artists chat can't request (lib/srBlock.js)
   albumSongs: 'owned',      // album pages: 'owned' (your songs) or 'full' (the whole album, from Spotify)
   /* How the now-playing wash reads colour out of the cover, and how far it
      reaches. See coverTheme.js for what each extraction actually does. */

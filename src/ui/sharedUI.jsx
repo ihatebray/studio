@@ -189,9 +189,24 @@ let _dlpbKeyframesInjected = false;
  */
 function useDownloadProgress() {
   const [dlProgress, setDlProgress] = useState({});
+  /* Progress arrives many times a second and each update re-renders the
+     whole home view, so one that wouldn't change what's shown (the same
+     whole percent, phase and rough speed) is dropped. */
   const set = useCallback((key, patch) => {
     if (!key) return;
-    setDlProgress((m) => ({ ...m, [key]: { ...(m[key] || {}), ...patch } }));
+    setDlProgress((m) => {
+      const cur = m[key];
+      if (cur) {
+        const same = Object.keys(patch).every((k) => {
+          const a = cur[k]; const b = patch[k];
+          if (k === 'pct') return (a == null && b == null) || (a != null && b != null && Math.floor(a * 100) === Math.floor(b * 100));
+          if (k === 'throughputBps') return a != null && b != null && Math.abs(a - b) < Math.max(a, b) * 0.1;
+          return a === b;
+        });
+        if (same) return m;
+      }
+      return { ...m, [key]: { ...(cur || {}), ...patch } };
+    });
   }, []);
   const clear = useCallback((key) => {
     if (!key) return;

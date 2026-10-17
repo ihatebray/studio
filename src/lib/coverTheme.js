@@ -1,4 +1,5 @@
 import { analyseCover, toBarColour, rgbToOklab, oklabToLch, oklchToRgb } from './coverColour.js';
+import { colorCover } from './coverUrl.js';
 
 /**
  * Build a theme from an average artwork colour.
@@ -744,6 +745,8 @@ const THEME_CACHE_MAX = 300;
 export function sampleCoverTheme(src) {
   const strip = ({ unread, ...theme }) => theme;
   if (!src) return readCoverTheme(src).then(strip);
+  // Every size of one Spotify/iTunes cover is read as the same file, so they share one reading.
+  src = colorCover(src) || src;
   let p = themeCache.get(src);
   if (!p) {
     p = readCoverTheme(src).then((theme) => {
@@ -846,7 +849,10 @@ function readCoverTheme(src) {
        at, not the large copy shown on screen (coverArtStore, "The size a
        cover's colors are read at"), so upgrading a cover to HD doesn't change
        its colors. */
-    img.src = /^studio-cover:/i.test(src) ? `${src}${src.includes('?') ? '&' : '?'}for=color` : src;
+    /* A Spotify or iTunes address is read at its one color size (640/600px)
+       whatever size the song was saved with, the same file a saved copy is
+       read from, so the two can't land on different colors. */
+    img.src = /^studio-cover:/i.test(src) ? `${src}${src.includes('?') ? '&' : '?'}for=color` : (colorCover(src) || src);
   });
 }
 

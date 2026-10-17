@@ -238,6 +238,12 @@ class ItunesSkipped extends Error {
 const itunesInflight = new Map();   // url → Promise
 const itunesCache = new BoundedMap(500);      // url → { at, data }
 
+/* Bumped whenever a cached answer is added, so main only rewrites the cache
+   file when there's something new in it. It used to rewrite every minute
+   regardless, which with 500 stored responses was a sizeable stall. */
+let itunesCacheChanges = 0;
+export const itunesCacheChangeCount = () => itunesCacheChanges;
+
 let itunesActive = 0;
 const itunesQueue = [];
 
@@ -348,6 +354,7 @@ async function itunesGet(params, { priority = 'core', attempt = 0 } = {}) {
         itunesCache.delete(itunesCache.keys().next().value);
       }
       itunesCache.set(url, { at: Date.now(), data });
+      itunesCacheChanges += 1;
       return data;
     })
     .finally(() => { itunesInflight.delete(url); });
@@ -1318,6 +1325,7 @@ async function verifyCollections(ids) {
     }
     const withAudio = new Set(songs.map((r) => Number(r.collectionId)).filter(Boolean));
     for (const id of batch) collectionHasAudio.set(id, withAudio.has(id));
+    itunesCacheChanges += 1;
   }));
 
   return collectionHasAudio;
@@ -1489,7 +1497,7 @@ async function appleArtistImage(artistId, viewUrl) {
      about the page, the other is a transient network condition, and caching
      the second would blank an artist's photo for the rest of the session over
      a dropped connection. */
-  if (!why.startsWith('fetch failed')) artistPortrait.set(id, url);
+  if (!why.startsWith('fetch failed')) { artistPortrait.set(id, url); itunesCacheChanges += 1; }
   return url;
 }
 
@@ -1611,7 +1619,7 @@ function resolvePortrait(artistId, viewUrl, name, titles) {
   const p = (async () => {
     let url = await appleArtistImage(id, viewUrl).catch(() => null);
     if (!url) url = await deezerArtistImage(name, titles).catch(() => null);
-    if (url) artistPortrait.set(id, url);
+    if (url) { artistPortrait.set(id, url); itunesCacheChanges += 1; }
     return url;
   })().finally(() => { portraitInflight.delete(id); });
 

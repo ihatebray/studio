@@ -10,6 +10,84 @@ import { BoundedMap } from '../../lib/boundedMap.js';
 import ScrollJump from './ScrollJump.jsx';
 import { coverProfile, slicePosition, titleShade } from '../../lib/coverFocus.js';
 
+/* A long tracklist renders only the rows near the screen, with spacers above
+   and below standing in for the rest, so the scrollbar and the jump buttons
+   still see the whole list. A playlist of thousands of songs used to mount
+   every row at once and redo all of them whenever anything on the page
+   changed. Short lists (most albums) render in full, as before.
+
+   It finds its own scrolling parent (the page, or the glass card in the split
+   layouts), measures the row pitch from the rows it has, and only re-renders
+   when the window moves by a few rows. Rows keep their real index, so
+   numbering and drag-to-reorder are unchanged. */
+const WINDOW_FROM = 150;
+const WINDOW_OVER = 12;
+const WINDOW_STEP = 6;
+function TrackRows({ count, renderRow, className, empty }) {
+  const ref = useRef(null);
+  const on = count > WINDOW_FROM;
+  const [win, setWin] = useState({ first: 0, last: Math.min(count, 60) });
+  const pitchRef = useRef(58);
+  useEffect(() => {
+    if (!on) return undefined;
+    const el = ref.current;
+    if (!el) return undefined;
+    let sc = el.parentElement;
+    while (sc && sc !== document.body) {
+      const oy = getComputedStyle(sc).overflowY;
+      if (oy === 'auto' || oy === 'scroll') break;
+      sc = sc.parentElement;
+    }
+    if (!sc) return undefined;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const rows = el.querySelectorAll(':scope > .sth-lrow');
+      if (rows.length > 1) pitchRef.current = Math.max(20, rows[1].offsetTop - rows[0].offsetTop) || pitchRef.current;
+      else if (rows.length) pitchRef.current = rows[0].offsetHeight || pitchRef.current;
+      const pitch = pitchRef.current;
+      const top = el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+      const from = -top;
+      let first = Math.max(0, Math.floor(from / pitch) - WINDOW_OVER);
+      let last = Math.min(count, Math.ceil((from + sc.clientHeight) / pitch) + WINDOW_OVER);
+      first = Math.floor(first / WINDOW_STEP) * WINDOW_STEP;
+      last = Math.min(count, Math.ceil(last / WINDOW_STEP) * WINDOW_STEP);
+      if (last <= first) last = Math.min(count, first + WINDOW_STEP);
+      setWin((w) => (w.first === first && w.last === last ? w : { first, last }));
+    };
+    const kick = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    kick();
+    sc.addEventListener('scroll', kick, { passive: true });
+    window.addEventListener('resize', kick);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(kick) : null;
+    ro?.observe(sc);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      sc.removeEventListener('scroll', kick);
+      window.removeEventListener('resize', kick);
+      ro?.disconnect();
+    };
+  }, [on, count]);
+  if (!count) return <div ref={ref} className={className}>{empty}</div>;
+  if (!on) {
+    const all = [];
+    for (let i = 0; i < count; i += 1) all.push(renderRow(i));
+    return <div ref={ref} className={className}>{all}</div>;
+  }
+  const first = Math.min(win.first, count);
+  const last = Math.min(Math.max(win.last, first), count);
+  const rows = [];
+  for (let i = first; i < last; i += 1) rows.push(renderRow(i));
+  const pitch = pitchRef.current;
+  return (
+    <div ref={ref} className={className}>
+      {first ? <div aria-hidden style={{ height: first * pitch }} /> : null}
+      {rows}
+      {count - last ? <div aria-hidden style={{ height: (count - last) * pitch }} /> : null}
+    </div>
+  );
+}
+
 /* Album and playlist pages, in the layouts picked under Settings → Layout.
    (Classic is the original page and still lives in LibraryPage.) Every
    layout uses the same pieces: the cover, the title block, the buttons, the
@@ -748,7 +826,7 @@ export default function RecordPage({
   ) : null);
   const titleCell = (t, playing, sub) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-      {!isAlbum ? (coverFor(t) ? <img className="rp-art" src={coverFor(t)} alt="" draggable={false} /> : <span className="rp-art" />) : null}
+      {!isAlbum ? (coverFor(t) ? <img className="rp-art" src={coverFor(t)} alt="" decoding="async" draggable={false} /> : <span className="rp-art" />) : null}
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
           <span className="rp-ttl" style={{ fontSize: 15, fontWeight: 650, color: playing ? `rgb(${accUI})` : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
@@ -784,8 +862,10 @@ export default function RecordPage({
     const items = merged || tracks.map((t) => ({ lib: t, row: null, key: t.id }));
     const order = queue || tracks;
     return (
-      <div className={`rp-list${soft ? ' is-soft' : ''}${layout === 'twin' ? ' is-hair' : ''}`}>
-        {items.length ? items.map((it, i) => {
+      <TrackRows count={items.length} className={`rp-list${soft ? ' is-soft' : ''}${layout === 'twin' ? ' is-hair' : ''}`}
+        empty={<div className="rp-empty">No songs yet.</div>}
+        renderRow={(i) => {
+          const it = items[i];
           const t = it.lib || streamTrack(it.row);
           const missing = !it.lib;
           const playing = missing ? spotifyIdOf(currentTrack) === it.row.spotifyId : currentTrack?.id === t.id;
@@ -814,8 +894,7 @@ export default function RecordPage({
               <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>{missing ? saveBtn(it.row) : <>{heart(t)}{removeBtn(t)}</>}</div>
             </div>
           );
-        }) : <div className="rp-empty">No songs yet.</div>}
-      </div>
+        }} />
     );
   };
   const list = renderList(false);

@@ -11,6 +11,7 @@ import {
 import { useToastBus, ToastStack, ToastContext, recordNotice } from './Toasts.jsx';
 import { useUpdate, installUpdate } from './updates.js';
 import { getPlaybackTime, setPlaybackTime } from '../lib/playbackClock.js';
+import { useMediaSession } from '../lib/mediaSession.js';
 import { SpotifyMediaElement, spotifyIdOf, preloadStreamed } from '../lib/spotifyMediaElement.js';
 import { playContextFor } from '../lib/playContext.js';
 import { titleCollator } from '../lib/mediaUtils.js';
@@ -1400,8 +1401,9 @@ export default function App() {
       if (!prev && queue.length > 0) {
         const cur = queue[currentIndex];
         const rest = queue.filter((_, i) => i !== currentIndex);
-        setQueue([cur, ...shuffleArray(rest)]);
-        setCurrentIndex(0);
+        const kept = keepRequests([cur, ...shuffleArray(rest)], 0);
+        setQueue(kept.q);
+        setCurrentIndex(kept.idx);
       }
       return !prev;
     });
@@ -1435,6 +1437,22 @@ export default function App() {
     };
     audio.addEventListener('loadedmetadata', onMeta, { once: true });
   }, [duration]);
+
+  /* Keyboard media keys and the system's media controls (lib/mediaSession.js). */
+  useMediaSession({
+    track: currentTrack,
+    isPlaying,
+    duration,
+    seekNonce,
+    getTime: getPlaybackTime,
+    handlers: {
+      onPlay: () => { if (!isPlaying) togglePlay(); },
+      onPause: () => { if (isPlaying) togglePlay(); },
+      onPrev: () => handlePrev(),
+      onNext: () => handleNext(),
+      onSeek: (t) => seekTo(t),
+    },
+  });
 
   /**
    * The one place paths become library rows.
@@ -1527,6 +1545,19 @@ export default function App() {
     enabled: typeof window !== 'undefined' && !!window.electronAPI,
   });
 
+  /** Twitch requests still waiting survive a new queue: playing an album or
+   *  a playlist (or turning shuffle on) puts them straight after the new
+   *  current song, in the order they came in, instead of dropping them. */
+  const keepRequests = (q, idx) => {
+    const cur = q[idx];
+    const waiting = queueRef.current.slice(currentIndex + 1).filter((t) => t?.srBy && t.id !== cur?.id);
+    if (!waiting.length) return { q, idx };
+    const ids = new Set(waiting.map((t) => t.id));
+    const rest = q.filter((t, i) => i === idx || !ids.has(t.id));
+    const at = rest.indexOf(cur);
+    return { q: [...rest.slice(0, at + 1), ...waiting, ...rest.slice(at + 1)], idx: at };
+  };
+
   /**
    * Build the play queue for a clicked track.
    *
@@ -1544,23 +1575,22 @@ export default function App() {
    * into the middle of the old shuffled order.
    */
   const playTrack = (track, sortedList, context = 'list') => {
+    let q;
+    let idx = 0;
     if (context === 'single') {
-      const rest = shuffleArray(library.filter((t) => t.id !== track.id));
-      setQueue([track, ...rest]);
-      setCurrentIndex(0);
+      q = [track, ...shuffleArray(library.filter((t) => t.id !== track.id))];
     } else {
       const source = sortedList && sortedList.length > 0 ? sortedList : sortByTitle(library);
       if (shuffleOn) {
-        const rest = shuffleArray(source.filter((t) => t.id !== track.id));
-        setQueue([track, ...rest]);
-        setCurrentIndex(0);
+        q = [track, ...shuffleArray(source.filter((t) => t.id !== track.id))];
       } else {
-        const q = [...source];
-        const idx = q.findIndex((t) => t.id === track.id);
-        setQueue(q);
-        setCurrentIndex(idx >= 0 ? idx : 0);
+        q = [...source];
+        idx = Math.max(0, q.findIndex((t) => t.id === track.id));
       }
     }
+    const kept = keepRequests(q, idx);
+    setQueue(kept.q);
+    setCurrentIndex(kept.idx);
     if (!hasEverPlayed) setHasEverPlayed(true);
   };
 
@@ -1600,6 +1630,32 @@ export default function App() {
       const after = prev.slice(currentIndex + 1);
       return [...before, ...rows, ...after];
     });
+  }, [currentIndex, hasEverPlayed]);
+
+  /** A Twitch !sr request. Requests line up first come, first served: each
+   *  one goes after the last request still waiting, not straight after the
+   *  current song, so a later request can't jump an earlier one. Your own
+   *  Play next still goes to the very front. Returns its place in the queue
+   *  (1 = playing next). */
+  const queueRequest = useCallback((track, by) => {
+    if (!track) return 0;
+    const tagged = { ...track, srBy: by || 'chat' };
+    const lastReq = (q) => {
+      for (let i = q.length - 1; i > currentIndex; i -= 1) if (q[i]?.srBy) return i;
+      return currentIndex;
+    };
+    // Its place in line counts everything ahead of it, your own Play next included.
+    const spot = Math.max(1, lastReq(queueRef.current) + 1 - currentIndex);
+    setQueue((prev) => {
+      if (prev.length === 0 || currentIndex < 0) {
+        setCurrentIndex(0);
+        if (!hasEverPlayed) setHasEverPlayed(true);
+        return [tagged];
+      }
+      const at = lastReq(prev) + 1;
+      return [...prev.slice(0, at), tagged, ...prev.slice(at)];
+    });
+    return spot;
   }, [currentIndex, hasEverPlayed]);
 
 
@@ -2189,6 +2245,7 @@ export default function App() {
    * legacy fallback for pre-DB-events installs. New events go to both.
    * Pruned to the last ~90 days on read so it can't grow unbounded. */
   const PLAY_EVENT_RETENTION_MS = 1000 * 60 * 60 * 24 * 90; // 90 days
+  const PLAY_EVENT_SEED_MAX = 4000;     // newest events kept in the launch copy
 
   /* How much history the STATS page gets, which is a different question from
      how much the localStorage mirror should hold. SQLite never prunes
@@ -2249,18 +2306,27 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playEventsNonce]);
 
-  // Persist the log whenever it changes. Also opportunistically prunes old
-  // events on every save so the stored size never drifts upward.
+  /* A copy of the recent log in localStorage, so Stats has something to show
+     before the database answers at launch. The database is the record. This
+     used to stringify the whole 90 days on every recorded play, mid-song,
+     which for a heavy listener was a visible hitch and could outgrow
+     localStorage. Now it keeps the newest few thousand and writes when the
+     app is idle, a few seconds after the last change. */
   useEffect(() => {
-    try {
-      const cutoff = Date.now() - PLAY_EVENT_RETENTION_MS;
-      const fresh = playEvents.filter((e) => e.at >= cutoff);
-      if (fresh.length === 0) {
-        window.localStorage.removeItem('immerse:playEvents');
-      } else {
-        window.localStorage.setItem('immerse:playEvents', JSON.stringify(fresh));
-      }
-    } catch { /* ignore */ }
+    const write = () => {
+      try {
+        const cutoff = Date.now() - PLAY_EVENT_RETENTION_MS;
+        const fresh = playEvents.filter((e) => e.at >= cutoff).slice(-PLAY_EVENT_SEED_MAX);
+        if (fresh.length === 0) window.localStorage.removeItem('immerse:playEvents');
+        else window.localStorage.setItem('immerse:playEvents', JSON.stringify(fresh));
+      } catch { /* ignore */ }
+    };
+    let idle = 0;
+    const t = setTimeout(() => {
+      if (typeof window.requestIdleCallback === 'function') idle = window.requestIdleCallback(write, { timeout: 5000 });
+      else write();
+    }, 3000);
+    return () => { clearTimeout(t); if (idle) window.cancelIdleCallback?.(idle); };
   }, [playEvents]);
 
 
@@ -2748,6 +2814,7 @@ export default function App() {
         onRemoveFromLibrary={removeTracksFromLibrary}
         onToggleFavorite={toggleFavorite}
         onPlayNext={playNext}
+        onQueueRequest={queueRequest}
         onAddToQueue={addToQueue}
         onUpdateAlbumMetadata={updateAlbumMetadata}
         onSetAlbumCover={handleSetAlbumCover}

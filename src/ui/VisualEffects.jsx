@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 
 /**
@@ -9,7 +9,7 @@ import React, { useEffect, useRef, useState } from 'react';
  * makes the field look "expensive" — it's a static background-image, so it
  * costs nothing per frame.
  */
-const GRAIN_TILE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`;
+const GRAIN_TILE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`;
 
 
 /* ---- One sky for every surface (Immerse) --------------------------------
@@ -28,8 +28,16 @@ const GRAIN_TILE = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
  * carry most of the movement. Paused, the drift eases down to a crawl and
  * picks back up on play, never stopping or jumping. Reduced motion holds it
  * still. The clock is shared, so every surface stays one piece. */
-const UNIT = 28;          // px of screen per canvas pixel: heavy, cheap blur
-const BLEED = 48;         // px drawn past each edge so the CSS blur never fades to empty at the border
+const UNIT = 28;          // px of screen per scene pixel: the shapes are drawn this coarse
+const OUT = 8;            // px of screen per pixel of the canvas you see, which holds the blur
+const BLUR = 40;          // px of blur, as it reads on screen
+const BLEED = 48;         // px drawn past each edge so the blur never fades to empty at the border
+/* The blur is done inside the canvas, at OUT px per pixel, not as a CSS
+   filter on a full-window layer. A CSS blur(40px) made the GPU re-blur the
+   whole window every frame, once per surface (bar, panel, page), and that
+   is what slowed weaker GPUs, worst of all with a game running beside it.
+   The same 40px of blur on a canvas about 250x150 is nearly free, and the
+   compositor then only has to scale a small texture up. */
 
 /*  [size, reachX, reachY, speedX, speedY, phase, spin]
     reach is a share of the window, speed in radians per second of the
@@ -79,6 +87,7 @@ function AnimatedGradientBg({
   field = false,
 }) {
   const canvasRef = useRef(null);
+  const sceneRef = useRef(null);
   const rafRef = useRef(null);
   /* Pre-masked circular sprites of the cover (offscreen canvases), not the
      raw image: rotating squares let their corners survive the blur as faint
@@ -88,10 +97,10 @@ function AnimatedGradientBg({
   const coverUrlRef = useRef(null);
   const lastTimeRef = useRef(0);
   // Latest props mirrored into a ref so the long-lived loop reads them.
-  const propsRef = useRef({ isPlaying, accent, mid, wash, field });
+  const propsRef = useRef({ isPlaying, accent, mid, wash, field, brightness });
   useEffect(() => {
-    propsRef.current = { isPlaying, accent, mid, wash, field };
-  }, [isPlaying, accent, mid, wash, field]);
+    propsRef.current = { isPlaying, accent, mid, wash, field, brightness };
+  }, [isPlaying, accent, mid, wash, field, brightness]);
 
   // Load the cover whenever it changes and bake it into a feathered sprite;
   // the previous one stays on to fade out.
@@ -134,22 +143,28 @@ function AnimatedGradientBg({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return undefined;
+    const out = canvas.getContext('2d');
+    // The shapes are drawn into a small scene canvas, then blurred onto the visible one.
+    const scene = sceneRef.current || (sceneRef.current = document.createElement('canvas'));
+    const ctx = scene.getContext('2d');
+    if (!ctx || !out) return undefined;
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const FADE_S = 1.2;        // a new cover's colours fade in over this long
 
     // The colours on screen, eased toward the props so a new song's palette
     // blends in instead of cutting.
-    const shown = { acc: parseRgb(propsRef.current.accent), mid: parseRgb(propsRef.current.mid), wash: parseRgb(propsRef.current.wash) };
+    const shown = { acc: parseRgb(propsRef.current.accent), mid: parseRgb(propsRef.current.mid), wash: parseRgb(propsRef.current.wash), bright: propsRef.current.brightness ?? 1 };
     const ownStart = performance.now();
     lastTimeRef.current = ownStart;
 
     const frame = () => {
       const now = performance.now();
       /* 30 frames a second: a heavily blurred drift looks the same at half
-         the rate. Motion is time-based, so skipping frames doesn't slow it. */
-      if (now - lastTimeRef.current < 1000 / 30 - 2) { rafRef.current = requestAnimationFrame(frame); return; }
+         the rate. 15 while Studio isn't the window you're using (a game in
+         front, say), so it leaves the GPU alone. Motion is time-based, so
+         skipping frames doesn't slow it. */
+      const fps = document.hasFocus() ? 30 : 15;
+      if (now - lastTimeRef.current < 1000 / fps - 2) { rafRef.current = requestAnimationFrame(frame); return; }
       const dt = Math.min(0.05, Math.max(0.001, (now - lastTimeRef.current) / 1000));
       lastTimeRef.current = now;
       const P = propsRef.current;
@@ -159,8 +174,8 @@ function AnimatedGradientBg({
 
       /* ---- Size: the box this canvas covers, at one pixel per UNIT ---- */
       let W; let H; let ox0 = 0; let oy0 = 0; let VW; let VH;
+      const r = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : { left: 0, top: 0, width: 300, height: 150 };
       if (P.field) {
-        const r = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : { left: 0, top: 0, width: 300, height: 150 };
         W = Math.max(2, Math.ceil((r.width + BLEED * 2) / UNIT));
         H = Math.max(2, Math.ceil((r.height + BLEED * 2) / UNIT));
         ox0 = (r.left - BLEED) / UNIT;
@@ -170,8 +185,14 @@ function AnimatedGradientBg({
       } else {
         W = 32; H = 32; VW = 32; VH = 32;
       }
-      if (canvas.width !== W) canvas.width = W;
-      if (canvas.height !== H) canvas.height = H;
+      if (scene.width !== W) scene.width = W;
+      if (scene.height !== H) scene.height = H;
+      // The visible canvas: the element's own size at OUT px per pixel.
+      const bleed = P.field ? BLEED * 2 : 0;
+      const OW = Math.max(2, Math.ceil((r.width + bleed) / OUT));
+      const OH = Math.max(2, Math.ceil((r.height + bleed) / OUT));
+      if (canvas.width !== OW) canvas.width = OW;
+      if (canvas.height !== OH) canvas.height = OH;
 
       // Ease the colours toward the current song's.
       const ease = 1 - Math.exp(-dt / (FADE_S / 3));
@@ -179,6 +200,7 @@ function AnimatedGradientBg({
         const to = parseRgb(src);
         shown[key] = shown[key].map((v, i) => v + (to[i] - v) * ease);
       }
+      shown.bright += ((P.brightness ?? 1) - shown.bright) * ez(dt, 0.08);
       const acc = rgbStr(shown.acc);
 
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -223,6 +245,15 @@ function AnimatedGradientBg({
       if (prev) drawLayers(prev, 1 - smooth);
       drawLayers(cur, prev ? smooth : 1);
 
+      // Scene → visible canvas, stretched to fit and blurred on the way.
+      out.setTransform(1, 0, 0, 1, 0, 0);
+      out.clearRect(0, 0, OW, OH);
+      out.imageSmoothingEnabled = true;
+      out.imageSmoothingQuality = 'high';
+      out.filter = `blur(${(BLUR / OUT).toFixed(2)}px) saturate(1.8)${Math.abs(shown.bright - 1) > 0.002 ? ` brightness(${shown.bright.toFixed(3)})` : ''}`;
+      out.drawImage(scene, 0, 0, OW, OH);
+      out.filter = 'none';
+
       rafRef.current = requestAnimationFrame(frame);
     };
 
@@ -245,20 +276,19 @@ function AnimatedGradientBg({
           position: 'absolute',
           ...(field ? { left: -BLEED, top: -BLEED, width: `calc(100% + ${BLEED * 2}px)`, height: `calc(100% + ${BLEED * 2}px)` } : { inset: 0, width: '100%', height: '100%' }),
           pointerEvents: 'none',
-          filter: `blur(40px) saturate(1.8)${brightness !== 1 ? ` brightness(${brightness.toFixed(3)})` : ''}`,
-          transition: 'opacity 0.8s ease, filter 0.24s ease',
+          transition: 'opacity 0.8s ease',
         }}
       />
       {/* Grain — dissolves the 8-bit banding the heavy blur produces on
-          dark gradients. Static texture, zero per-frame cost. */}
+          dark gradients. A plain layer, not mix-blend-mode: overlay, which
+          made the GPU composite the whole window once more every frame. */}
       <div
         aria-hidden
         style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
           backgroundImage: GRAIN_TILE,
           backgroundRepeat: 'repeat',
-          opacity: 0.05,
-          mixBlendMode: 'overlay',
+          opacity: 0.035,
         }}
       />
       {/* Vignette — bottom darkens more so track info stays readable */}
@@ -306,5 +336,43 @@ export function FadeLayer({ show, ms = LAYER_FADE_MS, className, style, children
     }}>
       {children}
     </div>
+  );
+}
+
+/* Cross-fades between looks. Each change of `swapKey` (a surface setting, or
+   the colour it paints) fades the new layers in while the old ones fade out
+   over the same time; a null `children` fades the old ones out to nothing.
+   FadeLayer does this for Immerse being on or off; this is the same thing
+   for surfaces that change rather than come and go: Color, Cover Art, Full
+   Color and the colour itself as the song changes. */
+const SWAP_CSS = '@keyframes stSwapIn{from{opacity:0}}@keyframes stSwapOut{to{opacity:0}}';
+export function FadeSwap({ swapKey, ms = LAYER_FADE_MS, style, children }) {
+  const [leaving, setLeaving] = useState([]); // [{ id, node }]
+  const prevRef = useRef({ key: swapKey, node: children });
+  const idRef = useRef(0);
+  const timers = useRef(new Set());
+  useLayoutEffect(() => {
+    const prev = prevRef.current;
+    if (prev.key !== swapKey && prev.node) {
+      idRef.current += 1;
+      const id = idRef.current;
+      setLeaving((l) => [...l, { id, node: prev.node }]);
+      const t = setTimeout(() => { timers.current.delete(t); setLeaving((l) => l.filter((x) => x.id !== id)); }, ms);
+      timers.current.add(t);
+    }
+    prevRef.current = { key: swapKey, node: children };
+  });
+  useEffect(() => () => { for (const t of timers.current) clearTimeout(t); }, []);
+  const layer = { position: 'absolute', inset: 0, pointerEvents: 'none', ...style };
+  return (
+    <>
+      <style>{SWAP_CSS}</style>
+      {leaving.map((l) => (
+        <div key={`out-${l.id}`} aria-hidden style={{ ...layer, animation: `stSwapOut ${ms}ms ease both` }}>{l.node}</div>
+      ))}
+      {children ? (
+        <div key={`in-${swapKey}`} aria-hidden style={{ ...layer, animation: `stSwapIn ${ms}ms ease both` }}>{children}</div>
+      ) : null}
+    </>
   );
 }

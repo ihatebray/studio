@@ -218,6 +218,12 @@ export const HOME_CSS = `
 
         /* --- library album cards --- */
         .sth-alb { border: none; background: transparent; padding: 0; cursor: pointer; text-align: left; color: inherit; min-width: 0; }
+        /* Off-screen album tiles skip layout and paint (and their covers don't
+           load) until they scroll near. */
+        .sth-alb-grid > .sth-alb { content-visibility: auto; contain-intrinsic-size: auto 180px auto 242px;
+          /* Skipping clips paint to the tile, so it gets 4px of headroom for
+             the art's hover lift; the negative margin keeps it in place. */
+          padding-top: 4px; margin-top: -4px; }
         /* Album art stays clean and flush with the grid. The old multi-layer
            black halo created visible bands above and below the first row. */
         .sth-albart { position: relative; aspect-ratio: 1; border-radius: 13px; overflow: hidden; background: rgba(var(--st-fg-rgb), 0.05); border: 1px solid rgba(var(--st-fg-rgb), 0.07); box-shadow: none; transition: transform 0.22s cubic-bezier(0.2,0.9,0.3,1), border-color 0.2s ease, filter 0.2s ease; }
@@ -930,7 +936,10 @@ export const HOME_CSS = `
         .sth-scroll { margin: 0 var(--gutter) var(--np-reserve) 0; border-radius: var(--r-card); background: var(--surface); border: 1px solid var(--border); padding: 28px 28px 32px; }
         .sth-scroll.is-page { padding: 0; }
         /* Now Playing bar — detached card aligned to the content card. */
-        .sth-npbar { left: var(--np-bar-left); right: var(--gutter); bottom: var(--gutter); height: 86px; border-radius: var(--r-card); background: var(--np-bar-bg, var(--surface)); border: 1px solid var(--border); }
+        .sth-npbar { left: var(--np-bar-left); right: var(--gutter); bottom: var(--gutter); height: 86px; border-radius: var(--r-card); background: var(--np-bar-bg, var(--surface)); border: 1px solid var(--border);
+          /* Color, Cover Art, Immerse and Dark mode fade into each other, at the
+             same pace as the panel and the library pages beside it. */
+          transition: background-color 0.6s ease; }
         .sth-npbar-grid { position: relative; z-index: 1; height: 100%; display: grid; grid-template-columns: 282px minmax(0, 1fr) 282px; align-items: center; padding: 0 16px; gap: 16px; }
         .sth-npbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; transition: opacity 0.24s ease, transform 0.36s cubic-bezier(0.22,1,0.36,1); }
         /* A notification docked in the bar sits over the song info. */

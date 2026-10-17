@@ -2677,7 +2677,7 @@ export default function InstantSearch({
           {/* The one global setting worth having in reach. Fast is the default
               and the honest one: Spotify's catalog, YouTube's files, no
               waiting. Best is for people who'd rather wait than re-encode. */}
-          <span className="isx-footnote" style={{ marginRight: 6 }}>Quality</span>
+          <span className="isx-footnote" style={{ marginRight: -8 }}>Quality</span>
           <div className="isx-qtoggle" role="radiogroup" aria-label="Download quality">
             <button type="button" role="radio" aria-checked={quality === 'fast'}
               className={quality === 'fast' ? 'on' : ''}
@@ -2727,7 +2727,7 @@ const STYLES = `
 @keyframes isxFade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes isxIn { from { opacity: 0; transform: translateX(-50%) translateY(-8px) } to { opacity: 1; transform: translateX(-50%) } }
 
-.isx-top { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 18px; min-height: 58px; flex-shrink: 0;
+.isx-top { display: flex; align-items: center; gap: 10px; padding: 12px 18px; min-height: 58px; flex-shrink: 0;
   border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.07); }
 /* Chips and the input share one wrapping row, so a long scope list grows the
    bar downward instead of squeezing the text you're typing to nothing. */
@@ -2753,18 +2753,21 @@ const STYLES = `
 .isx-secbtn:hover { color: #fff; }
 
 /* ---- empty box ---- */
-.isx-start { padding-bottom: 4px; }
-.isx-intro { padding: 22px 12px 8px; }
-.isx-intro .isx-emptyhint { margin-top: 5px; line-height: 1.5; }
-.isx-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 2px 8px 4px; }
-.isx-filter { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding: 9px 11px;
+/* Everything in here sits on the same 18px inset as the search icon, the
+   esc button and the Quality toggle, cards included. */
+.isx-start { padding-bottom: 6px; }
+.isx-intro { padding: 16px 10px 6px; }
+.isx-intro .isx-emptyhint { margin-top: 4px; line-height: 1.5; }
+.isx-start .isx-sec { padding: 16px 10px 8px; }
+.isx-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0 10px; }
+.isx-filter { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding: 10px 12px;
   border-radius: 10px; cursor: pointer; font-family: inherit; text-align: left;
   border: 1px solid rgba(var(--st-fg-rgb), 0.07); background: rgba(var(--st-fg-rgb), 0.03); color: inherit;
   transition: background 0.14s ease, border-color 0.14s ease; }
 .isx-filter:hover { background: rgba(var(--st-acc-rgb), 0.1); border-color: rgba(var(--st-acc-rgb), 0.3); }
 .isx-filter-k { font-size: 12px; font-weight: 750; color: rgb(var(--st-acc-rgb)); }
 .isx-filter-d { font-size: 11px; color: rgba(var(--st-sub-rgb), 0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.isx-tip { padding: 12px 12px 4px; font-size: 11.5px; line-height: 1.5; color: rgba(var(--st-sub-rgb), 0.38); }
+.isx-tip { padding: 14px 10px 2px; font-size: 11.5px; line-height: 1.5; color: rgba(var(--st-sub-rgb), 0.38); }
 .isx-input::placeholder { color: rgba(var(--st-fg-rgb), 0.28); font-weight: 500; }
 .isx-token { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; max-width: 260px;
   padding: 4px 7px 4px 8px; border-radius: 7px; white-space: nowrap; overflow: hidden; font-family: inherit; font-size: 11.5px; font-weight: 700;
@@ -2799,7 +2802,7 @@ const STYLES = `
 .isx-body::-webkit-scrollbar { width: 6px; }
 .isx-body::-webkit-scrollbar-thumb { background: rgba(var(--st-fg-rgb), 0.13); border-radius: 999px; }
 
-.isx-sec { padding: 12px 12px 6px; display: flex; align-items: center; gap: 8px;
+.isx-sec { padding: 12px 10px 6px; display: flex; align-items: center; gap: 8px;
   font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(var(--st-fg-rgb), 0.3); }
 .isx-sec .ct { letter-spacing: 0; font-weight: 700; color: rgba(var(--st-fg-rgb), 0.2); }
 .isx-secnote { margin-left: auto; letter-spacing: 0; text-transform: none; font-size: 10.5px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.24); }
@@ -2944,8 +2947,9 @@ const STYLES = `
 .isx-emptytitle { font-size: 14px; font-weight: 650; color: rgba(var(--st-text-rgb), 0.85); }
 .isx-emptyhint { font-size: 12px; color: rgba(var(--st-sub-rgb), 0.4); margin-top: 9px; line-height: 1.7; }
 .isx-emptyhint b { color: rgba(var(--st-fg-rgb), 0.62); font-weight: 700; }
+.isx-intro .isx-emptytitle { font-size: 14.5px; font-weight: 750; }
 
-.isx-foot { display: flex; align-items: center; gap: 16px; padding: 11px 16px; flex-shrink: 0;
+.isx-foot { display: flex; align-items: center; gap: 16px; padding: 10px 18px; min-height: 48px; flex-shrink: 0;
   border-top: 1px solid rgba(var(--st-fg-rgb), 0.07); font-size: 11px; color: rgba(var(--st-sub-rgb), 0.35); }
 .isx-foot kbd { font-family: inherit; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 5px;
   background: rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.55); margin-right: 6px; }
@@ -3004,6 +3008,38 @@ const STYLES = `
   border: 1.6px solid rgba(var(--st-fg-rgb), 0.15); border-top-color: rgb(var(--st-acc-rgb));
   animation: isxSpin 0.7s linear infinite; }
 @keyframes isxSpin { to { transform: rotate(360deg); } }
+
+/* ---- Dark mode ----------------------------------------------------------
+   The same dark the rest of the app uses: the panel one step up from the
+   page, cards one more, white-at-alpha edges. The cover accent stays on the
+   things you act on (Get, Play, filter chips you've added) but not on the
+   furniture, so a blue or orange cover doesn't tint the whole box. */
+[data-dark] .isx-scrim { background: rgba(0,0,0,0.66); }
+[data-dark] .isx-panel { background: rgb(14,14,16); border-color: rgba(255,255,255,0.08);
+  box-shadow: 0 40px 100px rgba(0,0,0,0.8), 0 0 0 1px rgba(0,0,0,0.6); }
+[data-dark] .isx-top, [data-dark] .isx-crumb { border-bottom-color: rgba(255,255,255,0.06); }
+[data-dark] .isx-crumb { background: rgba(255,255,255,0.015); }
+[data-dark] .isx-foot { border-top-color: rgba(255,255,255,0.06); }
+[data-dark] .isx-escbtn { border-color: rgba(255,255,255,0.1); color: rgba(255,255,255,0.45); }
+[data-dark] .isx-filter { background: rgb(21,21,24); border-color: rgba(255,255,255,0.06); }
+[data-dark] .isx-filter:hover { background: rgb(28,28,32); border-color: rgba(255,255,255,0.12); }
+[data-dark] .isx-filter-k { color: #fff; }
+[data-dark] .isx-filter-d { color: rgba(255,255,255,0.42); }
+[data-dark] .isx-sec { color: rgba(255,255,255,0.32); }
+[data-dark] .isx-emptytitle { color: #fff; }
+[data-dark] .isx-emptyhint, [data-dark] .isx-tip { color: rgba(255,255,255,0.42); }
+[data-dark] .isx-row.is-on, [data-dark] .isx-trk.is-on, [data-dark] .isx-src.is-on { background: rgba(255,255,255,0.07); }
+[data-dark] .isx-trk.is-open { background: rgba(255,255,255,0.045); }
+[data-dark] .isx-art, [data-dark] .isx-peekart { background-color: rgb(21,21,24); }
+[data-dark] .isx-glyph { background: rgb(21,21,24); border-color: rgba(255,255,255,0.07); }
+[data-dark] .isx-cov { background: rgb(21,21,24); border-color: rgba(255,255,255,0.06); }
+[data-dark] .isx-qtoggle { background: rgb(21,21,24); border-color: rgba(255,255,255,0.06); }
+[data-dark] .isx-qtoggle button.on { background: #fff; color: #0A0A0B; }
+[data-dark] .isx-foot kbd { background: rgb(28,28,32); color: rgba(255,255,255,0.6); }
+[data-dark] .isx-ghost { background: rgb(21,21,24); border-color: rgba(255,255,255,0.1); }
+[data-dark] .isx-ghost:hover { background: rgb(28,28,32); }
+[data-dark] .isx-better { background: rgb(21,21,24); }
+[data-dark] .isx-srcct { background: rgb(28,28,32); }
 
 @media (max-width: 820px) {
   .isx-panel, .isx-panel.is-wide { --isx-w: calc(100vw - 32px); top: 70px; }

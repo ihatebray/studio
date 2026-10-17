@@ -3,7 +3,7 @@ import { readableAccent } from '../../lib/coverTheme.js';
 import { formatTime, getFileFormatLabel, parseGenres } from '../../lib/mediaUtils.js';
 import PanelLyricsEditor from '../PanelLyricsEditor.jsx';
 import VolumeControl from '../VolumeControl.jsx';
-import { AnimatedGradientBg, FadeLayer } from '../VisualEffects.jsx';
+import { AnimatedGradientBg, FadeLayer, FadeSwap, LAYER_FADE_MS } from '../VisualEffects.jsx';
 import { ArtistLinks, PauseIcon, PlayIcon } from '../sharedUI.jsx';
 import { PlainLyrics, SyncedLyrics } from '../Lyrics.jsx';
 import { NP_FULL_TABS, NP_PANEL_TABS, NP_PANEL_W } from './constants.js';
@@ -85,19 +85,25 @@ export function NowPlayingFullView({
       <FadeLayer show={!!animatedBg} className="sth-full-bg" style={{ zIndex: 1 }}>
         <AnimatedGradientBg field accent={gradBase} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1} />
       </FadeLayer>
-      {animatedBg ? null : art && !dark ? (
+      {/* The blurred cover and the scrim cross-fade as Immerse, Dark mode or
+          the song changes, rather than cutting. */}
+      <FadeSwap swapKey={!animatedBg && art && !dark ? `cover:${art}` : 'none'} style={{ zIndex: 0 }}>
+        {!animatedBg && art && !dark ? (
+          <div aria-hidden className="sth-full-bg" style={{
+            inset: -80, backgroundImage: `url("${art}")`, backgroundSize: 'cover', backgroundPosition: 'center',
+            filter: 'blur(80px) saturate(1.6)', opacity: 0.55,
+          }} />
+        ) : null}
+      </FadeSwap>
+      <FadeSwap swapKey={dark ? 'dark' : `tint:${acc}`} style={{ zIndex: 0 }}>
         <div aria-hidden className="sth-full-bg" style={{
-          inset: -80, backgroundImage: `url("${art}")`, backgroundSize: 'cover', backgroundPosition: 'center',
-          filter: 'blur(80px) saturate(1.6)', opacity: 0.55,
+          /* Dark mode: one flat dark, the pages' own. No glow: a faint
+             gradient over near-black shows as bands. */
+          background: dark
+            ? 'rgb(10, 10, 11)'
+            : `linear-gradient(180deg, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.46) 55%, rgba(0,0,0,0.62) 100%), linear-gradient(135deg, rgba(${acc},0.10), transparent 60%)`,
         }} />
-      ) : null}
-      <div aria-hidden className="sth-full-bg" style={{
-        /* Dark mode: one flat dark, the pages' own. No glow: a faint
-           gradient over near-black shows as bands. */
-        background: dark
-          ? 'rgb(10, 10, 11)'
-          : `linear-gradient(180deg, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.46) 55%, rgba(0,0,0,0.62) 100%), linear-gradient(135deg, rgba(${acc},0.10), transparent 60%)`,
-      }} />
+      </FadeSwap>
 
       {/* ---- Top strip: drag region, panel tabs, exit ---- */}
       <div className="sth-full-top">
@@ -299,7 +305,7 @@ function PanelDockBody({
       background: (surface === 'colour' || surface === 'custom') && customColor
         ? `rgb(${customColor})`
         : (surface === 'bar' && barWash ? `rgb(${barWash})` : '#0a0a0b'),
-      transition: 'background 0.5s ease',
+      transition: `background-color ${LAYER_FADE_MS}ms ease`,
       animation: `${leaving ? 'sthDockOut' : 'sthDockIn'} ${DOCK_MS}ms cubic-bezier(0.32,0.72,0,1) both`,
       pointerEvents: leaving ? 'none' : undefined,
     }}>
@@ -320,30 +326,37 @@ function PanelDockBody({
         }} />
       </FadeLayer>
 
-      {art && surface === 'cover' ? (
-        <div aria-hidden style={{
-          position: 'absolute', inset: -60, zIndex: 0, pointerEvents: 'none',
-          backgroundImage: `url("${art}")`, backgroundSize: 'cover', backgroundPosition: 'center',
-          filter: 'blur(64px) saturate(1.7)', opacity: 0.5,
-        }} />
-      ) : null}
-      {surface === 'cover' ? (
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-          /* Was rgba(0,0,0,0.84) at the bottom, which drained the cover colour
-             away to flat black over the lower two-thirds. Held at 0.62 with a
-             faint accent underneath so the tint carries the full height. */
-          background: `linear-gradient(165deg, rgba(${acc},0.16) 0%, rgba(0,0,0,0.52) 38%, rgba(0,0,0,0.62) 100%), linear-gradient(180deg, rgba(${acc},0.05), rgba(${acc},0.10))`,
-        }} />
-      ) : null}
+      {/* Cover Art cross-fades in and out (and from one song's cover to the
+          next) instead of cutting; the plain colours fade by the background
+          transition above. */}
+      <FadeSwap swapKey={surface === 'cover' ? `cover:${art || ''}` : 'none'} style={{ zIndex: 0 }}>
+        {surface === 'cover' ? (
+          <>
+            {art ? (
+              <div aria-hidden style={{
+                position: 'absolute', inset: -60, zIndex: 0, pointerEvents: 'none',
+                backgroundImage: `url("${art}")`, backgroundSize: 'cover', backgroundPosition: 'center',
+                filter: 'blur(64px) saturate(1.7)', opacity: 0.5,
+              }} />
+            ) : null}
+            <div aria-hidden style={{
+              position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+              /* Was rgba(0,0,0,0.84) at the bottom, which drained the cover colour
+                 away to flat black over the lower two-thirds. Held at 0.62 with a
+                 faint accent underneath so the tint carries the full height. */
+              background: `linear-gradient(165deg, rgba(${acc},0.16) 0%, rgba(0,0,0,0.52) 38%, rgba(0,0,0,0.62) 100%), linear-gradient(180deg, rgba(${acc},0.05), rgba(${acc},0.10))`,
+            }} />
+          </>
+        ) : null}
+      </FadeSwap>
       {/* On the bar surface the only overlay is a whisper of depth — anything
           heavier reintroduces the very gap this option exists to close. */}
-      {(surface === 'bar' && barWash) || surface === 'colour' || surface === 'custom' ? (
+      <FadeLayer show={(surface === 'bar' && !!barWash) || surface === 'colour' || surface === 'custom'} style={{ zIndex: 0 }}>
         <div aria-hidden style={{
-          position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+          position: 'absolute', inset: 0, pointerEvents: 'none',
           background: 'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0.10) 100%)',
         }} />
-      ) : null}
+      </FadeLayer>
 
       <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
         {/* Tabs. One panel with switchable content, rather than one panel per

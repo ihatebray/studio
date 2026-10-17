@@ -80,6 +80,7 @@ export default function StudioShell({
   // Library row actions (owned by App.jsx)
   onToggleFavorite,
   onPlayNext,
+  onQueueRequest,
   onAddToQueue,
   // Album-wide metadata editing + album-art pinning (owned by App.jsx).
   onUpdateAlbumMetadata,
@@ -372,6 +373,7 @@ export default function StudioShell({
         onRemoveFromLibrary={onRemoveFromLibrary}
         onToggleFavorite={onToggleFavorite}
         onPlayNext={onPlayNext}
+        onQueueRequest={onQueueRequest}
         onAddToQueue={onAddToQueue}
         volume={volume}
         onSetVolume={onSetVolume}

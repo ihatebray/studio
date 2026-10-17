@@ -52,6 +52,7 @@ import {
   itunesCrossCheck,
   itunesSearchArtist,
   itunesAudioCacheSnapshot,
+  itunesCacheChangeCount,
   itunesAudioCacheRestore,
   itunesPortraitSnapshot,
   itunesPortraitRestore,
@@ -294,6 +295,8 @@ const MIME_TYPES = {
   '.wma': 'audio/x-ms-wma', '.opus': 'audio/opus', '.webm': 'audio/webm',
 };
 
+const MEDIA_CHUNK = 4 * 1024 * 1024;
+
 async function handleStudioMediaRequest(request) {
   await ensureLibraryOpen();
 
@@ -324,9 +327,12 @@ async function handleStudioMediaRequest(request) {
   const ext = path.extname(filePath).toLowerCase();
   if (!AUDIO_EXT.has(ext)) return new Response('Unsupported extension', { status: 403 });
 
+  /* Everything here is async. These reads used to be synchronous, on the
+     main process, so every song start and every cover blocked it (and with
+     it every IPC call) for as long as the disk took. */
   let stat;
   try {
-    stat = fs.statSync(filePath);
+    stat = await fs.promises.stat(filePath);
     if (!stat.isFile()) return new Response('Not a file', { status: 404 });
   } catch {
     return new Response('Not found', { status: 404 });
@@ -341,15 +347,23 @@ async function handleStudioMediaRequest(request) {
     const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
     if (match) {
       const start = parseInt(match[1], 10);
-      const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+      /* At most MEDIA_CHUNK per answer. The player opens with "bytes=0-",
+         which used to read the whole file (tens of MB for a FLAC) before a
+         single byte went back; it now starts on the first piece and asks for
+         the next as it plays, which Chromium does for any partial answer. */
+      if (!(start >= 0) || start >= fileSize) {
+        return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${fileSize}` } });
+      }
+      const asked = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+      const end = Math.min(asked, fileSize - 1, start + MEDIA_CHUNK - 1);
       const chunkSize = end - start + 1;
 
       const buf = Buffer.alloc(chunkSize);
-      const fd = fs.openSync(filePath, 'r');
+      const fh = await fs.promises.open(filePath, 'r');
       try {
-        fs.readSync(fd, buf, 0, chunkSize, start);
+        await fh.read(buf, 0, chunkSize, start);
       } finally {
-        fs.closeSync(fd);
+        await fh.close();
       }
 
       return new Response(buf, {
@@ -365,7 +379,7 @@ async function handleStudioMediaRequest(request) {
   }
 
   // Full file response with Accept-Ranges so the browser knows it can seek
-  const buf = fs.readFileSync(filePath);
+  const buf = await fs.promises.readFile(filePath);
   return new Response(buf, {
     status: 200,
     headers: {
@@ -377,18 +391,18 @@ async function handleStudioMediaRequest(request) {
 }
 
 /** Serve cover-art images from the userData cover-cache folder. */
-function handleStudioCoverRequest(request) {
+async function handleStudioCoverRequest(request) {
   // `?for=color`: the copy colors are read from (coverArtStore.colorFilePath).
-  const filePath = /[?&]for=color\b/.test(request.url) ? colorFilePath(request.url) : resolveCoverFilePath(request.url);
+  const filePath = /[?&]for=color\b/.test(request.url) ? await colorFilePath(request.url) : resolveCoverFilePath(request.url);
   if (!filePath) return new Response('Bad cover URL', { status: 400 });
-  let stat;
+  /* Async: opening the album grid asks for hundreds of covers at once, and
+     reading them synchronously stalled the main process until all were in. */
+  let buf;
   try {
-    stat = fs.statSync(filePath);
-    if (!stat.isFile()) return new Response('Not a file', { status: 404 });
+    buf = await fs.promises.readFile(filePath);
   } catch {
     return new Response('Not found', { status: 404 });
   }
-  const buf = fs.readFileSync(filePath);
   return new Response(buf, {
     status: 200,
     headers: {
@@ -1105,6 +1119,53 @@ const ARTIST_ALBUMS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7d
    Every "it's still broken after the fix" report starts here. */
 const PROVIDER_CACHE_VERSION = 2;
 
+/* The JSON caches below are written in the background, a couple of seconds
+   after the last change, instead of rewritten synchronously on every new
+   entry (the search cache was rewritten on every new search, i.e. while
+   typing). A write in flight is followed, not overlapped, and anything
+   still waiting is written synchronously on quit. */
+const cacheWriters = new Set();
+function cacheWriter(filePath, snapshot, delayMs = 2500) {
+  let timer = null;
+  let chain = Promise.resolve();
+  const body = () => { try { return JSON.stringify(snapshot()); } catch { return null; } };
+  const run = () => {
+    timer = null;
+    const text = body();
+    if (text == null) return;
+    const tmp = `${filePath}.tmp`;
+    chain = chain
+      .then(() => fs.promises.writeFile(tmp, text))
+      .then(() => fs.promises.rename(tmp, filePath))
+      .catch(() => { /* a cache; the next change tries again */ });
+  };
+  const w = {
+    schedule() { if (!timer) { timer = setTimeout(run, delayMs); timer.unref?.(); } },
+    flushSync() {
+      if (!timer) return;
+      clearTimeout(timer); timer = null;
+      const text = body();
+      if (text != null) { try { fs.writeFileSync(filePath, text); } catch { /* ignore */ } }
+    },
+  };
+  cacheWriters.add(w);
+  return w;
+}
+app.on('will-quit', () => { for (const w of cacheWriters) w.flushSync(); });
+
+/* Expired entries were never removed, so these files only ever grew (and
+   every rewrite paid for that). Drop what's past its TTL and keep at most
+   `max` of the newest. Entries are { at, data }. */
+function pruneCacheMap(map, ttlMs, max) {
+  if (!map || typeof map !== 'object') return map;
+  const now = Date.now();
+  const keep = Object.entries(map).filter(([k, v]) => k !== 'v' && v && typeof v === 'object' && Number.isFinite(v.at) && now - v.at < ttlMs);
+  keep.sort((a, b) => b[1].at - a[1].at);
+  const out = Object.fromEntries(keep.slice(0, max));
+  if ('v' in map) out.v = map.v;
+  return out;
+}
+
 const SEARCH_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d
 const searchCachePath = path.join(app.getPath('userData'), 'spotify-search-cache.json');
 let searchCache = { v: PROVIDER_CACHE_VERSION, tracks: {}, albums: {}, artists: {} };
@@ -1113,9 +1174,9 @@ try {
   const parsed = JSON.parse(raw);
   if (parsed?.v === PROVIDER_CACHE_VERSION) searchCache = parsed;
 } catch { /* fresh */ }
-function persistSearchCache() {
-  try { fs.writeFileSync(searchCachePath, JSON.stringify(searchCache)); } catch { /* ignore */ }
-}
+for (const type of ['tracks', 'albums', 'artists']) searchCache[type] = pruneCacheMap(searchCache[type] || {}, SEARCH_CACHE_TTL_MS, 2000);
+const searchCacheWriter = cacheWriter(searchCachePath, () => searchCache);
+function persistSearchCache() { searchCacheWriter.schedule(); }
 function getSearchCache(type, key) {
   const entry = searchCache[type]?.[key.toLowerCase()];
   if (entry && Date.now() - entry.at < SEARCH_CACHE_TTL_MS) return entry.data;
@@ -1139,10 +1200,10 @@ try {
   // predates the duplicate-row and video-fallback fixes.
   if (parsed?.v === PROVIDER_CACHE_VERSION) albumTracksCache = parsed;
 } catch { /* fresh */ }
+albumTracksCache = pruneCacheMap(albumTracksCache, ALBUM_TRACKS_TTL_MS, 1500);
 albumTracksCache.v = PROVIDER_CACHE_VERSION;
-function persistAlbumTracksCache() {
-  try { fs.writeFileSync(albumTracksCachePath, JSON.stringify(albumTracksCache)); } catch { /* ignore */ }
-}
+const albumTracksCacheWriter = cacheWriter(albumTracksCachePath, () => albumTracksCache);
+function persistAlbumTracksCache() { albumTracksCacheWriter.schedule(); }
 function getAlbumTracksCache(id) {
   const entry = albumTracksCache[id];
   if (entry && Date.now() - entry.at < ALBUM_TRACKS_TTL_MS) return entry.data;
@@ -1162,10 +1223,10 @@ try {
   const parsed = JSON.parse(raw);
   if (parsed?.v === PROVIDER_CACHE_VERSION) artistTopTracksCache = parsed;
 } catch { /* fresh */ }
+artistTopTracksCache = pruneCacheMap(artistTopTracksCache, ARTIST_TOP_TRACKS_TTL_MS, 1500);
 artistTopTracksCache.v = PROVIDER_CACHE_VERSION;
-function persistArtistTopTracksCache() {
-  try { fs.writeFileSync(artistTopTracksCachePath, JSON.stringify(artistTopTracksCache)); } catch { /* ignore */ }
-}
+const artistTopTracksCacheWriter = cacheWriter(artistTopTracksCachePath, () => artistTopTracksCache);
+function persistArtistTopTracksCache() { artistTopTracksCacheWriter.schedule(); }
 function getArtistTopTracksCache(key) {
   const entry = artistTopTracksCache[key];
   if (entry && Date.now() - entry.at < ARTIST_TOP_TRACKS_TTL_MS) return entry.data;
@@ -1185,7 +1246,9 @@ try {
   const parsed = JSON.parse(raw);
   if (parsed?.v === PROVIDER_CACHE_VERSION) artistInfoCache = parsed;
 } catch { /* fresh */ }
+artistInfoCache = pruneCacheMap(artistInfoCache, ARTIST_INFO_TTL_MS, 3000);
 artistInfoCache.v = PROVIDER_CACHE_VERSION;
+const artistInfoCacheWriter = cacheWriter(artistInfoCachePath, () => artistInfoCache);
 
 /* Which iTunes collections actually contain audio. Permanent facts — a
    release's contents don't change — so this survives restarts. Without it
@@ -1203,30 +1266,28 @@ try {
   if (parsed?.v === PROVIDER_CACHE_VERSION) itunesResponseCacheRestore(parsed.responses);
 } catch { /* fresh */ }
 
-let audioCacheDirty = false;
+const itunesCacheWriter = cacheWriter(itunesAudioCachePath, () => ({
+  v: PROVIDER_CACHE_VERSION,
+  ids: itunesAudioCacheSnapshot(),
+  /* Artist portraits ride along in the same file. Each one costs an HTML
+     fetch of an Apple Music page, so re-earning them every launch is the
+     most expensive thing a cold start could do. */
+  portraits: itunesPortraitSnapshot(),
+  responses: itunesResponseCacheSnapshot(),
+}), 0);
+/* Checked once a minute rather than per lookup, and written only when
+   something was added since the last write. It used to be rewritten every
+   minute whatever happened, all 500 stored responses of it. */
+let itunesCacheWritten = itunesCacheChangeCount();
 function persistItunesAudioCache() {
-  if (!audioCacheDirty) return;
-  audioCacheDirty = false;
-  try {
-    fs.writeFileSync(itunesAudioCachePath, JSON.stringify({
-      v: PROVIDER_CACHE_VERSION,
-      ids: itunesAudioCacheSnapshot(),
-      /* Artist portraits ride along in the same file. Each one costs an HTML
-         fetch of an Apple Music page, so re-earning them every launch is the
-         most expensive thing a cold start could do. */
-      portraits: itunesPortraitSnapshot(),
-      responses: itunesResponseCacheSnapshot(),
-    }));
-  } catch { /* ignore */ }
+  const n = itunesCacheChangeCount();
+  if (n === itunesCacheWritten) return;
+  itunesCacheWritten = n;
+  itunesCacheWriter.schedule();
 }
-/* Written on a timer rather than per lookup: the map grows a handful of
-   entries per search, and rewriting the whole file that often costs more than
-   the requests it saves. */
-setInterval(() => { audioCacheDirty = true; persistItunesAudioCache(); }, 60 * 1000).unref?.();
-app.on('will-quit', () => { audioCacheDirty = true; persistItunesAudioCache(); });
-function persistArtistInfoCache() {
-  try { fs.writeFileSync(artistInfoCachePath, JSON.stringify(artistInfoCache)); } catch { /* ignore */ }
-}
+setInterval(persistItunesAudioCache, 60 * 1000).unref?.();
+app.on('will-quit', () => { persistItunesAudioCache(); itunesCacheWriter.flushSync(); });
+function persistArtistInfoCache() { artistInfoCacheWriter.schedule(); }
 function getArtistInfoCache(name) {
   const entry = artistInfoCache[name.toLowerCase()];
   if (entry && Date.now() - entry.at < ARTIST_INFO_TTL_MS) return entry.data;
@@ -1625,12 +1686,12 @@ async function readImageBytes(url) {
   if (url.startsWith('studio-cover://')) {
     const p2 = resolveCoverFilePath(url);
     if (!p2) throw new Error('Bad cover URL');
-    return fs.readFileSync(p2);
+    return fs.promises.readFile(p2);
   }
   if (url.startsWith('data:image/')) {
     return Buffer.from(url.slice(url.indexOf(',') + 1), 'base64');
   }
-  return fs.readFileSync(url);
+  return fs.promises.readFile(url);
 }
 
 ipcMain.handle('images:sampleTheme', async (_event, url) => {

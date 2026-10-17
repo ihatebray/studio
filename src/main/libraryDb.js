@@ -70,10 +70,16 @@ let persistTimer = null;
 let pendingPersist = false;
 const PERSIST_DEBOUNCE_MS = 1500;
 
+/* Every write takes a number; a write only lands if no newer one has been
+   started since. So a background write that finishes late can never put an
+   older copy over a newer one, the final write on quit included. */
+let persistGen = 0;
+
 function persistAtomic() {
   if (!db) return;
   pendingPersist = false;
   if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  persistGen += 1;
   const dir = userDataDir();
   fs.mkdirSync(dir, { recursive: true });
   const filePath = dbFilePath();
@@ -84,13 +90,43 @@ function persistAtomic() {
   fs.renameSync(tmp, filePath);
 }
 
+/* The debounced save: the export is synchronous (sql.js has no other kind),
+   but the file write happens off the main thread, which is the slow part
+   with a big library on a slow disk. */
+function persistInBackground() {
+  if (!db) return;
+  pendingPersist = false;
+  persistGen += 1;
+  const gen = persistGen;
+  const filePath = dbFilePath();
+  let buf;
+  try {
+    fs.mkdirSync(userDataDir(), { recursive: true });
+    buf = Buffer.from(db.export());
+  } catch (e) {
+    console.error('[libraryDb] export failed', e?.message || e);
+    return;
+  }
+  const tmp = `${filePath}.${gen}.tmp`;
+  fs.promises.writeFile(tmp, buf)
+    .then(() => {
+      if (gen === persistGen) fs.renameSync(tmp, filePath);
+      else fs.promises.unlink(tmp).catch(() => {});
+    })
+    .catch((e) => {
+      console.error('[libraryDb] background save failed, saving directly', e?.message || e);
+      fs.promises.unlink(tmp).catch(() => {});
+      if (gen === persistGen) { try { persistAtomic(); } catch { /* reported by the next save */ } }
+    });
+}
+
 function persistSoon() {
   if (!db) return;
   pendingPersist = true;
   if (persistTimer) return;
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    if (pendingPersist) persistAtomic();
+    if (pendingPersist) persistInBackground();
   }, PERSIST_DEBOUNCE_MS);
   // Don't hold the process open for a cache write.
   if (typeof persistTimer.unref === 'function') persistTimer.unref();
@@ -1784,9 +1820,10 @@ export async function loadPlayEvents(sinceMs) {
   try {
     const cutoff = Number.isFinite(Number(sinceMs)) ? Number(sinceMs) : 0;
     const cols = 'id, track_id, at, track_key, file_path, ms';
-    const res = cutoff > 0
-      ? db.exec(`SELECT ${cols} FROM play_events WHERE at >= ` + Math.floor(cutoff) + ' ORDER BY at ASC LIMIT 100000;')
-      : db.exec(`SELECT ${cols} FROM play_events ORDER BY at ASC LIMIT 100000;`);
+    /* The newest 100k, oldest first. ORDER BY at ASC LIMIT kept the OLDEST
+       100k, so past that point new plays stopped reaching Stats. */
+    const where = cutoff > 0 ? ` WHERE at >= ${Math.floor(cutoff)}` : '';
+    const res = db.exec(`SELECT ${cols} FROM (SELECT ${cols} FROM play_events${where} ORDER BY at DESC LIMIT 100000) ORDER BY at ASC;`);
     if (!res?.[0]) return [];
     const { values } = res[0];
     // `key` and `path` let the renderer re-attach an event to a track that

@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { sampleImageTheme, isFallbackTheme, recordWashSource } from '../lib/coverTheme.js';
 import { PlayIcon } from './sharedUI.jsx';
 import { api } from '../lib/format.js';
-import { BoundedMap } from '../lib/boundedMap.js';
 
 /* =========================================================================
  *  studio — Artists, the browse view
@@ -28,9 +26,11 @@ import { BoundedMap } from '../lib/boundedMap.js';
    fresh batch for names already being fetched. */
 const inflight = new Map();
 
-/* Sampling a photo costs a canvas read, and an artist's photo doesn't change
-   between mounts. Keyed by URL, so two artists sharing art sample once. */
-const themeCache = new BoundedMap(600);
+/* Portraits are asked for this many names at a time, in the order the grid
+   shows them. One call for the whole library only answered once every photo
+   had been looked up, so a big library showed initials for minutes, even
+   for photos already cached. Small batches fill the grid from the top. */
+const PORTRAIT_BATCH = 24;
 
 function fetchPortraits(names) {
   const key = names.join('\u0000');
@@ -80,28 +80,28 @@ function initials(name) {
    control), the name, and one metadata line: "9 songs · 108 plays". The
    mini-bars are gone — they were too small to encode anything, and several
    looked identical despite counts of 42 and 153. */
-function ArtistTile({ artist, portrait, theme, plays, onOpen, onPlay }) {
-  const wash = theme ? recordWashSource(theme) : null;
+/* Memoized, with handlers that take the artist, so hovering or sorting
+   re-renders only the tiles whose data changed. */
+const ArtistTile = React.memo(function ArtistTile({ artist, portrait, plays, onOpen, onPlay }) {
   const n = artist.tracks.length;
+  const open = () => onOpen?.(artist.key);
   return (
     <div className="stag-tile">
-      <button type="button" className="stag-art" onClick={onOpen} aria-label={`Open ${artist.name}`}>
+      <button type="button" className="stag-art" onClick={open} aria-label={`Open ${artist.name}`}>
         {portrait ? (
-          <img src={portrait} alt="" loading="lazy" />
+          <img src={portrait} alt="" loading="lazy" decoding="async" draggable={false} />
         ) : (
-          <span className="stag-mono" style={{ background: wash ? `linear-gradient(150deg, rgb(${wash}), rgba(${wash},0.45))` : undefined }}>
-            {initials(artist.name)}
-          </span>
+          <span className="stag-mono">{initials(artist.name)}</span>
         )}
-        <span className="stag-play" aria-hidden onClick={(e) => { e.stopPropagation(); onPlay?.(); }}>
+        <span className="stag-play" aria-hidden onClick={(e) => { e.stopPropagation(); onPlay?.(artist); }}>
           <PlayIcon size={16} />
         </span>
       </button>
-      <button type="button" className="stag-name" onClick={onOpen}>{artist.name}</button>
+      <button type="button" className="stag-name" onClick={open}>{artist.name}</button>
       <div className="stag-meta st-num">{n} song{n === 1 ? '' : 's'} · {plays} play{plays === 1 ? '' : 's'}</div>
     </div>
   );
-}
+});
 
 export default function ArtistGrid({
   /* `reading` is gone. It chose between the now-playing bar's vibrant /
@@ -113,8 +113,12 @@ export default function ArtistGrid({
 }) {
   const [portraits, setPortraits] = useState(() => seedFromArtistPageCache());
   const [overrides, setOverrides] = useState({});
-  const [themes, setThemes] = useState({});
   const askedRef = useRef(new Set());
+  // Stable handlers for the memoized tiles; the latest props via a ref.
+  const handlersRef = useRef({ onOpen, onPlay });
+  handlersRef.current = { onOpen, onPlay };
+  const openTile = useCallback((key) => handlersRef.current.onOpen?.(key), []);
+  const playTile = useCallback((a) => handlersRef.current.onPlay?.(a), []);
 
   /* A picture the user chose for an artist's header is that artist's picture,
      full stop — it should be their face here too, without a round trip. */
@@ -134,12 +138,17 @@ export default function ArtistGrid({
   useEffect(() => {
     const fresh = names.filter((n) => !askedRef.current.has(n.toLowerCase()));
     if (!fresh.length) return undefined;
-    fresh.forEach((n) => askedRef.current.add(n.toLowerCase()));
     let dead = false;
-    fetchPortraits(fresh).then((map) => {
-      if (dead || !map || !Object.keys(map).length) return;
-      setPortraits((cur) => ({ ...cur, ...map }));
-    });
+    (async () => {
+      for (let i = 0; i < fresh.length && !dead; i += PORTRAIT_BATCH) {
+        const batch = fresh.slice(i, i + PORTRAIT_BATCH);
+        // Marked as asked only once sent, so leaving mid-way doesn't strand the rest.
+        batch.forEach((n) => askedRef.current.add(n.toLowerCase()));
+        // eslint-disable-next-line no-await-in-loop -- one batch at a time, top of the grid first
+        const map = await fetchPortraits(batch);
+        if (!dead && map && Object.keys(map).length) setPortraits((cur) => ({ ...cur, ...map }));
+      }
+    })();
     return () => { dead = true; };
   }, [names]);
 
@@ -147,40 +156,6 @@ export default function ArtistGrid({
   const portraitFor = useCallback((a) => (
     overrides[a.key]?.image || portraits[a.name.toLowerCase()] || portraits[a.key] || null
   ), [overrides, portraits]);
-
-  /* Sample each portrait for its card's wash. Cached by URL, so this runs once
-     per photo however often the grid remounts. */
-  useEffect(() => {
-    let dead = false;
-    const pending = [];
-    const seeded = {};
-    for (const a of artists) {
-      const src = portraitFor(a);
-      if (!src) continue;
-      if (themeCache.has(src)) { seeded[a.key] = themeCache.get(src); continue; }
-      pending.push([a.key, src]);
-    }
-    if (Object.keys(seeded).length) setThemes((cur) => ({ ...cur, ...seeded }));
-    if (!pending.length) return undefined;
-    Promise.all(pending.map(([key, src]) => sampleImageTheme(src)
-      .then((t) => {
-        /* A failed read resolves to a neutral theme that looks real. Caching
-           it would make one bad moment permanent for that photo, and applying
-           it would turn a coloured card black — so a failure is remembered as
-           "nothing", and the card keeps whatever it had. */
-        const ok = isFallbackTheme(t) ? null : t;
-        if (ok) themeCache.set(src, ok);
-        return [key, ok];
-      })
-      .catch(() => [key, null])))
-      .then((pairs) => {
-        if (dead) return;
-        const next = {};
-        for (const [key, t] of pairs) if (t) next[key] = t;
-        if (Object.keys(next).length) setThemes((cur) => ({ ...cur, ...next }));
-      });
-    return () => { dead = true; };
-  }, [artists, portraitFor]);
 
   /* Play totals per artist, so a card can say what it's actually worth to you. */
   const playsFor = useMemo(() => {
@@ -213,7 +188,8 @@ export default function ArtistGrid({
     <>
       <style>{`
         .stag-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 28px 20px; padding: 4px 0 24px; align-content: start; }
-        .stag-tile { min-width: 0; text-align: center; }
+        /* Off-screen tiles skip layout and paint until they scroll near. */
+        .stag-tile { min-width: 0; text-align: center; content-visibility: auto; contain-intrinsic-size: auto 180px auto 206px; }
         .stag-art { position: relative; display: block; width: 100%; aspect-ratio: 1; max-width: 148px; margin: 0 auto; padding: 0; border: none; border-radius: 50%;
           overflow: hidden; background: rgba(255,255,255,0.05); cursor: pointer; }
         .stag-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -235,10 +211,9 @@ export default function ArtistGrid({
             key={a.key}
             artist={a}
             portrait={portraitFor(a)}
-            theme={themes[a.key] || null}
             plays={playsFor[a.key] || 0}
-            onOpen={() => onOpen?.(a.key)}
-            onPlay={() => onPlay?.(a)}
+            onOpen={openTile}
+            onPlay={playTile}
           />
         ))}
       </div>

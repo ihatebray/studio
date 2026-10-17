@@ -30,7 +30,7 @@ import {
   useStudioFollows, useHiddenArtists, isStudioFollowed, followArtist, unfollowArtist, setArtistHidden,
 } from '../lib/studioFollows.js';
 import { ago, cx, fmtMs } from '../lib/format.js';
-import { hiResCover } from '../lib/coverUrl.js';
+import { coverAt } from '../lib/coverUrl.js';
 import { pageWash, recordWashSource, sampleCoverTheme } from '../lib/coverTheme.js';
 import { BoundedMap } from '../lib/boundedMap.js';
 import { ArtistLinks, PlayIcon } from './sharedUI.jsx';
@@ -517,17 +517,21 @@ const CSS = `
 .msp-panel-head .sub { font-size: 12.5px; color: rgba(255,255,255,0.7); margin-top: 4px; }
 .msp-panel-head .x { position: absolute; top: 10px; right: 10px; color: rgba(255,255,255,0.75); }
 .msp-panel-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 18px; }
-.msp-panel .msp-row { grid-template-columns: 26px 40px minmax(0, 1fr) auto auto; }
+.msp-panel .msp-row { grid-template-columns: 26px 40px minmax(0, 1fr) auto auto;
+  /* Rows off the screen skip layout and paint until they scroll near. */
+  content-visibility: auto; contain-intrinsic-size: auto 52px; }
 .msp-panel .msp-row.no-art { grid-template-columns: 26px minmax(0, 1fr) auto auto; }
 @media (prefers-reduced-motion: reduce) { .msp-panel, .msp-scrim, .msp-sk, .msp-rexp, .msp-fm { animation: none !important; } }
 `;
 
 /* ---------------------------------------------------------------- pieces */
 
-function Art({ src: raw, round = false, children, style, className }) {
+function Art({ src: raw, round = false, children, style, className, px = 0 }) {
   /* The large size first (sharp on high-density screens), then the
-     original, then nothing. */
-  const big = hiResCover(raw);
+     original, then nothing. `px` is the size it's drawn at, in device
+     pixels: 640 covers a tile on a high-density screen, and a list
+     thumbnail asks for less. Neither needs the CDN's largest (~2000px). */
+  const big = coverAt(raw, px || 640);
   const [stage, setStage] = useState(0);
   useEffect(() => { setStage(0); }, [raw]);
   const src = stage === 0 && big !== raw ? big : raw;
@@ -578,7 +582,7 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
       <div ref={ref} className={cx('msp-row', 'is-locked', !showArt && 'no-art')} aria-disabled title="Not out yet"
         onContextMenu={(e) => bridge.openMenu?.(e, row)}>
         <span className="n">{n}</span>
-        {showArt ? <Art src={row.albumArtUrl} /> : null}
+        {showArt ? <Art src={row.albumArtUrl} px={120} /> : null}
         <span style={{ minWidth: 0 }}>
           <span className="t" style={{ display: 'block' }}>{row.title}</span>
           <span className="a" style={{ display: 'block' }}>{row.explicit ? <span className="e">E</span> : null}<ArtistLinks names={row.artists} ids={row.artistIds} onOpen={onOpenArtist} /></span>
@@ -596,7 +600,7 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
       onClick={() => bridge.playRows(list, index, { context })}
       onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}>
       <span className="n">{on ? <PlayingBars playing={bridge.isPlaying} /> : n}</span>
-      {showArt ? <Art src={row.albumArtUrl} /> : null}
+      {showArt ? <Art src={row.albumArtUrl} px={120} /> : null}
       <span style={{ minWidth: 0 }}>
         <span className="t" style={{ display: 'block' }}>{row.title}</span>
         <span className="a" style={{ display: 'block' }}>{row.explicit ? <span className="e">E</span> : null}<ArtistLinks names={row.artists} ids={row.artistIds} onOpen={onOpenArtist} /></span>
@@ -685,6 +689,16 @@ function CollectionPanel({ item, bridge, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  /* A big collection (Liked Songs can run to thousands) draws its first 200
+     rows straight away and the rest in batches just after, so opening it
+     doesn't wait on mounting every row. */
+  const [limit, setLimit] = useState(200);
+  useEffect(() => { setLimit(200); }, [rows]);
+  useEffect(() => {
+    if (!rows || limit >= rows.length) return undefined;
+    const t = setTimeout(() => setLimit((l) => l + 400), 60);
+    return () => clearTimeout(t);
+  }, [rows, limit]);
   const total = (rows || []).reduce((n, r) => n + (r.durationMs || 0), 0);
   // Songs not out yet (a countdown's tracklist) can't be played or saved.
   const outRows = (rows || []).filter((r) => !r.notOut);
@@ -724,7 +738,7 @@ function CollectionPanel({ item, bridge, onClose }) {
         <div className="msp-panel-body">
           {err ? <div className="msp-banner" style={{ margin: 10 }}>{err}</div> : null}
           {!rows && !err ? Array.from({ length: 8 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 40, margin: '8px 6px' }} />) : null}
-          {(rows || []).map((r, i) => (
+          {(rows || []).slice(0, limit).map((r, i) => (
             <TrackRow key={`${r.spotifyId}:${i}`} row={r} n={i + 1} list={rows} index={i} bridge={bridge}
               showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item} onOpenArtist={openArtist}
               focus={!!item.focusId && r.spotifyId === item.focusId} />
@@ -1566,7 +1580,7 @@ function FollowChip({ a, tag, hidden = false, action, onOpen }) {
   return (
     <div className={cx('msp-chip', hidden && 'is-hidden')}>
       <button type="button" className="who" onClick={onOpen} title={a.name}>
-        <Art src={a.image} round />
+        <Art src={a.image} round px={120} />
         <span style={{ minWidth: 0 }}>
           <span className="nm">{a.name}</span>
           {tag ? <span className="tag">{tag}</span> : null}
@@ -1830,7 +1844,7 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
                             <button type="button" className="pl" aria-label={`Play ${r.name}`} onClick={(e) => { e.stopPropagation(); play(r); }}>{Icon.play(13)}</button>
                           </span>
                           <span className="msp-rtitle">
-                            <Art src={r.thumbUrl || r.albumArtUrl} />
+                            <Art src={r.thumbUrl || r.albumArtUrl} px={120} />
                             <span style={{ minWidth: 0 }}>
                               <span className="t">
                                 {r.name}

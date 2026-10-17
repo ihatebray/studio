@@ -8,7 +8,7 @@ import { LibHeader, LibRow } from './Library.jsx';
 import RecordPage, { recordLayoutOf } from './RecordPage.jsx';
 import { coverLayers } from '../../lib/coverUrl.js';
 import { DARK } from './constants.js';
-import { AnimatedGradientBg, FadeLayer } from '../VisualEffects.jsx';
+import { AnimatedGradientBg, FadeLayer, FadeSwap } from '../VisualEffects.jsx';
 
 export default function LibraryPage({
   LIB_OVERSCAN,
@@ -193,7 +193,10 @@ export default function LibraryPage({
         ) : null}
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.24) 0%, rgba(0,0,0,0.44) 34%, rgba(0,0,0,0.56) 100%)' }} />
       </FadeLayer>
-      {npWashRgb ? (
+      {/* Cross-faded: switching between Off, Color, Cover Art and Full Color,
+          or to the next song's colour, fades rather than cuts. */}
+      <FadeSwap swapKey={npWashRgb ? `${pageMode}:${npWashRgb}` : 'none'} style={{ zIndex: 0 }}>
+        {npWashRgb ? (
         <>
           {/* The constant tint. The gradient above it used to stop
               dead at 430px — a line unrelated to anything on screen —
@@ -201,7 +204,7 @@ export default function LibraryPage({
               and the fade reads as a falloff rather than an edge.
               'full' turns this up and drops the gradient, which is
               how the album and artist pages paint. */}
-          <div key={`tint-${npWashRgb}`} aria-hidden style={{
+          <div aria-hidden style={{
             position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
             background: wrapperFixed
               ? `rgb(${npWashRgb})`
@@ -212,17 +215,16 @@ export default function LibraryPage({
                  black is 62% of its brightness. Fade stays a trace,
                  because that one is meant to read as a hint. */
               : `rgba(${npWashRgb},${pageMode === 'coverFull' ? 1 : 0.16})`,
-            animation: 'stFadeIn 0.6s ease both',
           }} />
           {pageMode !== 'coverFull' && !wrapperFixed ? (
-            <div key={npWashRgb} aria-hidden style={{
+            <div aria-hidden style={{
               position: 'absolute', top: 0, left: 0, right: 0, height: 430, zIndex: 0, pointerEvents: 'none',
               background: `linear-gradient(180deg, rgba(${npWashRgb},0.85) 0%, rgba(${npWashRgb},0.55) 26%, rgba(${npWashRgb},0.30) 58%, rgba(${npWashRgb},0) 100%)`,
-              animation: 'stFadeIn 0.6s ease both',
             }} />
           ) : null}
         </>
-      ) : null}
+        ) : null}
+      </FadeSwap>
 
       {/* ---- Rail ---- */}
       {/* Hairline between the rail and the table — without it the two
@@ -411,7 +413,7 @@ export default function LibraryPage({
                 <button key={a.key} type="button" className="sth-alb" style={{ textAlign: 'left' }}
                   onClick={() => setLibDetail({ kind: 'album', key: a.key })}>
                   <div className="sth-albart" style={{ width: '100%', aspectRatio: '1' }}>
-                    {a.art ? <div className="sth-albimg" style={{ backgroundImage: coverLayers(a.art) }} /> : null}
+                    {a.art ? <div className="sth-albimg" style={{ backgroundImage: coverLayers(a.art, '', 640) }} /> : null}
                     {/* Fades in over the artwork's lower right. */}
                     <span className="sth-alb-play" title={`Play ${a.name}`} aria-hidden
                       onClick={(e) => { e.stopPropagation(); if (a.tracks?.length) onPlayTrack?.(a.tracks[0], a.tracks); }}>
@@ -489,7 +491,13 @@ export default function LibraryPage({
                   ref={libScrollRef}
                   className="sth-libscroll sth-lfade"
                   style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto' }}
-                  onScroll={(e) => setLibScrollTop(e.currentTarget.scrollTop)}
+                  /* Reported in steps of four rows, not every pixel: each
+                     report re-renders the whole home view, and the ten rows
+                     of overscan either side already cover the gap. */
+                  onScroll={(e) => {
+                    const step = LIB_ROW_H * 4;
+                    setLibScrollTop(Math.floor(e.currentTarget.scrollTop / step) * step);
+                  }}
                 >
                   {/* Spacers stand in for the rows that aren't mounted,
                       so the scrollbar reflects the whole list. */}

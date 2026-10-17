@@ -8,6 +8,47 @@
 
 export const CHANGELOG = [
   {
+    version: '0.0.8',
+    date: '2026-10-17',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Blocked Songs', text: 'Keep songs off your stream. Block a song or every song by an artist and chat can’t request it.', sub: [
+            'Clean, remix and remastered versions of a blocked song are blocked too.',
+            'Manage them in Settings → Connections → Twitch.',
+          ] },
+          { lead: 'Media Keys', text: 'Play, pause and skip with your keyboard’s media keys. Added Windows media support as well.' },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Song Requests', text: 'Requests now play in the order they came in.', sub: [
+            'Your own Play next still goes first.',
+            'Requests stay in line when you play another album or turn on shuffle.',
+            'A song that’s already playing or waiting can’t be requested again.',
+          ] },
+          { lead: 'Performance', text: 'Studio is faster and lighter across the board.', sub: [
+            'Immerse is much easier on your graphics card, especially with a game open.',
+            'Big libraries and long playlists scroll smoothly.',
+            'Covers and artist photos load faster while using less memory.',
+            'Search keeps up as you type, even in big libraries.',
+            'Local songs start playing sooner.',
+          ] },
+          { lead: 'Smoother Colors', text: 'Changing the background of the Now Playing bar, side panel or library pages now fades instead of cutting.' },
+          { lead: 'Search', text: 'Improved Dark Mode UI.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed Auto colors changing after a restart and songs from the same album getting different colors.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.7',
     date: '2026-10-15',
     sections: [

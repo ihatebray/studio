@@ -55,7 +55,20 @@ const LOSSLESS_EXTS = new Set(['flac', 'wav', 'aiff', 'aif', 'alac', 'ape', 'wv'
  * the live one. */
 const RELEASE_QUALIFIERS = /\s+[-–—]\s*(?:bonus(?: track)?|deluxe(?: edition| version)?|explicit(?: version)?|clean(?: version)?|album version|single version|original version|main version|anniversary edition|expanded edition|special edition|standard edition|deluxe edition|japanese edition|international version|uk version|us version)\s*$/i;
 
+/* normTitle is pure and runs on every library title on every keystroke, so
+   its answers are kept. The same few thousand titles come back each time;
+   the cap only guards against an unusually long session. */
+const normTitleMemo = new Map();
 export function normTitle(s) {
+  const key = String(s || '');
+  const hit = normTitleMemo.get(key);
+  if (hit !== undefined) return hit;
+  const out = normTitleRaw(key);
+  if (normTitleMemo.size > 40000) normTitleMemo.clear();
+  normTitleMemo.set(key, out);
+  return out;
+}
+function normTitleRaw(s) {
   let out = String(s || '');
   /* Looped: "Song - Deluxe Edition - Bonus Track" carries two. */
   for (let i = 0; i < 3; i += 1) {
