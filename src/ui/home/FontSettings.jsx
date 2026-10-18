@@ -141,10 +141,9 @@ export default function FontSettings({ uiFontId, onSetUiFontId }) {
               <>
                 <input ref={fileRef} type="file" multiple accept=".woff2,.woff,.ttf,.otf" hidden onChange={onFiles} />
                 <p className="stf-note">
-                  For a font you own, like Modulus Pro: select all of its files at once (for example
-                  ModulusPro-Regular.otf, ModulusPro-Medium.otf, ModulusPro-Bold.otf). Files named alike become one
-                  font, with each weight taken from the file name. They're kept in Studio, so the originals can stay
-                  where they are.
+                  Select all of a font&apos;s files at once, like ModulusPro-Regular.otf and ModulusPro-Bold.otf.
+                  Files with matching names become one font. Studio keeps a copy so the originals can stay where
+                  they are.
                 </p>
                 {msg ? <div className="stf-msg">{msg}</div> : null}
               </>

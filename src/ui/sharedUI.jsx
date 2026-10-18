@@ -143,7 +143,7 @@ function ImmerseTooltipLayer() {
       position: 'fixed', left: tip.x, top: tip.y,
       transform: `translateX(-50%)${tip.above ? ' translateY(-100%)' : ''}`,
       padding: '5px 9px', borderRadius: 7,
-      background: 'rgba(18, 18, 20, 0.94)',
+      background: 'var(--st-dark-float, rgba(18, 18, 20, 0.94))',
       border: '1px solid rgba(255,255,255,0.08)',
       boxShadow: '0 8px 22px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.04)',
       color: '#fff', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.02em',
@@ -349,7 +349,7 @@ function VideoPicker({ open, meta, seed = null, accent = '150,150,150', onClose,
       onMouseDown={(e) => { if (e.target === e.currentTarget && !busyId) onClose?.(); }}
       style={{ position: 'fixed', inset: 0, zIndex: 2147483000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: 'rgba(0,0,0,0.62)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', animation: 'vpFade 0.18s ease both' }}
     >
-      <div style={{ width: 'min(680px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', borderRadius: 18, background: 'rgba(19,19,21,0.97)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 30px 90px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+      <div style={{ width: 'min(680px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', borderRadius: 18, background: 'var(--st-dark-float, rgba(19,19,21,0.97))', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 30px 90px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '18px 20px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
           <div style={{ width: 52, height: 52, borderRadius: 10, flexShrink: 0, background: meta?.albumArtUrl ? `url("${meta.albumArtUrl}") center/cover` : 'rgba(255,255,255,0.08)', boxShadow: '0 0 0 1px rgba(255,255,255,0.1)' }} />
           <div style={{ flex: 1, minWidth: 0 }}>

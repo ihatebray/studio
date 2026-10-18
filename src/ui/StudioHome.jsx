@@ -13,7 +13,7 @@ import { LyricsPickerButton } from './LyricsPicker.jsx';
 const MetadataEditor = React.lazy(() => import('./MetadataEditor.jsx').then((m) => ({ default: m.MetadataEditor })));
 const AlbumMetadataEditor = React.lazy(() => import('./MetadataEditor.jsx').then((m) => ({ default: m.AlbumMetadataEditor })));
 const LyricShare = React.lazy(() => import('./LyricShare.jsx'));
-import { sampleCoverTheme, recordWashSource, washSourceFor, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
+import { sampleCoverTheme, isFallbackTheme, recordWashSource, washSourceFor, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
 import { titleCollator, parseGenres } from '../lib/mediaUtils.js';
 import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
@@ -29,7 +29,9 @@ import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from
 import { notePlayContext } from '../lib/playContext.js';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT } from '../lib/accentTokens.js';
 import { api, fmtMs } from '../lib/format.js';
-import { CoverColourTab } from './home/Settings.jsx';
+import { ColourStrip, makeHoverSource } from './home/ColourStrip.jsx';
+import { getPlaybackTime } from '../lib/playbackClock.js';
+import { OPEN_SHORTCUTS_EVENT, ShortcutsDialog, keysText, shortcutFor, worksWhileTyping } from './home/Shortcuts.jsx';
 import { CoverLightbox, NowPlayingBar, NowPlayingFullView, NowPlayingPanelDock } from './home/NowPlaying.jsx';
 import { HOME_CSS } from './home/styles.js';
 import { DARK, LEGACY_SECTIONS, LIB_VIEWS, MY_SPOTIFY, MY_SPOTIFY_IDS, NP_BAR_DEFAULT, NP_PANEL_W, SIDEBAR_W, THEME_DEFAULTS, TOPBAR_H, viewTheme } from './home/constants.js';
@@ -52,6 +54,7 @@ export default function StudioHome({
   queueIndex = -1,
   onReorderQueue,
   onRemoveFromQueue,
+  onClearQueue,          // () → App: empty up next, returns what it took out
   albumCoverOverrides = {},
   currentTrack = null,
   isPlaying = false,
@@ -585,6 +588,18 @@ export default function StudioHome({
 
   /* ---------- Download bookkeeping (shared by find + discover) ------------- */
   const pushToast = useToast();
+
+  /** Clear Queue: empties up next, with Undo putting the songs back. */
+  const clearUpNext = useCallback(() => {
+    const removed = onClearQueue?.() || [];
+    if (!removed.length) return;
+    const n = removed.length;
+    pushToast?.({
+      message: `Cleared ${n} ${n === 1 ? 'song' : 'songs'} from the queue`,
+      action: onAddToQueue ? { label: 'Undo', onClick: () => onAddToQueue(removed) } : null,
+    });
+  }, [onClearQueue, onAddToQueue, pushToast]);
+
   const setDiscordPresenceDetailSafely = useCallback((detail) => {
     try {
       const result = onSetDiscordPresenceDetail?.(detail);
@@ -1401,8 +1416,18 @@ export default function StudioHome({
   useEffect(() => {
     if (!npWashSrc) { setNpWashTheme(null); return undefined; }
     let dead = false;
-    sampleCoverTheme(npWashSrc).then((t) => { if (!dead) setNpWashTheme(t || null); }).catch(() => {});
-    return () => { dead = true; };
+    let retry = 0;
+    /* A cover that couldn't be read comes back as a neutral grey. That's
+       usually a moment's problem (the cover still downloading, a network
+       blip), so it's read again rather than leaving the bar and the page
+       grey for the whole song. */
+    const read = (n) => sampleCoverTheme(npWashSrc).then((t) => {
+      if (dead) return;
+      if (isFallbackTheme(t) && n < 2) { retry = setTimeout(() => read(n + 1), 1500 * (n + 1)); return; }
+      setNpWashTheme(t || null);
+    }).catch(() => {});
+    read(0);
+    return () => { dead = true; clearTimeout(retry); };
   }, [npWashSrc]);
   /* The bar's colour, from the same sampled artwork and the same extraction
      the page uses. It read `.mid` directly before, which is the flat average —
@@ -1468,9 +1493,18 @@ export default function StudioHome({
     await onSetAlbumCover?.(albumKey, url);
   }, [onSetAlbumCover]);
 
-  const [colourTrayOpen, setColourTrayOpen] = useState(false);
-  // A tray for one record shouldn't still be open over the next one.
-  useEffect(() => { setColourTrayOpen(false); }, [nowAlbumKey]);
+  // The bar's menu item opens the color strip grown (see ColourStrip).
+  const [colourStripReq, setColourStripReq] = useState(0);
+
+  /* The color strip that pulls out of the bar on hover. The bar's hover goes
+     through a subscription so it doesn't re-render this whole screen. */
+  const [barHover] = useState(makeHoverSource);
+  const [barSplash, setBarSplash] = useState(null);
+  useEffect(() => {
+    if (!barSplash) return undefined;
+    const t = setTimeout(() => setBarSplash(null), 1250);
+    return () => clearTimeout(t);
+  }, [barSplash]);
 
   const setCoverColourFor = useCallback((rgb) => {
     if (!nowAlbumKey) return;
@@ -1525,6 +1559,16 @@ export default function StudioHome({
   /* Dark mode stands in for every surface setting (see viewTheme), Immerse
      included: pages get the dark view of the theme, Settings the real one. */
   const dark = !!theme.darkMode;
+  /* Dark mode: every floating layer (dialogs, menus, pickers, tooltips) takes
+     the same #0a0a0b as the pages, the bar and the side panel. Most of them
+     are portalled to <body>, outside the [data-dark] root, so the color goes
+     on the document as a variable they fall back from. Light mode keeps
+     each one's own color. */
+  useEffect(() => {
+    const r = document.documentElement.style;
+    if (dark) r.setProperty('--st-dark-float', `rgb(${DARK.page})`);
+    else r.removeProperty('--st-dark-float');
+  }, [dark]);
   const vtheme = useMemo(() => viewTheme(theme), [theme]);
   const npAnim = npAnimatedBg && !dark;
   const immerse = npAnim && !!currentTrack;
@@ -2367,6 +2411,81 @@ export default function StudioHome({
   const npSaved = npSid ? libBySpotifyId.get(npSid) || null : null;
   const npSaveBusy = !!npSid && dlState[`s:${npSid}`] === 'busy';
   const npSaveFailed = !!npSid && dlState[`s:${npSid}`] === 'failed';
+
+  /* ---- Keyboard shortcuts ------------------------------------------------
+   * Matched against the one list in Shortcuts.jsx, which is also what the
+   * Keyboard shortcuts window shows. Search, fullscreen, compact mode, Ctrl+V
+   * and Esc keep the handlers they already had above; this is the rest. The
+   * actions are read through a ref so the listener is bound once. */
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  useEffect(() => {
+    const open = () => setShortcutsOpen(true);
+    window.addEventListener(OPEN_SHORTCUTS_EVENT, open);
+    return () => window.removeEventListener(OPEN_SHORTCUTS_EVENT, open);
+  }, []);
+  const lastVolume = useRef(1);
+  const shortcutActs = useRef({});
+  const favTarget = npSaved || (currentTrack && !currentTrack.streamOnly ? currentTrack : null);
+  shortcutActs.current = {
+    play: () => currentTrack && onTogglePlay?.(),
+    next: () => currentTrack && onNext?.(),
+    prev: () => currentTrack && onPrev?.(),
+    forward: () => currentTrack && duration > 0 && onSeek?.(Math.min(duration - 1, getPlaybackTime() + 10)),
+    back: () => currentTrack && onSeek?.(Math.max(0, getPlaybackTime() - 10)),
+    volumeUp: () => onSetVolume?.(Math.min(1, Math.round((volume + 0.05) * 100) / 100)),
+    volumeDown: () => onSetVolume?.(Math.max(0, Math.round((volume - 0.05) * 100) / 100)),
+    mute: () => {
+      if (volume > 0) { lastVolume.current = volume; onSetVolume?.(0); } else onSetVolume?.(lastVolume.current || 0.5);
+    },
+    shuffle: () => onToggleShuffle?.(),
+    repeat: () => onToggleRepeat?.(),
+    favorite: () => favTarget && onToggleFavorite?.(favTarget.id),
+    // In fullscreen, Q, L and I switch its own tabs (the handler above).
+    queue: () => currentTrack && !npFull && toggleNpPanel('queue'),
+    clearQueue: () => clearUpNext?.(),
+    lyrics: () => currentTrack && !npFull && toggleNpPanel('lyrics'),
+    info: () => currentTrack && !npFull && toggleNpPanel('info'),
+    copyLink: () => currentTrack && copySpotifyLink(currentTrack),
+    darkMode: () => setThemeKey('darkMode', !dark),
+    immerse: () => !dark && toggleNpAnimatedBg(),
+    colour: () => currentTrack && !dark && !npFull && setColourStripReq((n) => n + 1),
+    settings: () => { setNpFull(false); pickSection('settings'); },
+    shortcuts: () => setShortcutsOpen((v) => !v),
+  };
+  useEffect(() => {
+    /* Which control the pointer last pressed. The browser's own "focused from
+       the keyboard" signal can't tell: right after any key press it reports
+       a clicked button as keyboard-focused too. */
+    const PRESSABLE = 'button, a, [role="button"], [role="menuitem"], [role="tab"], [role="radio"], [role="switch"], [role="option"]';
+    let pressed = null;
+    const onPointer = (e) => { pressed = e.target?.closest?.(PRESSABLE) || null; };
+    const onKey = (e) => {
+      if (e.key === 'Tab') pressed = null;
+      if (e.defaultPrevented) return;
+      const it = shortcutFor(e);
+      const act = it && shortcutActs.current[it.id];
+      if (!act) return;
+      const el = e.target;
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName || '') || el?.isContentEditable;
+      if (typing && !worksWhileTyping(it)) return;
+      if (e.repeat && !it.repeat) { e.preventDefault(); return; }
+      /* Space on a control you tabbed to presses it, as it should. On one
+         you last clicked, it plays or pauses: clicking leaves focus behind,
+         and Space doing that button again is never what's meant. */
+      const control = it.id === 'play' ? el?.closest?.(PRESSABLE) : null;
+      if (control) {
+        if (control !== pressed) return;
+        control.blur?.();
+        // The press itself lands on keyup; stop that one too.
+        window.addEventListener('keyup', (u) => { if (u.key === ' ') u.preventDefault(); }, { capture: true, once: true });
+      }
+      e.preventDefault();
+      act();
+    };
+    window.addEventListener('pointerdown', onPointer, true);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('pointerdown', onPointer, true); window.removeEventListener('keydown', onKey); };
+  }, []);
   const saveCurrentToLibrary = useCallback((t) => {
     const sid = spotifyIdOf(t);
     if (!sid) return;
@@ -2891,7 +3010,7 @@ export default function StudioHome({
         ...(chromeCompact ? {
           top: 'var(--gutter)', left: 'var(--gutter)', bottom: 'var(--np-reserve)',
           width: SIDEBAR_W - 16, zIndex: 45, padding: '6px 8px 8px',
-          background: `rgb(${theme.bg})`, border: '1px solid var(--border)', borderRadius: 'var(--r-card)',
+          background: `var(--st-dark-float, rgb(${theme.bg}))`, border: '1px solid var(--border)', borderRadius: 'var(--r-card)',
           boxShadow: '0 18px 48px rgba(0,0,0,0.5)',
           transform: chromePeek === 'side' ? 'none' : 'translateX(calc(-100% - 24px))',
           visibility: chromePeek === 'side' ? 'visible' : 'hidden',
@@ -2963,7 +3082,7 @@ export default function StudioHome({
                   <div role="menu" style={{
                     position: 'fixed', left: plAddMenu.left, top: plAddMenu.top, zIndex: 301,
                     width: 222, padding: 5, borderRadius: 11,
-                    background: 'rgb(18, 18, 21)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
+                    background: 'var(--st-dark-float, rgb(18, 18, 21))', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
                   }}>
                     <ImportMenuItem label="New playlist" hint="Start an empty one"
                       onClick={() => { setPlAddMenu(null); setNewPlaylist({ name: '' }); }} />
@@ -3464,7 +3583,7 @@ export default function StudioHome({
               {saved && onToggleFavorite ? (
                 <MenuItem accentRgb={acc} onClick={() => { onToggleFavorite(t.id); close(); }}
                   icon={<path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />}
-                  label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} />
+                  label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} sub={rowMenu.bar ? keysText('favorite') : undefined} />
               ) : null}
               {sep}
               {artistName ? (
@@ -3478,7 +3597,7 @@ export default function StudioHome({
               <MenuItem accentRgb={acc} onClick={copyLink}
                 icon={<><path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v14" /></>}
                 label="Copy Spotify link"
-                sub={sharing === t.id ? 'Looking up…' : undefined} />
+                sub={sharing === t.id ? 'Looking up…' : rowMenu.bar ? keysText('copyLink') : undefined} />
               {theme.streamerMode && !row?.notOut ? (() => {
                 const hit = blockedBy(srBlocked, row || t);
                 return (
@@ -3500,27 +3619,27 @@ export default function StudioHome({
                   {sep}
                   <MenuItem accentRgb={acc} onClick={() => { close(); setNpFull((v) => !v); }}
                     icon={<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />}
-                    label={npFull ? 'Exit fullscreen' : 'Fullscreen'} sub="Ctrl+Shift+F" />
+                    label={npFull ? 'Exit fullscreen' : 'Fullscreen'} sub={keysText('fullscreen')} />
                   <MenuItem accentRgb={acc} onClick={() => { close(); setThemeKey('darkMode', !dark); }}
                     icon={<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />}
-                    label={dark ? 'Turn Dark mode off' : 'Turn Dark mode on'} />
+                    label={dark ? 'Dark Mode Off' : 'Dark Mode On'} sub={keysText('darkMode')} />
                   {/* Immerse and the record's color both paint surfaces Dark
                       mode keeps dark, so they wait until it's off. */}
                   {!dark ? (
                     <MenuItem accentRgb={acc} onClick={() => { close(); toggleNpAnimatedBg(); }}
                       icon={<path d="M12 3.2c3.4 3.6 5.4 6.2 5.4 8.9a5.4 5.4 0 1 1-10.8 0c0-2.7 2-5.3 5.4-8.9z" />}
-                      label={npAnimatedBg ? 'Turn Immerse off' : 'Turn Immerse on'} />
+                      label={npAnimatedBg ? 'Turn Immerse Off' : 'Turn Immerse On'} sub={keysText('immerse')} />
                   ) : null}
-                  {/* The color tray hangs off the Now Playing bar, which isn't
+                  {/* The color strip hangs off the Now Playing bar, which isn't
                       mounted in fullscreen, so the item goes with it. */}
                   {!npFull && !dark ? (
-                    <MenuItem accentRgb={acc} onClick={() => { close(); setColourTrayOpen(true); }}
+                    <MenuItem accentRgb={acc} onClick={() => { close(); setColourStripReq((n) => n + 1); }}
                       icon={<><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" /></>}
-                      label="Color for this record" sub={coverOverride ? 'Custom color set' : 'Picked from the artwork'} />
+                      label="Change Colors" sub={keysText('colour')} />
                   ) : null}
                   <MenuItem accentRgb={acc} onClick={() => { close(); toggleCompactMode(); }}
                     icon={<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 15h18" /></>}
-                    label={compactMode ? 'Exit compact mode' : 'Compact mode'} sub="Ctrl+Shift+C" />
+                    label={compactMode ? 'Exit Compact Mode' : 'Compact Mode'} sub={keysText('compact')} />
                 </>
               ) : null}
               {saved && onRemoveFromLibrary && !rowMenu.bar && !inQueue ? (
@@ -3543,6 +3662,8 @@ export default function StudioHome({
         );
       })() : null}
 
+      {shortcutsOpen ? <ShortcutsDialog dark={dark} onClose={() => setShortcutsOpen(false)} /> : null}
+
       {/* Clear-library confirmation. Typed phrase, not a yes/no — a
           misclicked "Clear everything" has no undo path. */}
       {clearConfirm ? (
@@ -3558,7 +3679,7 @@ export default function StudioHome({
             onClick={(e) => e.stopPropagation()}
             style={{
               width: 'min(430px, 92vw)', borderRadius: 16, padding: '20px 22px',
-              background: 'rgb(16,16,19)', border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
+              background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
               boxShadow: '0 26px 80px rgba(0,0,0,0.65)',
             }}
           >
@@ -3688,7 +3809,7 @@ export default function StudioHome({
             onClick={(e) => e.stopPropagation()}
             style={{
               width: 'min(430px, 92vw)', borderRadius: 16, padding: '20px 22px',
-              background: 'rgb(16,16,19)', border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
+              background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
               boxShadow: '0 26px 80px rgba(0,0,0,0.65)',
             }}
           >
@@ -3837,22 +3958,25 @@ export default function StudioHome({
 
       {currentTrack && !npFull ? (
         <>
-          {/* Colour override for this record.
-              The handle is a chevron tucked behind the left edge of the Now
-              Playing bar — the colour it changes is right there, so the control
-              belongs against it rather than parked in the sidebar where it read
-              as a navigation item. */}
-          <CoverColourTab
-            open={colourTrayOpen}
-            setOpen={setColourTrayOpen}
+          {/* Colour override for this record: a tab that pulls out of the
+              bar's top edge on hover. */}
+          <ColourStrip
+            hover={barHover}
+            enabled={!dark}
+            openRequest={colourStripReq}
+            hoverOpens={theme.colourStripHover !== false}
+            // Only a bar that shows the record's color gets the splash; a fixed bar color doesn't change.
+            paints={immerse || vtheme.barSurface === 'cover'}
             swatches={npWashTheme?.swatches || []}
             current={coverOverride}
-            accent={accent}
-            onPick={(rgb) => setCoverColourFor(rgb)}
-            onReset={() => { setCoverColourFor(null); setColourTrayOpen(false); }}
-            coverSrc={currentTrack ? coverFor(currentTrack) : null}
-            exportName={currentTrack ? `${currentTrack.artist || 'unknown'} - ${currentTrack.album || currentTrack.title || 'cover'}` : 'cover'}
-            headless
+            auto={barTone(autoRgb || accent)}
+            /* The tab is the bar's own surface, whichever one it's showing. */
+            surface={immerse ? `rgb(${immersePalette?.wash || '18, 18, 22'})`
+              : vtheme.barSurface === 'cover' ? `rgb(${npBarSolidWash})` : 'var(--np-bar-bg, var(--surface))'}
+            onPick={(rgb, at) => {
+              setCoverColourFor(rgb);
+              if (at) setBarSplash({ key: Date.now(), rgb: rgb || barTone(autoRgb || accent), ...at });
+            }}
           />
 
         <NowPlayingBar
@@ -3907,6 +4031,8 @@ export default function StudioHome({
           onToggleShuffle={onToggleShuffle}
           onToggleRepeat={onToggleRepeat}
           onSeek={onSeek}
+          onHoverChange={barHover.emit}
+          splash={barSplash}
         />
         </>
       ) : null}
@@ -3922,6 +4048,7 @@ export default function StudioHome({
         coverFor={coverFor}
         isPlaying={isPlaying}
         onReorderQueue={onReorderQueue}
+        onClearQueue={clearUpNext}
         onQueueMenu={openQueueMenu}
         /* "Up next" starts one past the current track, and reorder works in
            absolute queue positions — this is the offset between the two. */
@@ -3994,6 +4121,7 @@ export default function StudioHome({
           upNext={queueIndex >= 0 ? queue.slice(queueIndex + 1) : []}
           onSelectTrack={(t) => onPlayTrack?.(t, queue)}
           onReorderQueue={onReorderQueue}
+          onClearQueue={clearUpNext}
           onQueueMenu={openQueueMenu}
           queueOffset={queueIndex >= 0 ? queueIndex + 1 : 0}
           lyricsData={lyricsData}
@@ -4038,7 +4166,7 @@ export default function StudioHome({
             position: 'fixed', left: '50%', top: 26, transform: 'translateX(-50%)',
             zIndex: 45, display: 'flex', alignItems: 'center', gap: 12,
             padding: '9px 11px 9px 15px', borderRadius: 13,
-            background: 'rgba(16,16,20,0.9)',
+            background: 'var(--st-dark-float, rgba(16,16,20,0.9))',
             border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
             boxShadow: '0 12px 44px rgba(0,0,0,0.55)',
           }}
@@ -4116,7 +4244,7 @@ export default function StudioHome({
         <div onClick={() => setPlCoverFor(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
           <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(360px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'rgb(16,16,19)', border: '1px solid rgba(var(--st-fg-rgb), 0.1)' }}>
+            style={{ width: 'min(360px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)' }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--st-text)' }}>Playlist cover</div>
             <div style={{ fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.5)', marginTop: 6, lineHeight: 1.5 }}>
               Choose an image, or clear it to fall back to the first track&rsquo;s artwork.
@@ -4167,7 +4295,7 @@ export default function StudioHome({
           <div onClick={() => setAddSongsTo(null)}
             style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.82)' }}>
             <div onClick={(e) => e.stopPropagation()}
-              style={{ width: 'min(560px, 94vw)', maxHeight: '76vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'rgb(15,15,18)', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', overflow: 'hidden' }}>
+              style={{ width: 'min(560px, 94vw)', maxHeight: '76vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'var(--st-dark-float, rgb(15,15,18))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', overflow: 'hidden' }}>
               <div style={{ padding: '16px 18px 10px' }}>
                 <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>Add to {pl?.name || 'playlist'}</div>
                 <input autoFocus value={addSongsQuery} onChange={(e) => setAddSongsQuery(e.target.value)}
@@ -4368,7 +4496,7 @@ export default function StudioHome({
         <div onClick={() => setEditProfile(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.82)' }}>
           <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(400px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'rgb(var(--st-bg-rgb))', border: '1px solid rgba(var(--st-fg-rgb), 0.11)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)' }}>
+            style={{ width: 'min(400px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(var(--st-bg-rgb)))', border: '1px solid rgba(var(--st-fg-rgb), 0.11)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)' }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>Your profile</div>
             <div style={{ display: 'flex', gap: 14, marginTop: 14 }}>
               <label className="sth-plcover" style={{
@@ -4497,7 +4625,7 @@ export default function StudioHome({
         <div onClick={() => setDeletePl(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
           <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(370px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'rgb(16,16,19)', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }}>
+            style={{ width: 'min(370px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--st-text)' }}>Delete “{deletePl.name}”?</div>
             <div style={{ fontSize: 12, color: 'rgba(var(--st-sub-rgb), 0.55)', marginTop: 8, lineHeight: 1.55 }}>
               The playlist is removed. The songs stay in your library.
@@ -4522,7 +4650,7 @@ export default function StudioHome({
         <div onClick={() => setAddToPl(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
           <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(360px, 92vw)', maxHeight: '70vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'rgb(16,16,19)', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
+            style={{ width: 'min(360px, 92vw)', maxHeight: '70vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
             <div style={{ padding: '16px 18px 10px', fontSize: 14, fontWeight: 700, color: 'var(--st-text)' }}>
               Add {addToPl.trackIds.length} song{addToPl.trackIds.length === 1 ? '' : 's'} to…
             </div>
@@ -4583,7 +4711,7 @@ export default function StudioHome({
         <div onClick={() => setNewPlaylist(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
           <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(380px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'rgb(16,16,19)', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }}>
+            style={{ width: 'min(380px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }}>
             <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>New playlist</div>
             <input
               autoFocus
@@ -4638,6 +4766,7 @@ export default function StudioHome({
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         nowPlaying={currentTrack ? { id: currentTrack.id, isRow: mySpotifyBridge.isCurrent, playing: !!isPlaying } : null}
+        onTogglePlay={onTogglePlay}
         onSongMenu={openSongMenu}
         library={library}
         alreadyOwned={alreadyOwned}

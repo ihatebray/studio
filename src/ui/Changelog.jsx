@@ -11,7 +11,7 @@ const CSS = `
   background: rgba(4,4,6,0.78); animation: stclIn .18s ease both; }
 @keyframes stclIn { from { opacity: 0; } }
 .stcl { width: min(520px, 100%); max-height: min(78vh, 680px); display: flex; flex-direction: column; overflow: hidden;
-  border-radius: 16px; background: rgb(16,16,19); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 24px 70px rgba(0,0,0,0.6); }
+  border-radius: 16px; background: var(--st-dark-float, rgb(16,16,19)); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 24px 70px rgba(0,0,0,0.6); }
 .stcl-head { display: flex; align-items: center; padding: 18px 18px 14px 22px; border-bottom: 1px solid rgba(255,255,255,0.07); }
 .stcl-head b { font-size: 16px; font-weight: 800; color: #fff; }
 .stcl-x { margin-left: auto; width: 28px; height: 28px; border-radius: 8px; border: none; background: transparent; cursor: pointer;

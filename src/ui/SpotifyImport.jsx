@@ -218,7 +218,7 @@ export default function SpotifyImport({
 
 const S = {
   scrim: { position: 'fixed', inset: 0, zIndex: 320, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.82)' },
-  panel: { width: 'min(520px, 94vw)', maxHeight: '82vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'rgb(15,15,18)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)', overflow: 'hidden' },
+  panel: { width: 'min(520px, 94vw)', maxHeight: '82vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'var(--st-dark-float, rgb(15,15,18))', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)', overflow: 'hidden' },
   head: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '15px 17px 13px', borderBottom: '1px solid rgba(255,255,255,0.07)' },
   title: { fontSize: 14.5, fontWeight: 700, color: '#f2f2f4' },
   sub: { fontSize: 11, color: 'rgba(200,200,210,0.45)', marginTop: 3 },

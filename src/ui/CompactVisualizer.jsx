@@ -221,7 +221,7 @@ function CompactVisualizer({
         {tip ? (
           <span style={{
             position: 'absolute', top: 'calc(100% + 8px)', left: `${tip.x * 100}%`, transform: 'translateX(-50%)',
-            padding: '3px 8px', borderRadius: 6, background: 'rgba(8,10,16,0.92)', color: '#fff',
+            padding: '3px 8px', borderRadius: 6, background: 'var(--st-dark-float, rgba(8,10,16,0.92))', color: '#fff',
             fontSize: 11.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 5,
           }}>{tip.text}</span>
         ) : null}

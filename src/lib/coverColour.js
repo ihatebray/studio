@@ -395,6 +395,77 @@ const DISLIKE_HI = 110;
 const DISLIKE_TONE = 0.66;
 const DISLIKE_TARGET_HUE = 68;  // amber; dark amber is brown, which is liked
 
+const isYellow = (c) => c.hueDeg >= DISLIKE_LO && c.hueDeg <= DISLIKE_HI && c.C > 0.04;
+const YELLOW_RIVAL = 0.6;          // a rival scoring at least this share of the yellow's score wins
+const YELLOW_RIVAL_SHARE = 0.015;  // and covering at least this much of the cover
+const FAINT_CHROMA = 0.012;        // a tint, well below CUTOFF_CHROMA's "colour"
+const FAINT_SHARE = 0.05;          // that covers a real part of the cover
+
+/* Skin, hair and the warm light on them: muted oranges and tans. */
+const SKIN_LO = 20;
+const SKIN_HI = 75;
+const SKIN_CHROMA = 0.09;            // skin is muted: a stronger orange is a painted or printed colour
+const isSkin = (C, hueDeg) => hueDeg >= SKIN_LO && hueDeg <= SKIN_HI && C < SKIN_CHROMA;
+const SETTING_CHROMA = FAINT_CHROMA; // a pixel with at least this much colour has a hue worth counting
+const SETTING_LIGHTNESS = 0.12;      // below this, a pixel's hue is mostly noise
+const SETTING_RIVAL = 0.6;           // the setting wins when it covers at least this share of what the skin does
+const SETTING_SHARE = 0.08;          // and at least this much of the cover
+const SETTING_WIDTH = 30;            // degrees either side counted as one colour: faint colours spread wide
+const SETTING_APART = 60;            // degrees from the skin, so the two never share pixels
+
+/**
+ * The cover's setting, when the colour that won is skin.
+ *
+ * A photo of people picks their skin and hair: it's the most colourful thing
+ * in a dark scene. But that's who is on the cover, not its colour. Selfish
+ * Machines is a dark green forest, and its bar came out khaki. Clustering
+ * can't see the forest because dark greens sit so close to black that they
+ * merge into the black clusters, so this counts pixels directly.
+ *
+ * Returns the setting's colour as OKLab, or null when nothing else covers
+ * about as much of the cover as the skin does, which keeps warm covers warm.
+ */
+function settingOverSkin(samples, skinHue) {
+  const hues = new Float64Array(360);
+  const labs = [];
+  for (let i = 0; i < samples.length; i += 1) {
+    const lab = rgbToOklab(samples[i][0], samples[i][1], samples[i][2]);
+    const C = Math.hypot(lab[1], lab[2]);
+    if (C < SETTING_CHROMA || lab[0] < SETTING_LIGHTNESS) continue;
+    const hue = Math.floor(degrees(Math.atan2(lab[2], lab[1]))) % 360;
+    hues[hue] += 1;
+    labs.push([hue, lab, C]);
+  }
+  const n = samples.length;
+  const around = (hue) => {
+    let sum = 0;
+    for (let i = hue - SETTING_WIDTH; i <= hue + SETTING_WIDTH; i += 1) sum += hues[((i % 360) + 360) % 360];
+    return sum / n;
+  };
+  const apart = (a, b) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
+  const skin = around(Math.round(skinHue) % 360);
+  let best = -1;
+  let bestShare = 0;
+  for (let hue = 0; hue < 360; hue += 1) {
+    if (apart(hue, skinHue) < SETTING_APART || isSkin(0, hue)) continue; // the setting isn't more skin
+    const share = around(hue);
+    if (share > bestShare) { bestShare = share; best = hue; }
+  }
+  if (best < 0 || bestShare < SETTING_SHARE || bestShare < skin * SETTING_RIVAL) return null;
+  /* Weighted by chroma: the near-grey pixels decide where the setting is,
+     the coloured ones decide what colour it is. */
+  const sum = [0, 0, 0];
+  let weight = 0;
+  for (const [hue, lab, C] of labs) {
+    if (apart(hue, best) > SETTING_WIDTH) continue;
+    sum[0] += lab[0] * C; sum[1] += lab[1] * C; sum[2] += lab[2] * C; weight += C;
+  }
+  const lab = sum.map((v) => v / weight);
+  // A white dress or a grey wall with a faint cast is still white or grey.
+  if (Math.hypot(lab[1], lab[2]) < CUTOFF_CHROMA) return null;
+  return { lab, share: bestShare };
+}
+
 const MAX_CHROMA = 0.16;
 const MIN_LIGHTNESS = 0.16;
 const TARGET_LC = 78;
@@ -507,7 +578,25 @@ export function analyseCover(samples, opts = {}) {
      one, so the surface still responds to the artwork. */
   let source;
   let mono = false;
-  if (!usable.length) {
+  /* A faint but widespread tint: a slate, a warm grey. A cover with no
+     colour strong enough to pass the cutoff used to go straight to plain
+     grey, and covers sitting right at the cutoff flipped between a slate bar
+     and a grey one depending on which copy of the cover was read. Grey is
+     kept for covers with no real cast at all (black-and-white photos). */
+  const faint = !usable.length
+    ? scored.filter((c) => c.C >= FAINT_CHROMA && c.share >= FAINT_SHARE).sort((a, b) => (b.share * b.C) - (a.share * a.C))[0]
+    : null;
+  if (faint) {
+    const near = scored.filter((cand) => {
+      if (cand.C < FAINT_CHROMA) return false;
+      const d = Math.abs(cand.hueDeg - faint.hueDeg);
+      return Math.min(d, 360 - d) <= 15;
+    });
+    const fw = near.reduce((n, cand) => n + cand.w, 0) || 1;
+    const merged = [0, 1, 2].map((k) => near.reduce((n, cand) => n + cand.lab[k] * cand.w, 0) / fw);
+    const [mL, mC, mh] = oklabToLch(merged);
+    source = { L: mL, C: mC, h: mh, share: faint.share, proportion: faint.proportion, rgb: oklchToRgb(mL, mC, mh), members: near.length, faint: true };
+  } else if (!usable.length) {
     mono = true;
     const totalW = clusters.reduce((n, c) => n + c.w, 0) || 1;
     const meanL = clusters.reduce((n, c) => n + c.L * c.w, 0) / totalW;
@@ -529,7 +618,17 @@ export function analyseCover(samples, opts = {}) {
      * representative and far more stable: it no longer matters which
      * fragment of a colour happens to win by a rounding margin.
      */
-    const winner = usable[0];
+    /* Yellows can't make a dark bar: darkened for white text they become
+       mustard, and the dislike rule below turns that into an amber that
+       isn't on the cover at all. So when a yellow only narrowly wins and a
+       real colour is close behind (Goodbye & Good Riddance: the yellow sky at
+       5% against the blue car at 3.8%), the colour wins. A cover that is
+       mainly yellow has no close rival and still gets its amber. */
+    let winner = usable[0];
+    if (isYellow(winner)) {
+      const rival = usable.find((c) => !isYellow(c) && c.score >= winner.score * YELLOW_RIVAL && c.share >= YELLOW_RIVAL_SHARE);
+      if (rival) winner = rival;
+    }
     const FAMILY_DEGREES = 15;
     const near = scored.filter((cand) => {
       if (cand.C < CUTOFF_CHROMA) return false;
@@ -550,6 +649,11 @@ export function analyseCover(samples, opts = {}) {
       rgb: oklchToRgb(mL, mC, mh),
       members: near.length,
     };
+    const setting = isSkin(mC, degrees(mh)) ? settingOverSkin(samples, degrees(mh)) : null;
+    if (setting) {
+      const [sL, sC, sh] = oklabToLch(setting.lab);
+      source = { L: sL, C: sC, h: sh, share: setting.share, proportion: setting.share, rgb: oklchToRgb(sL, sC, sh), setting: true };
+    }
   }
 
   const bar = toBarColour(source.rgb, opts);

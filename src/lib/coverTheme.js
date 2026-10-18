@@ -852,7 +852,23 @@ function readCoverTheme(src) {
     /* A Spotify or iTunes address is read at its one color size (640/600px)
        whatever size the song was saved with, the same file a saved copy is
        read from, so the two can't land on different colors. */
-    img.src = /^studio-cover:/i.test(src) ? `${src}${src.includes('?') ? '&' : '?'}for=color` : (colorCover(src) || src);
+    const url = /^studio-cover:/i.test(src) ? `${src}${src.includes('?') ? '&' : '?'}for=color` : (colorCover(src) || src);
+    if (!/^https?:/i.test(url)) { img.src = url; return; }
+    /* A web cover is downloaded fresh and read from that copy. Loaded
+       straight into an image it could come out of Chromium's cache from an
+       earlier load that wasn't allowed to be read, and the read then failed
+       and the colors fell back to grey, until a restart. A copy of our own
+       can always be read. */
+    fetch(url, { mode: 'cors', cache: 'no-store', credentials: 'omit' })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); })
+      .then((blob) => {
+        const local = URL.createObjectURL(blob);
+        const done = () => setTimeout(() => URL.revokeObjectURL(local), 0);
+        img.addEventListener('load', done, { once: true });
+        img.addEventListener('error', done, { once: true });
+        img.src = local;
+      })
+      .catch(() => { img.src = url; });
   });
 }
 
@@ -1079,6 +1095,27 @@ const PAGE_LIGHTNESS_MAX = 0.92;
  * Hue and chroma are left alone: those carry whatever the cover, or the
  * person using the picker, actually chose. Only lightness moves.
  */
+/** The library page's color, made from the Now Playing bar's: the bar's hue
+ *  and most of its color, darkened only as far as the page's text needs.
+ *  The page used to darken the raw cover color on its own, which could drift
+ *  away from the bar (orange bar, olive page) or land grey under a coloured
+ *  bar. Made from the bar, the two always belong together. */
+export function pageFromBar(rgbStr) {
+  const p = String(rgbStr || '').split(',').map((n) => parseInt(n.trim(), 10));
+  if (p.length < 3 || p.some((n) => !Number.isFinite(n))) return '18, 18, 24';
+  const [L, C, h] = oklabToLch(rgbToOklab(p[0], p[1], p[2]));
+  const FAINT_ALPHA = 0.45;
+  const faintOn = (rgb) => rgb.map((v) => Math.round(255 * FAINT_ALPHA + v * (1 - FAINT_ALPHA)));
+  let l = Math.min(L, 0.5);
+  let rgb = oklchToRgb(l, C, h);
+  for (let i = 0; i < 60 && l > 0.08 && contrastRatio(faintOn(rgb), rgb) < PAGE_FROM_BAR_TARGET; i += 1) {
+    l -= 0.01;
+    rgb = oklchToRgb(l, Math.min(C, l * 0.32), h);
+  }
+  return rgb.join(', ');
+}
+const PAGE_FROM_BAR_TARGET = 2.8;
+
 export function pageTone(rgbStr) {
   const p = String(rgbStr || '').split(',').map((n) => parseInt(n.trim(), 10));
   if (p.length < 3 || p.some((n) => !Number.isFinite(n))) return '18, 18, 24';

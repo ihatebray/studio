@@ -1,5 +1,5 @@
 import React from 'react';
-import { pageTone, pageWash, readableAccent, recordDeep, recordWashSource } from '../../lib/coverTheme.js';
+import { barTone, pageFromBar, pageWash, readableAccent, recordDeep, recordWashSource } from '../../lib/coverTheme.js';
 import { formatTotalMs } from '../../lib/mediaUtils.js';
 import ArtistGrid from '../ArtistGrid.jsx';
 import ArtistPage from '../ArtistPage.jsx';
@@ -121,25 +121,22 @@ export default function LibraryPage({
   const wrapperFixed = pageMode === 'colour';
   const usesCover = pageMode === 'cover' || pageMode === 'coverFull';
   const npWashOn = currentTrack && usesCover && npWashTheme;
-  /* The page follows the chrome, not the other way round.
-     On auto these are two views of one sampled colour: the bar gets
-     barTone() and sits pinned at 0.24 lightness, the page keeps the
-     sleeve's own lightness and lands well above it. That gap is the
-     whole effect — the surfaces read as related rather than as one
-     flat field.
-     A manual pick has no sampled source behind it. The pick IS the
-     bar, so the page is derived from it with pageTone(), which lifts
-     lightness while leaving hue and saturation alone. Using the pick
-     raw here (what it did before) gave the page and the chrome the
-     same value and collapsed the gap. */
+  /* The page follows the bar. pageFromBar keeps the bar's hue and darkens it
+     only as far as the page's faint text needs, so a dark bar gives a page
+     of exactly the same color and a bright one (blue, yellow, pink, tan) a
+     deeper shade of it. It never comes out lighter than the bar. */
   /* A record's own color stands in for the cover's, so it only applies
      where the cover's would: with Library pages on Cover art or Full
      color. Off, Color and Dark mode leave the page alone. */
   const npWashRgb = wrapperFixed
     ? theme.pageColour
+    /* Made from the bar's own color (pageFromBar), so the page and the bar
+       share a hue. Darkening the raw cover color separately turned an
+       orange bar's page olive, and a cover read that came back grey left
+       a grey page under a coloured bar. */
     : (coverOverride && currentTrack && usesCover
-      ? pageWash(pageTone(coverOverride))
-      : (npWashOn ? pageWash(autoRgb) : null));
+      ? pageFromBar(coverOverride)
+      : (npWashOn ? pageFromBar(barTone(autoRgb)) : null));
   const rows = libRows;
   /* The docked Queue / Lyrics / Info panel used to force the search
      onto a row of its own, because the old header couldn't fit a

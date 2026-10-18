@@ -9,7 +9,7 @@ import {
 } from '../lib/instantSearch.js';
 import { api, fmtMs, fmtSec } from '../lib/format.js';
 import { parseSpotifyLink } from '../lib/spotifyLink.js';
-import { PlayIcon } from './sharedUI.jsx';
+import { PauseIcon, PlayIcon } from './sharedUI.jsx';
 import { PlayingBars } from './home/common.jsx';
 
 /* =========================================================================
@@ -173,12 +173,12 @@ function loadRecents() {
 /* Starting points for an empty box. Prefix scopes drop the key into the
    field and wait for a value; the is: ones are complete on their own. */
 const FILTER_HINTS = [
-  ['artist:', 'only this artist'],
-  ['album:', 'only this record'],
-  ['year:', 'drops re-uploads'],
-  ['is:missing', 'hide what you own'],
-  ['is:lossless', 'FLAC and friends'],
-  ['is:owned', 'include what you own'],
+  ['artist:', 'Only this artist'],
+  ['album:', 'Only this album'],
+  ['year:', 'Only this release year'],
+  ['is:missing', 'Songs you don’t have'],
+  ['is:lossless', 'FLAC and other lossless files'],
+  ['is:owned', 'Include songs you own'],
 ];
 
 function Svg({ d, size = 15, w = 2, children, style }) {
@@ -289,6 +289,7 @@ export default function InstantSearch({
   onOpenAlbum,            // (album)   → push the full album page (optional)
   seed = '',              // preload the query when something else opens this
   nowPlaying = null,      // { id, isRow(spotifyRow), playing }: the song playing, to mark its row
+  onTogglePlay = null,    // pause or resume the song playing, when its row is clicked again
   onSongMenu,             // (event, { track } | { row }) → the song menu (right-click)
   onSpotifyLink,          // (text) → open a pasted Spotify link instead of searching for it
   onFilterLibrary,        // (queryString) → narrow the library table and go there
@@ -900,7 +901,30 @@ export default function InstantSearch({
        both show. (No album on the catalogue row: same song, as before.) */
     const albumOf = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim();
     const sameAlbum = (libAlbum, r) => !r.album || albumOf(libAlbum) === albumOf(r.album);
+
+    /* One song can come back several times: from the artist's own album and
+       from compilations ("Various Artists", playlist-style albums the artist
+       only appears on). Whichever Spotify listed first used to win, so a
+       search for an artist's song could show a compilation copy. Each song
+       now keeps its best copy: the artist's own release first, then the most
+       played. The album list from the same search says who an album is by. */
+    const albumBy = new Map(spotify.albums.map((a) => [a.albumId, a.artists || '']));
+    const ownRelease = (r) => {
+      const by = albumBy.get(r.albumId);
+      if (by == null || !by) return true; // unknown: don't penalize
+      if (/^various artists$/i.test(by.trim())) return false;
+      const lead = normLoose(leadCredit(r.artists));
+      return !lead || normLoose(by).includes(lead);
+    };
+    const copyRank = (r) => (ownRelease(r) ? 1000 : 0) + (Number(r.popularity) || 0);
+    const bestCopy = new Map();
     for (const r of spotify.songs) {
+      const k = keyOf(r.title, r.artists);
+      const cur = bestCopy.get(k);
+      if (!cur || copyRank(r) > copyRank(cur)) bestCopy.set(k, r);
+    }
+    for (const r of spotify.songs) {
+      if (bestCopy.get(keyOf(r.title, r.artists)) !== r) continue;
       if (!passesScopes(parsed, { artist: r.artists, album: r.album, title: r.title })) continue;
       const s = scoreEntity(parsed, 'track', r);
       if (s < 40) continue;
@@ -961,7 +985,7 @@ export default function InstantSearch({
     /* `all` is handed back whole because the band pages through it — the cap
        only ever applied to what the merged Songs section shows. */
     return { list: all.slice(0, MAX_SONGS), all };
-  }, [spotify.songs, slskGroups, library, parsed, alreadyOwned, artistLock, impliedLock, creditedToLock]);
+  }, [spotify.songs, spotify.albums, slskGroups, library, parsed, alreadyOwned, artistLock, impliedLock, creditedToLock]);
 
   const folders = useMemo(() => (
     slsk.folders
@@ -1163,12 +1187,12 @@ export default function InstantSearch({
     /* Results frame. */
     const list = [];
 
-    /* Empty box: recent searches are the list. Keyboard-reachable like any
-       other row, so ↓ ↵ re-runs the last thing you looked for. */
-    if (!hasQuery) {
-      recents.forEach((q) => list.push({ key: `rc:${q}`, group: 'Recent', kind: 'recent', data: { q } }));
-      return list;
-    }
+    /* Empty box: recent searches are hidden for now (they'll be back in a
+       later version with a better look). They're still saved as you search,
+       so nothing is lost when they return; to show them again, push them
+       here: recents.forEach((q) => list.push({ key: `rc:${q}`, group:
+       'Recent', kind: 'recent', data: { q } })). */
+    if (!hasQuery) return list;
 
     /* Rung 1. Nothing was searched, so there is nothing else to show — just
        the song, and an explicit way to search anyway. The escape hatch is
@@ -1703,6 +1727,8 @@ export default function InstantSearch({
       const tracks = (albumData[a.albumId]?.tracks || []).map((t) => ({
         ...t, album: t.album || a.name || '', albumId: t.albumId || a.albumId, albumArtUrl: t.albumArtUrl || a.albumArtUrl || '',
       }));
+      // The song already playing: pause or resume it rather than starting it over.
+      if (onTogglePlay && nowOf(null, { ...data.track, album: data.track.album || a.name })) { onTogglePlay(); return; }
       if (data.track.spotifyId && onPlaySpotifyRows) { onPlaySpotifyRows(tracks, data.index); return; }
       const owned = alreadyOwned?.(data.track.title, data.track.artists || a.artists, a.name || undefined);
       if (!owned) getTrack(data.track, data.tKey);
@@ -1729,7 +1755,7 @@ export default function InstantSearch({
         onClose?.();
       }
     }
-  }, [push, onOpenArtist, onOpenAlbum, onClose, onPlayTrack, onPlaySpotifyRows, onGetSlskFile, onGetSpotifyTrack, saveSong,
+  }, [push, onOpenArtist, onOpenAlbum, onClose, onPlayTrack, onPlaySpotifyRows, onGetSlskFile, onGetSpotifyTrack, saveSong, nowPlaying, onTogglePlay,
     onGetSlskAlbum, alreadyOwned, getTrack, frame, albumData, items, parsed, raw, onFilterLibrary, hasQuery, rememberQuery, setRaw, renderArtist]);
 
   /** Right arrow — go deeper, when there is a deeper. */
@@ -2083,17 +2109,22 @@ export default function InstantSearch({
       const key = dlKeyFor(track, best);
       const isOpen = expandedTrack === tKey;
       return (
-        <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}${track.notOut ? ' is-locked' : ''}`}
+        <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}${track.notOut ? ' is-locked' : ''}${dlState[key] === 'busy' ? ' is-saving' : ''}`}
           onContextMenu={onSongMenu && track.spotifyId ? (e) => onSongMenu(e, { row: { ...track, album: track.album || frame?.album?.name || '', albumId: track.albumId || frame?.album?.albumId, artists: track.artists || frame?.album?.artists || '' } }) : undefined}
           {...(track.notOut ? { onClick: undefined, 'aria-disabled': true, title: 'Not out yet' } : null)}>
-          <span className={`isx-n${track.spotifyId && !track.notOut && onPlaySpotifyRows ? ' can-play' : ''}`}>
-            {(() => {
-              const now = track.notOut ? null : nowOf(null, { ...track, album: track.album || frame?.album?.name });
-              return now ? <span className="num"><PlayingBars playing={now.playing} /></span>
-                : <span className="num">{track.trackNumber || item.data.index + 1}</span>;
-            })()}
-            <span className="pl"><PlayIcon size={11} /></span>
-          </span>
+          {(() => {
+            /* The song playing shows its bars, the highlighted row included;
+               hovering it offers pause (or play while paused), which is what
+               a click on it does. */
+            const now = track.notOut ? null : nowOf(null, { ...track, album: track.album || frame?.album?.name });
+            return (
+              <span className={`isx-n${track.spotifyId && !track.notOut && onPlaySpotifyRows ? ' can-play' : ''}${now ? ' is-now' : ''}`}>
+                {now ? <span className="num"><PlayingBars playing={now.playing} /></span>
+                  : <span className="num">{track.trackNumber || item.data.index + 1}</span>}
+                <span className="pl">{now?.playing ? <PauseIcon size={11} /> : <PlayIcon size={11} />}</span>
+              </span>
+            );
+          })()}
           {/* Title over credits: the lead artist, then anyone featured. Each
               name opens that artist in the panel. */}
           <span className="isx-tcell">
@@ -2610,35 +2641,33 @@ export default function InstantSearch({
         <div className="isx-body" ref={listRef}>
           {!hasQuery && !stack.length ? (
             <div className="isx-start">
-              {items.length ? renderList() : (
-                <div className="isx-intro">
-                  <div className="isx-emptytitle">Search your library and the catalog</div>
-                  <div className="isx-emptyhint">Songs you own play straight away. Everything else can be fetched from here.</div>
+              {/* What search covers, in two short lines, and the filters as
+                  tokens: hover one for what it does, click to add it. Recent
+                  searches follow underneath. */}
+              <div className="isx-hello">
+                <span className="isx-hello-ic"><Svg d={Ico.search} size={16} w={2.2} /></span>
+                <div className="isx-hello-t">Search everything</div>
+                <div className="isx-hello-l">Your library and all of Spotify in one place.</div>
+                <div className="isx-hello-l is-dim">Each song shows up once. Duplicate copies are hidden.</div>
+                <div className="isx-toks">
+                  {FILTER_HINTS.map(([tok, desc]) => (
+                    <button key={tok} type="button" className="isx-tok-f" data-tip={desc} aria-label={`${tok} ${desc}`}
+                      onClick={() => {
+                        if (tok.endsWith(':')) {
+                          // A prefix: drop it in and wait for the value.
+                          setText((t) => `${t && !/\s$/.test(t) ? `${t} ` : t}${tok}`);
+                        } else {
+                          setChips((c) => mergeChips(c, [tok]));
+                        }
+                        inputRef.current?.focus();
+                      }}>
+                      {tok}
+                    </button>
+                  ))}
                 </div>
-              )}
-              <div className="isx-sec">Filters</div>
-              <div className="isx-filters">
-                {FILTER_HINTS.map(([tok, desc]) => (
-                  <button key={tok} type="button" className="isx-filter"
-                    onClick={() => {
-                      if (tok.endsWith(':')) {
-                        // A prefix: drop it in and wait for the value.
-                        setText((t) => `${t && !/\s$/.test(t) ? `${t} ` : t}${tok}`);
-                      } else {
-                        setChips((c) => mergeChips(c, [tok]));
-                      }
-                      inputRef.current?.focus();
-                    }}>
-                    <span className="isx-filter-k">{tok}</span>
-                    <span className="isx-filter-d">{desc}</span>
-                  </button>
-                ))}
+                <div className="isx-hello-hint">Hover a filter to see what it does.</div>
               </div>
-              <div className="isx-tip">
-                {quality === 'best'
-                  ? 'Best is on: Soulseek is checked in the background and rows upgrade to lossless when it answers.'
-                  : 'Press → on any song to look for a lossless copy of just that track.'}
-              </div>
+              {items.length ? renderList() : null}
             </div>
           ) : items.length ? (
             renderList()
@@ -2672,6 +2701,11 @@ export default function InstantSearch({
           {footHints.map(([k, label]) => (
             <span key={k}><kbd>{k}</kbd>{label}</span>
           ))}
+          {!hasQuery && !stack.length && !footHints.length ? (
+            <span className="isx-footnote">
+              {quality === 'best' ? 'Best also checks Soulseek for lossless copies' : <><kbd>→</kbd>on a song looks for a lossless copy</>}
+            </span>
+          ) : null}
           <div style={{ flex: 1 }} />
           {phase.slsk === 'busy' ? <span className="isx-footnote"><span className="isx-spin" />checking Soulseek</span> : null}
           {/* The one global setting worth having in reach. Fast is the default
@@ -2756,6 +2790,27 @@ const STYLES = `
 /* Everything in here sits on the same 18px inset as the search icon, the
    esc button and the Quality toggle, cards included. */
 .isx-start { padding-bottom: 6px; }
+/* The empty panel: centered, starting just under the search bar. */
+.isx-hello { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 14px 16px 10px; }
+.isx-hello-ic { width: 36px; height: 36px; border-radius: 11px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px;
+  background: rgba(var(--st-fg-rgb), 0.05); border: 1px solid rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.75); }
+.isx-hello-t { font-size: 15px; font-weight: 800; color: var(--st-text); }
+.isx-hello-l { margin-top: 4px; font-size: 12.5px; line-height: 1.5; color: rgba(var(--st-sub-rgb), 0.5); }
+.isx-hello-l.is-dim { margin-top: 2px; color: rgba(var(--st-sub-rgb), 0.38); }
+.isx-toks { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 14px; }
+.isx-tok-f { position: relative; height: 28px; padding: 0 10px; border-radius: 7px; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 800;
+  color: var(--st-text); background: rgba(var(--st-fg-rgb), 0.05); border: 1px solid rgba(var(--st-fg-rgb), 0.08);
+  transition: background 0.14s ease, border-color 0.14s ease; }
+.isx-tok-f:hover, .isx-tok-f:focus-visible { background: rgba(var(--st-fg-rgb), 0.09); border-color: rgba(var(--st-fg-rgb), 0.2); }
+.isx-tok-f::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translate(-50%, 3px);
+  white-space: nowrap; padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; pointer-events: none;
+  background: rgb(34,34,38); color: rgba(255,255,255,0.85); box-shadow: 0 8px 20px rgba(0,0,0,0.45);
+  opacity: 0; transition: opacity 0.12s ease, transform 0.12s ease; }
+.isx-tok-f:hover::after, .isx-tok-f:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+.isx-hello-hint { margin-top: 10px; font-size: 11px; color: rgba(var(--st-sub-rgb), 0.32); }
+[data-dark] .isx-hello-ic, [data-dark] .isx-tok-f { background: rgb(21,21,24); border-color: rgba(255,255,255,0.07); }
+[data-dark] .isx-tok-f:hover { background: rgb(28,28,32); border-color: rgba(255,255,255,0.18); }
+@media (prefers-reduced-motion: reduce) { .isx-tok-f::after { transition: none; } }
 .isx-intro { padding: 16px 10px 6px; }
 .isx-intro .isx-emptyhint { margin-top: 4px; line-height: 1.5; }
 .isx-start .isx-sec { padding: 16px 10px 8px; }
@@ -2906,10 +2961,14 @@ const STYLES = `
 .isx-unmatched { margin-left: auto; font-size: 11px; font-weight: 650; color: rgba(240,190,120,0.8); }
 
 /* ---- tracklist ---- */
-.isx-trk { display: grid; grid-template-columns: 26px minmax(0,1fr) auto 48px 138px; gap: 11px; align-items: center;
+.isx-trk { display: grid; grid-template-columns: 26px minmax(0,1fr) auto 48px 30px; gap: 11px; align-items: center;
   width: 100%; padding: 7px 12px; border-radius: 9px; border: none; background: transparent; color: inherit;
   text-align: left; cursor: pointer; font-family: inherit; }
 .isx-trk.is-on { background: rgba(var(--st-acc-rgb), 0.13); }
+.isx-trk .isx-dur { text-align: right; }
+/* The action column fits the + and the tick. While a song saves, its wider
+   progress bar grows left over the length, which steps aside for it. */
+.isx-trk.is-saving .isx-dur { visibility: hidden; }
 .isx-trk.is-open { background: rgba(var(--st-acc-rgb), 0.09); }
 .isx-n { text-align: center; font-size: 11.5px; color: rgba(var(--st-fg-rgb), 0.32); font-variant-numeric: tabular-nums; }
 .isx-tt { min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -3002,6 +3061,10 @@ const STYLES = `
 .isx-n.can-play .pl { justify-content: center; }
 .isx-trk:hover .isx-n.can-play .num, .isx-trk.is-on .isx-n.can-play .num { display: none; }
 .isx-trk:hover .isx-n.can-play .pl, .isx-trk.is-on .isx-n.can-play .pl { display: inline-flex; }
+/* The playing row keeps its bars while it's only the highlighted row, and
+   swaps to pause under the pointer. */
+.isx-trk.is-on:not(:hover) .isx-n.is-now .num { display: inline-flex; justify-content: center; }
+.isx-trk.is-on:not(:hover) .isx-n.is-now .pl { display: none; }
 .isx-art.is-owned { box-shadow: 0 0 0 1px rgba(123,224,176,0.35); }
 
 .isx-spin { width: 11px; height: 11px; flex-shrink: 0; border-radius: 50%; display: inline-block;
@@ -3010,12 +3073,13 @@ const STYLES = `
 @keyframes isxSpin { to { transform: rotate(360deg); } }
 
 /* ---- Dark mode ----------------------------------------------------------
-   The same dark the rest of the app uses: the panel one step up from the
-   page, cards one more, white-at-alpha edges. The cover accent stays on the
+   The same dark the rest of the app uses: the panel is the page's own
+   #0a0a0b (DARK.page), like the Now Playing bar, library and side panel,
+   with cards one step up and white-at-alpha edges. The cover accent stays on the
    things you act on (Get, Play, filter chips you've added) but not on the
    furniture, so a blue or orange cover doesn't tint the whole box. */
 [data-dark] .isx-scrim { background: rgba(0,0,0,0.66); }
-[data-dark] .isx-panel { background: rgb(14,14,16); border-color: rgba(255,255,255,0.08);
+[data-dark] .isx-panel { background: var(--st-dark-float, rgb(10,10,11)); border-color: rgba(255,255,255,0.08);
   box-shadow: 0 40px 100px rgba(0,0,0,0.8), 0 0 0 1px rgba(0,0,0,0.6); }
 [data-dark] .isx-top, [data-dark] .isx-crumb { border-bottom-color: rgba(255,255,255,0.06); }
 [data-dark] .isx-crumb { background: rgba(255,255,255,0.015); }
@@ -3043,7 +3107,7 @@ const STYLES = `
 
 @media (max-width: 820px) {
   .isx-panel, .isx-panel.is-wide { --isx-w: calc(100vw - 32px); top: 70px; }
-  .isx-trk { grid-template-columns: 24px minmax(0,1fr) 44px 126px; }
+  .isx-trk { grid-template-columns: 24px minmax(0,1fr) 44px 30px; }
   .isx-tq { display: none; }
   .isx-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

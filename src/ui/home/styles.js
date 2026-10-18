@@ -300,41 +300,6 @@ export const HOME_CSS = `
         /* Popovers grow from the control that opened them, rather than sliding
            in from the right the way the docked panel does. */
         @keyframes sthPopIn { from { opacity: 0; transform: translateY(-4px) scale(0.97); } to { opacity: 1; transform: none; } }
-        /* Chevron nudge: two peeks out from behind the bar, then a rest.
-           Continuous motion turns into jitter you learn to ignore; the pause
-           is what makes it read as a gesture being repeated. Runs on transform
-           so it composites off the main thread and cannot fight the
-           left transition the button already uses for its resting position. */
-        /* Hint exit: wind up left, then run right and in behind the tab.
-           The backswing is anticipation — a move that starts by going the wrong
-           way reads as gathering itself, and it makes the launch feel driven
-           rather than merely fast. Travel comes in on --suck-x so the distance
-           stays derived in JS instead of hard-coded here.
-           Opacity carries a midpoint at 70%: left to the accelerating curve it
-           would sit at full brightness and then blink off near the end, which
-           is the thing that looked wrong before. */
-        @keyframes sthHintSuck {
-          0%   { transform: translateX(0) scale(1); opacity: 1;
-                 animation-timing-function: cubic-bezier(0.25, 0, 0.25, 1); }
-          24%  { transform: translateX(-15px) scale(1); opacity: 1;
-                 animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.4); }
-          70%  { opacity: 0.34; }
-          100% { transform: translateX(var(--suck-x, 104px)) scale(0.92); opacity: 0; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          @keyframes sthHintSuck { 0% { opacity: 1; } 100% { opacity: 0; } }
-        }
-        @keyframes sthChevNudge {
-          0%   { transform: translateX(0); }
-          9%   { transform: translateX(-6px); }
-          19%  { transform: translateX(0); }
-          28%  { transform: translateX(-6px); }
-          38%  { transform: translateX(0); }
-          100% { transform: translateX(0); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          @keyframes sthChevNudge { 0%, 100% { transform: translateX(0); } }
-        }
         @keyframes sthBarIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
         .sth-npbar-play { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: none; cursor: pointer; flex-shrink: 0; transition: filter 0.14s ease, transform 0.1s ease; }
         .sth-npbar-play:hover { filter: brightness(1.1); }

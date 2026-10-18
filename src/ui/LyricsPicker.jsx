@@ -197,7 +197,7 @@ export function LyricsPickerButton({
           <div style={{
             position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 201,
             width: 'min(520px, 90vw)', maxHeight: '75vh',
-            background: 'rgba(18,18,20,0.62)',
+            background: 'var(--st-dark-float, rgba(18,18,20,0.62))',
             backdropFilter: 'blur(30px) saturate(1.6)',
             WebkitBackdropFilter: 'blur(30px) saturate(1.6)',
             border: '1px solid rgba(255,255,255,0.1)',

@@ -8,6 +8,49 @@
 
 export const CHANGELOG = [
   {
+    version: '0.0.9',
+    date: '2026-10-18',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Record Colors', text: 'Studio colors the Now Playing bar, side panel and library pages to match the cover of the song playing. Now you can choose that color yourself, one record at a time.', sub: [
+            'Hover the song in the Now Playing bar to see six colors from its cover.',
+            'Pick one or choose any color you like with the color wheel.',
+            'Your pick is saved for that record and used every time it plays.',
+            'Auto goes back to the color Studio picks.',
+            'Also in the bar’s … menu. Turn off the hover in Settings → Color.',
+          ] },
+          { lead: 'Keyboard Shortcuts', text: 'Control playback and the Now Playing bar from your keyboard.', sub: [
+            'Press ? to see every shortcut.',
+            'Also in Settings → System and next to each item in the … menu.',
+          ] },
+          { lead: 'Clear Queue', text: 'Empty everything up next in one click from the queue panel. Undo puts the songs back.' },
+          { lead: 'Favorites', text: 'Hearting a song plays a little burst of hearts.' },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Settings', text: 'Clearer and shorter descriptions. Immerse now sits below Dark mode.' },
+          { lead: 'Search', text: 'A cleaner start screen. Songs now show up once instead of once per release. Recent searches are hidden for now and will return in a later update.' },
+          { lead: 'Dark Mode', text: 'Search, menus and windows now use the same color as the rest of the app.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed local songs skipping to the next song partway through.',
+          'Fixed library page colors not matching the Now Playing bar.',
+          'Fixed some covers turning the app gray.',
+          'Fixed Auto picking yellow, gray or skin tones over a cover’s real color.',
+          'Fixed search showing a song from a compilation instead of the artist’s own release.',
+          'Fixed the side panel showing two shades when set to Match bar.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.8',
     date: '2026-10-17',
     sections: [

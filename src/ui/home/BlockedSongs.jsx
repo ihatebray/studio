@@ -23,7 +23,7 @@ const CSS = `
   background: rgba(4,4,6,0.78); animation: stblIn .18s ease both; }
 @keyframes stblIn { from { opacity: 0; } }
 .stbl { width: min(560px, 100%); max-height: min(80vh, 660px); display: flex; flex-direction: column; overflow: hidden;
-  border-radius: 16px; background: rgb(16,16,19); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 24px 70px rgba(0,0,0,0.6); }
+  border-radius: 16px; background: var(--st-dark-float, rgb(16,16,19)); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 24px 70px rgba(0,0,0,0.6); }
 .stbl-head { display: flex; align-items: center; gap: 10px; padding: 18px 18px 14px 22px; }
 .stbl-head b { font-size: 16px; font-weight: 800; color: #fff; }
 .stbl-head span { font-size: 12.5px; color: rgba(255,255,255,0.45); }

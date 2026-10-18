@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { HeartBurst, heartAnim, useFavBurst } from './HeartBurst.jsx';
 import { createPortal } from 'react-dom';
 import { api, titleCase } from '../../lib/format.js';
 import { formatTime, formatTotalMs } from '../../lib/mediaUtils.js';
@@ -811,13 +812,7 @@ export default function RecordPage({
   );
 
   const heart = (t) => (onToggleFavorite ? (
-    <button type="button" className="sth-lrow-more" onClick={() => onToggleFavorite(t.id)}
-      title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-      style={{ opacity: t.isFavorite ? 1 : undefined, color: t.isFavorite ? `rgb(${accUI})` : undefined }}>
-      <svg width="15" height="15" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
-      </svg>
-    </button>
+    <RowHeart key={`fav:${t.id}`} track={t} color={accUI} onToggle={onToggleFavorite} />
   ) : null);
   const removeBtn = (t) => (!isAlbum && onRemoveFromPlaylist ? (
     <button type="button" className="sth-lrow-more" onClick={() => onRemoveFromPlaylist(libDetailKey, t.id)} title="Remove from playlist">
@@ -1270,6 +1265,23 @@ const LAYOUT_NOTES = {
   twin: 'The cover, title and two even buttons, Play and Shuffle, all centered.',
   overlap: 'One solid color, with the cover, title and songs centered.',
 };
+
+/** A row's heart, with the favorite animation (HeartBurst.jsx). Its own
+ *  component so it can remember the last state and play on the change. */
+function RowHeart({ track: t, color, onToggle }) {
+  const burst = useFavBurst(t.id, t.isFavorite);
+  return (
+    <button type="button" className="sth-lrow-more" onClick={() => onToggle(t.id)}
+      title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+      style={{ position: 'relative', overflow: 'visible', opacity: t.isFavorite ? 1 : undefined, color: t.isFavorite ? `rgb(${color})` : undefined }}>
+      <svg key={burst.key} className={heartAnim(burst)} width="15" height="15" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
+      </svg>
+      <HeartBurst burst={burst} radius={20} />
+    </button>
+  );
+}
+
 const layoutName = (id) => titleCase((RECORD_LAYOUTS.find(([x]) => x === id) || [id, id])[1]);
 const familyOf = (id) => (LAYOUT_FAMILIES.find(([, ids]) => ids.includes(id)) || ['Header'])[0];
 

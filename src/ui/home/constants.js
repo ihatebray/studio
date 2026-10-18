@@ -123,6 +123,7 @@ export const THEME_DEFAULTS = {
   panelSurface: 'cover',    // 'black' | 'colour' | 'cover' | 'bar'
   panelColour: '32, 36, 47',
   barSurface: 'colour',     // 'colour' | 'cover'
+  colourStripHover: true,   // hovering the song in the Now Playing bar opens the color strip
 };
 
 /* Dark mode's surfaces. `page` is the app's own card colour (accentTokens

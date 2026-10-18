@@ -105,6 +105,7 @@ export default function StudioShell({
   onReorderQueue,       // (from, to) — moving a song in the queue
   onReorderPlaylist,    // (playlistId, trackIds) — a playlist's songs in a new order
   onRemoveFromQueue,    // (index)
+  onClearQueue,         // () → the songs taken out
   // Command-center data
   playEvents = [],
   onResetStats,
@@ -363,6 +364,7 @@ export default function StudioShell({
         queueIndex={queueIndex}
         onReorderQueue={onReorderQueue}
         onRemoveFromQueue={onRemoveFromQueue}
+        onClearQueue={onClearQueue}
         albumCoverOverrides={albumCoverOverrides}
         currentTrack={currentTrack}
         isPlaying={isPlaying}

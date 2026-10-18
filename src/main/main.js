@@ -295,8 +295,6 @@ const MIME_TYPES = {
   '.wma': 'audio/x-ms-wma', '.opus': 'audio/opus', '.webm': 'audio/webm',
 };
 
-const MEDIA_CHUNK = 4 * 1024 * 1024;
-
 async function handleStudioMediaRequest(request) {
   await ensureLibraryOpen();
 
@@ -347,15 +345,15 @@ async function handleStudioMediaRequest(request) {
     const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
     if (match) {
       const start = parseInt(match[1], 10);
-      /* At most MEDIA_CHUNK per answer. The player opens with "bytes=0-",
-         which used to read the whole file (tens of MB for a FLAC) before a
-         single byte went back; it now starts on the first piece and asks for
-         the next as it plays, which Chromium does for any partial answer. */
+      /* The whole range asked for. Answering a shorter piece than asked
+         plays fine in a browser, but through this custom scheme Electron's
+         player took the short answer for the end of the file and moved on to
+         the next song partway through. */
       if (!(start >= 0) || start >= fileSize) {
         return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${fileSize}` } });
       }
       const asked = match[2] ? parseInt(match[2], 10) : fileSize - 1;
-      const end = Math.min(asked, fileSize - 1, start + MEDIA_CHUNK - 1);
+      const end = Math.min(asked, fileSize - 1);
       const chunkSize = end - start + 1;
 
       const buf = Buffer.alloc(chunkSize);

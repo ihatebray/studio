@@ -368,7 +368,9 @@ export async function colorFilePath(url) {
     const failedAt = colorFetchFailed.get(file) || 0;
     if (Date.now() - failedAt > 10 * 60 * 1000) {
       try {
-        const res = await net.fetch(canon);
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 8000); // a stalled download falls back instead of holding the read
+        const res = await net.fetch(canon, { signal: ctl.signal }).finally(() => clearTimeout(timer));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = Buffer.from(await res.arrayBuffer());
         if (!buf.length) throw new Error('empty');

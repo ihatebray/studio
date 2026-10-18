@@ -311,7 +311,7 @@ function LibImportMenu({ open, onOpen, importing, onImportFiles, onImportFolder,
           <div role="menu" style={{
             position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 41,
             minWidth: 196, padding: 5, borderRadius: 11,
-            background: 'rgb(18, 18, 21)',
+            background: 'var(--st-dark-float, rgb(18, 18, 21))',
             border: '1px solid rgba(var(--st-fg-rgb), 0.1)',
             boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
           }}>

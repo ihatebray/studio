@@ -12,6 +12,7 @@ import { SetHowTo, SetLit, SetRow, SetSeg, SetToggle, SpotifyAccountPanel, Studi
 import { checkForUpdate, installUpdate, useUpdate } from '../updates.js';
 import Changelog from '../Changelog.jsx';
 import { BlockedSongsControl, BlockedSongsManager, countText as blockedCount } from './BlockedSongs.jsx';
+import { openShortcuts } from './Shortcuts.jsx';
 
 export default function SettingsPage({
   onPreviewLinkCard,
@@ -80,12 +81,12 @@ export default function SettingsPage({
      Old stored categories map onto it. */
   const cat = setCat === 'playback' ? 'system' : setCat === 'discord' ? 'connections' : setCat;
   const CATS = {
-    colour: ['Color', 'Dark mode, your accent, and which surfaces take their color from the artwork.'],
-    font: ['Font', 'The typeface for the whole app. Rounded faces only; add your own under My fonts.'],
+    colour: ['Color', 'Dark mode, Immerse, your accent and the colors behind each part of the app.'],
+    font: ['Font', 'The font used across the app. Add your own under My Fonts.'],
     layout: ['Layout', 'How pages, lists and the window are arranged.'],
-    library: ['Library', 'Following artists, Spotify links, and managing the library itself.'],
-    system: ['System', 'Updates and playback behavior.'],
-    connections: ['Connections', 'Services Studio uses for search, metadata and downloads, and Discord.'],
+    library: ['Library', 'Following artists, Spotify links and managing your library.'],
+    system: ['System', 'Updates and playback.'],
+    connections: ['Connections', 'The accounts and services Studio connects to.'],
   };
   const indicator = useIndicatorStyle();
   const [tourStep, setTourStep] = useState(0);
@@ -104,7 +105,7 @@ export default function SettingsPage({
   const off = { opacity: 0.4, pointerEvents: 'none' };
   const darkDim = dark ? off : undefined;
   const dim = npAnimatedBg || dark ? off : undefined;
-  const darkNote = 'Dark mode is on. Turn it off to use this.';
+  const darkNote = 'Turn off Dark mode to use this.';
   const ACCENT_SWATCHES = [['255, 122, 89', 'Coral'], ['120, 170, 255', 'Blue'], ['123, 224, 176', 'Mint'], ['214, 150, 255', 'Violet']];
   /* Each tour step starts at the top of its page, where the card is. */
   const bodyRef = React.useRef(null);
@@ -135,10 +136,13 @@ export default function SettingsPage({
 
         {cat === 'colour' ? (
           <div className="sth-set-list">
-            <SetRow title="Dark mode" note="A ready-made dark look for every page, the Now Playing bar and the side panel. Covers and artist photos still show; the colors around them don't. Your accent still applies, and the settings below are kept for when you turn it off." wide={false}>
+            <SetRow title="Dark mode" wide={false}>
               <SetToggle label="Dark mode" on={dark} onToggle={() => setThemeKey('darkMode', !dark)} />
             </SetRow>
-            <SetRow title="Accent" note="The color used for buttons, toggles, the scrubber and focus rings. White is the default and reads on every surface; Follow artwork matches it to whatever is playing; Fixed pins one color of your choosing.">
+            <SetRow title="Immerse" note={dark ? darkNote : 'A slow moving gradient from the cover behind the Now Playing bar, side panel and library pages. Replaces the background settings below while on.'} wide={false}>
+              <span style={{ display: 'contents', ...darkDim }}><SetToggle label="Immerse" on={npAnimatedBg && !dark} onToggle={toggleNpAnimatedBg} /></span>
+            </SetRow>
+            <SetRow title="Accent" note="The color of buttons, toggles and the progress bar. Follow Artwork matches the song playing. Fixed uses a color you pick.">
               <SetSeg label="Accent" value={accentMode} onPick={pickAccentMode}
                 options={[['white', 'White'], ['artwork', 'Follow artwork'], ['fixed', 'Fixed']]} />
               {accentMode === 'fixed' ? (
@@ -152,10 +156,7 @@ export default function SettingsPage({
                 </span>
               ) : null}
             </SetRow>
-            <SetRow title="Immerse" note={dark ? darkNote : 'A slow gradient made from the artwork, flowing behind the Now Playing bar, the side panel and the Songs, Albums and Artists pages as one piece. It eases off while paused. Overrides the bar, panel and library page settings below.'} wide={false}>
-              <span style={{ display: 'contents', ...darkDim }}><SetToggle label="Immerse" on={npAnimatedBg && !dark} onToggle={toggleNpAnimatedBg} /></span>
-            </SetRow>
-            <SetRow title="Now Playing bar" note={dark ? darkNote : npAnimatedBg ? 'Immerse is showing the artwork here.' : 'Background for the bar along the bottom. Cover Art follows whatever is playing; Color stays fixed.'}>
+            <SetRow title="Now Playing bar" note={dark ? darkNote : npAnimatedBg ? 'Turn off Immerse to use this.' : 'The bar along the bottom. Cover Art takes its color from the song playing. Color stays the same.'}>
               <span style={{ display: 'contents', ...dim }}>
                 <SetSeg label="Now Playing bar" value={theme.barSurface} onPick={(v) => setThemeKey('barSurface', v)}
                   options={[['colour', 'Color'], ['cover', 'Cover art']]} />
@@ -165,7 +166,12 @@ export default function SettingsPage({
                   onChange={pickNpBarColor} onReset={() => pickNpBarColor(NP_BAR_DEFAULT)} /></span>
               ) : null}
             </SetRow>
-            <SetRow title="Side panel" note={dark ? darkNote : npAnimatedBg ? 'Immerse is showing the artwork here.' : 'Background for the Queue, Lyrics and Info panel. Match Bar reuses the Now Playing bar surface so the two read as one piece.'}>
+            <SetRow title="Color strip on hover" note={dark ? darkNote : 'Hover the song in the Now Playing bar to pick a color for the record. It’s always in the bar’s … menu too.'} wide={false}>
+              <span style={{ display: 'contents', ...darkDim }}>
+                <SetToggle label="Color strip on hover" on={theme.colourStripHover !== false} onToggle={() => setThemeKey('colourStripHover', theme.colourStripHover === false)} />
+              </span>
+            </SetRow>
+            <SetRow title="Side panel" note={dark ? darkNote : npAnimatedBg ? 'Turn off Immerse to use this.' : 'The Queue, Lyrics and Info panel. Match Bar uses the same background as the Now Playing bar.'}>
               <span style={{ display: 'contents', ...dim }}>
                 <SetSeg label="Side panel" value={theme.panelSurface} onPick={(v) => setThemeKey('panelSurface', v)}
                   options={[['black', 'Black'], ['colour', 'Color'], ['cover', 'Cover art'], ['bar', 'Match bar']]} />
@@ -176,7 +182,7 @@ export default function SettingsPage({
                   onReset={() => setThemeKey('panelColour', THEME_DEFAULTS.panelColour)} /></span>
               ) : null}
             </SetRow>
-            <SetRow title="Library pages" note={dark ? darkNote : 'Background for Songs, Albums and Artists. Cover Art tints the top of the list; Full Color carries it all the way down.'}>
+            <SetRow title="Library pages" note={dark ? darkNote : 'Songs, Albums and Artists. Cover Art tints the top of the page. Full Color fills the whole page.'}>
               <span style={{ display: 'contents', ...darkDim }}>
                 <SetSeg label="Library pages" value={theme.pageSurface} onPick={(v) => setThemeKey('pageSurface', v)}
                   options={[['off', 'Off'], ['colour', 'Color'], ['cover', 'Cover art'], ['coverFull', 'Full color']]} />
@@ -187,7 +193,7 @@ export default function SettingsPage({
                   onReset={() => setThemeKey('pageColour', THEME_DEFAULTS.pageColour)} /></span>
               ) : null}
             </SetRow>
-            <SetRow title="Album and playlist pages" note={dark ? darkNote : 'Where album, playlist and artist pages take their background. Cover Art follows each one; Fixed uses one color for all of them.'}>
+            <SetRow title="Album and playlist pages" note={dark ? darkNote : 'Album, playlist and artist pages. Cover Art follows each page’s cover. Fixed uses one color for all of them.'}>
               <span style={{ display: 'contents', ...darkDim }}>
                 <SetSeg label="Album and playlist pages" value={theme.detailMode} onPick={(v) => setThemeKey('detailMode', v)}
                   options={[['cover', 'Cover art'], ['fixed', 'Fixed']]} />
@@ -206,64 +212,64 @@ export default function SettingsPage({
           <>
             <div className="st-eyebrow sth-set-subhead">Pages</div>
             <div className="sth-set-list">
-              <SetRow title="Home page" note="Show or hide My Spotify's Home. Hidden, it leaves the sidebar, Studio opens on New Releases, and album countdowns show at the top of New Releases instead.">
+              <SetRow title="Home page" note="Show or hide My Spotify’s Home page. Hiding it opens Studio on New Releases and moves album countdowns there.">
                 <SetSeg label="Home page" value={theme.showHome === false ? 'hide' : 'show'} onPick={(v) => setThemeKey('showHome', v === 'show')}
                   options={[['show', 'Show'], ['hide', 'Hide']]} />
               </SetRow>
-              <SetRow title="Album layout" note={theme.playlistLayout ? 'How album pages are arranged.' : 'How album and playlist pages are arranged.'}>
+              <SetRow title="Album layout" note={theme.playlistLayout ? 'How album pages are laid out.' : 'How album and playlist pages are laid out.'}>
                 <LayoutChoice title={theme.playlistLayout ? 'Album layout' : 'Album and playlist layout'} value={recordLayoutOf(theme.recordLayout)} onPick={(v) => setThemeKey('recordLayout', v)} />
               </SetRow>
-              <SetRow title="Separate playlist layout" note={theme.playlistLayout ? 'Playlists have a layout of their own.' : 'Off, playlists use the album layout.'} wide={false}>
+              <SetRow title="Separate playlist layout" note={theme.playlistLayout ? 'Playlists use their own layout.' : 'Playlists use the album layout.'} wide={false}>
                 <SetToggle label="Separate playlist layout" on={!!theme.playlistLayout}
                   onToggle={() => setThemeKey('playlistLayout', theme.playlistLayout ? null : recordLayoutOf(theme.recordLayout))} />
               </SetRow>
               {theme.playlistLayout ? (
-                <SetRow title="Playlist layout" note="How playlist pages are arranged.">
+                <SetRow title="Playlist layout" note="How playlist pages are laid out.">
                   <LayoutChoice title="Playlist layout" value={recordLayoutOf(theme.playlistLayout)} onPick={(v) => setThemeKey('playlistLayout', v)} />
                 </SetRow>
               ) : null}
-              <SetRow title="Album songs" note="Album pages show the songs you own, or the whole album from Spotify with the ones you don't have dimmed, ready to play or save.">
+              <SetRow title="Album songs" note="Show only the songs you own or the whole album from Spotify. Songs you don’t have are dimmed and can still be played or saved.">
                 <SetSeg label="Album songs" value={theme.albumSongs === 'full' ? 'full' : 'owned'} onPick={(v) => setThemeKey('albumSongs', v)}
                   options={[['owned', 'Songs you own'], ['full', 'Whole album']]} />
               </SetRow>
             </div>
             <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Lists</div>
             <div className="sth-set-list">
-              <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits about half again as many rows on screen.">
+              <SetRow title="List density" note="Row height in Songs, albums and playlists. Compact fits more rows on screen.">
                 <SetSeg label="List density" value={listDensity} onPick={pickListDensity}
                   options={[['compact', 'Compact'], ['default', 'Default'], ['roomy', 'Roomy']]} />
               </SetRow>
-              <SetRow title="Playing indicator" note="What marks the song that's playing, in every list: library, albums and playlists, My Spotify, artist pages, search and the queue. It holds still when paused.">
+              <SetRow title="Playing indicator" note="What marks the song playing in every list. It holds still while paused.">
                 <SetSeg label="Playing indicator" value={indicator} onPick={setIndicatorStyle}
                   options={INDICATOR_STYLES.map(([id, name]) => [id, name, <PlayingBars key={id} kind={id} playing={indicator === id} />])} />
               </SetRow>
-              <SetRow title="Date added column" note="Shows when each track joined your library. Hiding it gives the space to Title, Artist and Album." wide={false}>
+              <SetRow title="Date added column" note="Shows when each song was added to your library." wide={false}>
                 <SetToggle label="Date added column" on={showDateAdded} onToggle={toggleDateAdded} />
               </SetRow>
-              <SetRow title="Play counts in lists" note="Adds a plays column to album and artist pages. Plays are counted either way." wide={false}>
+              <SetRow title="Play counts in lists" note="Adds a Plays column to album and artist pages. Plays are counted either way." wide={false}>
                 <SetToggle label="Play counts in lists" on={showPlayCounts} onToggle={toggleShowPlayCounts} />
               </SetRow>
             </div>
             <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Window</div>
             <div className="sth-set-list">
-              <SetRow title="Window layout" note="Compact gives the whole window to the page you're on, with the Now Playing bar full width underneath. Touch the top or left edge to bring back the top bar or the library. Ctrl+Shift+C switches.">
+              <SetRow title="Window layout" note="Compact gives the whole window to the page you’re on. Move to the top or left edge to bring back the top bar or library. Switch with Ctrl+Shift+C.">
                 <SetSeg label="Window layout" value={compactMode ? 'compact' : 'standard'} onPick={(v) => pickCompactMode(v === 'compact')}
                   options={[['standard', 'Standard'], ['compact', 'Compact']]} />
               </SetRow>
-              <SetRow title="Active tab marker" note="How the sidebar shows which library tab you are on.">
+              <SetRow title="Active tab marker" note="How the sidebar shows which tab you’re on.">
                 <SetSeg label="Active tab marker" value={navStyle === 'glow' ? 'chip' : navStyle} onPick={setNavStylePref}
                   options={[['chip', 'Chip'], ['bar', 'Bar'], ['underline', 'Underline'], ['dot', 'Dot']]} />
               </SetRow>
-              <SetRow title="Notifications" note="Where notifications appear. Own lane makes room for them so they never cover anything; the player bar option shows them over the song info for a moment. Hover a notification to hold it.">
+              <SetRow title="Notifications" note="Where notifications appear. Own Lane makes room so they never cover anything. Hover one to keep it open.">
                 <ToastPositionPicker />
               </SetRow>
             </div>
             <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Compact mode</div>
             <div className="sth-set-list">
-              <SetRow title="Compact bar visualizer" note="Fills the empty middle of the library bar in compact mode. Follows local files and Saved Spotify songs alike, and stays still when paused or when reduced motion is on.">
+              <SetRow title="Compact bar visualizer" note="Fills the middle of the bar in compact mode. Holds still while paused.">
                 <CompactVizPicker value={compactViz} onPick={pickCompactViz} palette={npWashTheme?.palette} accent={rawAccent} coverColours={compactVizCover} />
               </SetRow>
-              <SetRow title="Visualizer colors from the cover" note="On, the visualizer takes its colors from the album playing. Off, it's drawn in white, whatever the album." wide={false}>
+              <SetRow title="Visualizer colors from the cover" note="Uses the colors of the album playing. Turn it off to draw it in white." wide={false}>
                 <SetToggle label="Visualizer colors from the cover" on={compactVizCover} onToggle={toggleCompactVizCover} />
               </SetRow>
             </div>
@@ -273,16 +279,16 @@ export default function SettingsPage({
         {cat === 'library' ? (
           <>
             <div className="sth-set-list">
-              <SetRow title="Auto-follow artists" note="Follows an artist in Studio once you have more than 5 of their songs, so their new releases and countdowns show up. It checks every time songs are added, imports included. Artists are looked up on Spotify one at a time so your account doesn’t get rate-limited, which means a big import can take a few minutes to finish following. Unfollowing an artist stops it for them.">
+              <SetRow title="Auto-follow artists" note="Follows an artist once you have more than 5 of their songs so their new releases and countdowns show up. Big imports can take a few minutes to finish. Unfollow an artist to stop it for them.">
                 <SetSeg label="Auto-follow artists" value={theme.autoFollow === false ? 'off' : 'on'} onPick={(v) => setThemeKey('autoFollow', v === 'on')}
                   options={[['on', 'On'], ['off', 'Off']]} />
               </SetRow>
-              <SetRow title="Spotify links" note="When you copy a Spotify link in another app, Studio offers to open it: songs play, albums and playlists open here, artists open their page. Only Spotify links are noticed, nothing else you copy. Pressing Ctrl+V in Studio, or pasting a link into search, opens it either way.">
+              <SetRow title="Spotify links" note="Studio offers to open Spotify links you copy in other apps. Pasting one with Ctrl+V in Studio opens it either way.">
                 <SetSeg label="Spotify links" value={theme.linkWatch === false ? 'off' : 'on'} onPick={(v) => setThemeKey('linkWatch', v === 'on')}
                   options={[['on', 'On'], ['off', 'Off']]} />
               </SetRow>
               {theme.linkWatch !== false ? (
-                <SetRow title="Link card" note="How a copied Spotify link shows up. Slim, Strip and Capsule are one row with the cover, title and artist; Large adds the album, year and length. Picking one shows you what it looks like.">
+                <SetRow title="Link card" note="How a copied link shows up. Large adds the album, year and length. Pick one to preview it.">
                   <SetSeg label="Link card" value={theme.linkCard || 'slim'} onPick={(v) => { setThemeKey('linkCard', v); onPreviewLinkCard?.(v); }}
                     options={[['slim', 'Slim'], ['strip', 'Strip'], ['capsule', 'Capsule'], ['large', 'Large']]} />
                 </SetRow>
@@ -295,7 +301,7 @@ export default function SettingsPage({
                   <div className="sth-danger">
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <b>Clear Library</b>
-                      <p>Removes every track, playlist and album note from studio. Your listening history is kept, so re-importing a song brings its play count back.</p>
+                      <p>Removes every song, playlist and album note. Your listening history is kept so re-importing a song brings back its play count.</p>
                     </div>
                     <button type="button" className="st-btn st-btn-danger" disabled={clearing} onClick={() => setClearConfirm({ deleteFiles: false })}>
                       {clearing ? 'Clearing…' : 'Clear Library'}
@@ -306,7 +312,7 @@ export default function SettingsPage({
                   <div className="sth-danger">
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <b>Delete Everything</b>
-                      <p>Wipes the library, playlists, album notes and all listening history, then returns studio to its first-run setup screen.</p>
+                      <p>Removes everything including your listening history and starts setup again.</p>
                     </div>
                     <button type="button" className="st-btn st-btn-danger" disabled={clearingAll} onClick={() => setClearAllConfirm({ deleteFiles: false })}>
                       {clearingAll ? 'Deleting…' : 'Delete Everything'}
@@ -321,11 +327,11 @@ export default function SettingsPage({
         {cat === 'system' ? (
           <>
             <div className="st-eyebrow sth-set-subhead">Updates</div>
-            <div className="sth-set-list"><UpdatesRow /><ChangelogRow /></div>
+            <div className="sth-set-list"><UpdatesRow /><ChangelogRow /><ShortcutsRow /></div>
             <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Playback</div>
             <div className="sth-set-list">
               {onSetTransitionMode ? (
-                <SetRow title="Gapless playback" note="Removes the silence between tracks. Best on live albums and continuous mixes." wide={false}>
+                <SetRow title="Gapless playback" note="Removes the silence between songs. Great for live albums and mixes." wide={false}>
                   <SetToggle label="Gapless playback" on={transitionMode === 'gapless'}
                     onToggle={() => onSetTransitionMode(transitionMode === 'gapless' ? 'none' : 'gapless')} />
                 </SetRow>
@@ -343,7 +349,7 @@ export default function SettingsPage({
               <div className="sth-conn-head">
                 <div>
                   <h2>Spotify Developer Keys <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
-                  <p>A backup for search and song details when your Spotify sign-in is busy or rate-limited. Any free developer app works.</p>
+                  <p>A backup for search and song details when your Spotify sign-in is busy. Any free developer app works.</p>
                 </div>
                 {connState.spotify != null ? (
                   <span className={`st-status ${connState.spotify ? 'ok' : 'off'}`}>{connState.spotify ? 'Saved' : 'Not set'}</span>
@@ -355,8 +361,8 @@ export default function SettingsPage({
             <section className="sth-conn">
               <div className="sth-conn-head">
                 <div>
-                  <h2>Soulseek</h2>
-                  <p>Optional. A second download source, usually higher quality. Pick any username; the account is made on first login.</p>
+                  <h2>Soulseek <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
+                  <p>A second download source, often higher quality. Pick any username and the account is made on first login.</p>
                 </div>
                 {connState.soulseek != null ? (
                   <span className={`st-status ${connState.soulseek ? 'ok' : 'off'}`}>{connState.soulseek ? 'Connected' : 'Not connected'}</span>
@@ -369,7 +375,7 @@ export default function SettingsPage({
                 <div className="sth-conn-head">
                   <div>
                     <h2>Discord <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
-                    <p>Shows the song you’re playing on your Discord profile, with its cover. Needs the Discord desktop app.</p>
+                    <p>Shows the song you’re playing and its cover on your Discord profile. Needs the Discord desktop app.</p>
                   </div>
                   <span className={`st-status ${discordPresenceEnabled && discordStatus?.connected ? 'ok' : 'off'}`}>
                     {!discordPresenceEnabled ? 'Off' : discordStatus?.connected ? 'Connected' : 'Waiting for Discord'}
@@ -378,25 +384,25 @@ export default function SettingsPage({
                 <div className="sth-set-list">
                   <SetRow title="Rich presence" wide={false}
                     note={discordPresenceEnabled
-                      ? (discordStatus?.unavailable ? 'Enabled, but this build is missing the Discord module.'
-                        : discordStatus?.connected ? 'Connected. Your profile shows what Studio is playing.'
+                      ? (discordStatus?.unavailable ? 'This build is missing the Discord module.'
+                        : discordStatus?.connected ? 'Connected. Your profile shows what you’re playing.'
                           : 'Waiting for the Discord desktop app.')
-                      : 'Show the playing track on your Discord profile. Requires the Discord desktop app.'}>
+                      : 'Show the song playing on your Discord profile.'}>
                     <SetToggle label="Rich presence" on={discordPresenceEnabled} onToggle={() => onSetDiscordPresenceEnabled(!discordPresenceEnabled)} />
                   </SetRow>
                   {onSetDiscordHideWhenPaused ? (
-                    <SetRow title="Hide when paused" note="Clears your Discord status while playback is stopped." wide={false}>
+                    <SetRow title="Hide when paused" note="Clears your Discord status while paused." wide={false}>
                       <SetToggle label="Hide when paused" on={discordHideWhenPaused} onToggle={() => onSetDiscordHideWhenPaused(!discordHideWhenPaused)} />
                     </SetRow>
                   ) : null}
                   {discordPresenceEnabled && onSetDiscordPresenceDetail ? (
-                    <SetRow title="Show on your profile" note="The album still appears when you hover the cover art on Discord either way.">
+                    <SetRow title="Show on your profile" note="The album still shows when someone hovers the cover.">
                       <SetSeg label="Show on your profile" value={discordPresenceDetail} onPick={setDiscordPresenceDetailSafely}
                         options={[['full', 'Title, artist, album'], ['basic', 'Title, artist']]} />
                     </SetRow>
                   ) : null}
                   {discordPresenceEnabled ? (
-                    <SetRow title="Application ID" note="Your own Discord application. Studio doesn’t come with one, so nothing shows on Discord until this is set. Its name is what your profile shows.">
+                    <SetRow title="Application ID" note="Needed for anything to show on Discord. Your profile shows the application’s name.">
                       <input className="st-input" placeholder="e.g. 1123581321345589144" value={discordAppId}
                         onChange={(e) => onSetDiscordAppId?.(e.target.value)} spellCheck={false} aria-label="Discord application ID" />
                       <span className="sth-set-sub">
@@ -411,7 +417,7 @@ export default function SettingsPage({
                     </SetRow>
                   ) : null}
                   {discordPresenceEnabled ? (
-                    <SetRow title="imgbb API key" note="Optional. Lets custom local cover art appear on Discord by uploading it once to imgbb.">
+                    <SetRow title="imgbb API key" note="Optional. Lets your own cover art show on Discord.">
                       <input className="st-input" placeholder="From api.imgbb.com" value={imgbbApiKey}
                         onChange={(e) => onSetImgbbApiKey?.(e.target.value)} spellCheck={false} aria-label="imgbb API key" />
                       <span className="sth-set-sub">
@@ -419,7 +425,7 @@ export default function SettingsPage({
                           <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.85 }}>
                             <li>Open{' '}<button type="button" className="sth-set-link" onClick={() => api()?.openExternal?.('https://api.imgbb.com')}>api.imgbb.com</button>{' '}and sign in. It’s free.</li>
                             <li>Click <SetLit>Get API key</SetLit> and copy the key.</li>
-                            <li>Paste it here. Studio uploads each cover once, the first time Discord needs it.</li>
+                            <li>Paste it here. Each cover is uploaded once.</li>
                           </ol>
                         </SetHowTo>
                       </span>
@@ -435,7 +441,7 @@ export default function SettingsPage({
               <div className="sth-conn-head">
                 <div>
                   <h2>Twitch <span style={{ fontWeight: 600, color: 'var(--text-faint)', fontSize: '0.8em' }}>· Optional</span></h2>
-                  <p>Streamer Mode: viewers request songs in your chat with <SetLit>!sr</SetLit> and a song name or a Spotify link. Requests line up first come, first served after the song that's playing. Studio only reads your chat; it never posts or signs in.</p>
+                  <p>Viewers request songs in your chat with <SetLit>!sr</SetLit> and a song name or Spotify link. Requests play in the order they come in. Studio only reads your chat and never posts.</p>
                 </div>
                 <span className={`st-status ${twitchStatus === 'listening' ? 'ok' : 'off'}`}>
                   {!theme.streamerMode ? 'Off'
@@ -448,11 +454,11 @@ export default function SettingsPage({
               <div className="sth-set-list">
                 <SetRow title="Streamer Mode" wide={false}
                   note={theme.streamerMode
-                    ? (twitchStatus === 'listening' ? `Listening to twitch.tv/${String(theme.twitchChannel || '').trim().replace(/^#/, '')}. Requests show up as a card, like a copied link.` : 'Add your channel below to start listening.')
+                    ? (twitchStatus === 'listening' ? `Listening to twitch.tv/${String(theme.twitchChannel || '').trim().replace(/^#/, '')}. Requests show up as a card.` : 'Add your channel below to start listening.')
                     : 'Take song requests from your Twitch chat.'}>
                   <SetToggle label="Streamer Mode" on={!!theme.streamerMode} onToggle={() => setThemeKey('streamerMode', !theme.streamerMode)} />
                 </SetRow>
-                <SetRow title="Channel" note="Your Twitch channel name, as in twitch.tv/name.">
+                <SetRow title="Channel" note="Your channel name from twitch.tv/name.">
                   <input className="st-input" placeholder="e.g. yourname" value={theme.twitchChannel || ''}
                     onChange={(e) => setThemeKey('twitchChannel', e.target.value)} spellCheck={false} aria-label="Twitch channel" />
                 </SetRow>
@@ -483,7 +489,7 @@ export default function SettingsPage({
               <section className="sth-conn" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <h2>Run Setup Again</h2>
-                  <p style={{ marginBottom: 0 }}>Replays the first-launch walkthrough. Your credentials and library are not touched.</p>
+                  <p style={{ marginBottom: 0 }}>Goes through first-launch setup again. Your accounts and library stay as they are.</p>
                 </div>
                 <button type="button" className="st-btn st-btn-outline" onClick={onReplayOnboarding}>Replay Setup</button>
               </section>
@@ -505,9 +511,18 @@ function ChangelogRow() {
   const [open, setOpen] = useState(false);
   const { status: s } = useUpdate();
   return (
-    <SetRow title="Changelog" note="What's new in each version of Studio." wide={false}>
+    <SetRow title="Changelog" note="What’s new in each version." wide={false}>
       <button type="button" className="st-btn st-btn-outline" onClick={() => setOpen(true)}>View changelog</button>
       {open ? <Changelog current={s.current} onClose={() => setOpen(false)} /> : null}
+    </SetRow>
+  );
+}
+
+/** Settings → System: every keyboard shortcut. */
+function ShortcutsRow() {
+  return (
+    <SetRow title="Keyboard shortcuts" note="Every shortcut in one place. Press ? to open it from anywhere." wide={false}>
+      <button type="button" className="st-btn st-btn-outline" onClick={openShortcuts}>View shortcuts</button>
     </SetRow>
   );
 }
@@ -519,11 +534,11 @@ function UpdatesRow() {
   const note = {
     checking: 'Checking for a new version…',
     downloading: `Downloading Studio ${s.version} in the background…`,
-    ready: `Studio ${s.version} is ready to install. Restart to update; your library and settings stay as they are.`,
-    available: `Studio ${s.version} is out. This copy can’t update itself, so download it from GitHub.`,
-    none: `Up to date${s.checkedAt ? `, checked ${ago(s.checkedAt)}` : ''}. Studio checks every hour and lets you know in notifications.`,
+    ready: `Studio ${s.version} is ready. Restart to update. Your library and settings stay as they are.`,
+    available: `Studio ${s.version} is out. Download it from GitHub to update.`,
+    none: `Up to date${s.checkedAt ? `. Checked ${ago(s.checkedAt)}` : ''}. Studio checks every hour.`,
     error: s.error || 'Couldn’t check for updates.',
-  }[s.state] || 'Studio checks for new versions every hour and lets you know in notifications.';
+  }[s.state] || 'Studio checks for updates every hour.';
   return (
     <SetRow title={s.current ? `Studio ${s.current}` : 'Studio'} note={note} wide={false}>
       {s.state === 'ready' || s.state === 'available' ? (
@@ -541,46 +556,46 @@ function UpdatesRow() {
 
 const TOUR = [
   { cat: 'colour', mark: false, title: 'Make Studio yours',
-    body: 'A quick look at each part of Settings. Each one opens as we go, and anything you change sticks right away. Leave the tour whenever you like.' },
+    body: 'A quick look at each part of Settings. Anything you change saves right away. Leave the tour whenever you like.' },
   { cat: 'colour', mark: true, title: 'Color',
     points: [
-      ['Dark mode', 'one switch for a dark look on every page'],
-      ['Accent', 'buttons, toggles and the scrubber: white, the cover’s color, or one you pick'],
-      ['Immerse', 'a slow gradient from the cover behind the bar, the side panel and your library'],
-      ['Bar, panel and pages', 'each surface plain, one color, or tinted by the cover'],
+      ['Dark mode', 'a dark look for every page'],
+      ['Immerse', 'a slow gradient from the cover behind the bar, side panel and library'],
+      ['Accent', 'the color of buttons, toggles and the progress bar'],
+      ['Bar, panel and pages', 'plain, one color or tinted by the cover'],
     ] },
   { cat: 'font', mark: true, title: 'Font',
     points: [
-      ['Rounded fonts', 'pick the typeface for the whole app; each is shown in its own style'],
-      ['My fonts', 'add font files you own (select all of a font’s weights at once)'],
+      ['Fonts', 'pick the font for the whole app'],
+      ['My Fonts', 'add font files you own'],
     ] },
   { cat: 'layout', mark: true, title: 'Layout',
     points: [
-      ['Pages', 'show or hide Home, the album and playlist layouts, and whole albums or just your songs'],
-      ['Lists', 'row height, the playing indicator (Bars, Beacon or Signal), and the Date added and plays columns'],
-      ['Window', 'Standard or Compact, the sidebar’s active-tab marker, and where notifications appear'],
-      ['Compact mode', 'the visualizer in the library bar'],
+      ['Pages', 'Home, album and playlist layouts and whether albums show every song'],
+      ['Lists', 'row height, the playing indicator and the Date Added and Plays columns'],
+      ['Window', 'Standard or Compact, the active tab marker and where notifications appear'],
+      ['Compact mode', 'the visualizer in the bar'],
     ] },
   { cat: 'library', mark: true, title: 'Library',
     points: [
-      ['Auto-follow artists', 'artists with more than 5 songs in your library are followed for you, a few at a time'],
+      ['Auto-follow artists', 'artists with more than 5 songs in your library are followed for you'],
       ['Spotify links', 'copy a Spotify link anywhere and Studio offers to open it'],
       ['Clear Library', 'removes songs and playlists but keeps your listening history'],
-      ['Delete Everything', 'wipes it all, history included, and starts setup again'],
+      ['Delete Everything', 'removes it all and starts setup again'],
     ] },
   { cat: 'system', mark: true, title: 'System',
     points: [
-      ['Updates', 'your version, a button to check for a new one, and the changelog; new versions also show up in notifications'],
-      ['Gapless playback', 'no silence between songs, for live albums and mixes'],
+      ['Updates', 'your version, update checks and the changelog'],
+      ['Gapless playback', 'no silence between songs'],
     ] },
   { cat: 'connections', mark: true, title: 'Connections',
     points: [
       ['Spotify', 'your sign-in, which plays Spotify songs and fills My Spotify'],
-      ['Spotify developer keys', 'optional backup search when your sign-in is busy'],
+      ['Spotify developer keys', 'optional backup for search'],
       ['Soulseek', 'optional second source for rarer songs'],
-      ['Discord', 'show what you’re playing on your profile, set up with your own Application ID; an imgbb key adds covers of your own files'],
-      ['Twitch', 'Streamer Mode: viewers request songs in your chat with !sr'],
-      ['Run setup again', 'goes back through setup; your library stays'],
+      ['Discord', 'show what you’re playing on your profile'],
+      ['Twitch', 'let viewers request songs with !sr'],
+      ['Run setup again', 'go through setup again and keep your library'],
     ] },
 ];
 

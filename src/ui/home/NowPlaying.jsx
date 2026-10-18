@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { readableAccent } from '../../lib/coverTheme.js';
+import { HeartBurst, heartAnim, useFavBurst } from './HeartBurst.jsx';
+import { keysText } from './Shortcuts.jsx';
 import { formatTime, getFileFormatLabel, parseGenres } from '../../lib/mediaUtils.js';
 import PanelLyricsEditor from '../PanelLyricsEditor.jsx';
 import VolumeControl from '../VolumeControl.jsx';
@@ -26,7 +28,7 @@ export function NowPlayingFullView({
   onCopyLink, copyBusy = false, onZoomCover,
   animatedBg = false, immersePalette = null, dark = false,
   tab = null, onTab, onClose,
-  coverFor, upNext = [], onSelectTrack, onReorderQueue, queueOffset = 0,
+  coverFor, upNext = [], onSelectTrack, onReorderQueue, onClearQueue, queueOffset = 0,
   lyricsData, onLyricsSaved, onBrowseLyrics,
   lyricSelection = null, onLyricSelectStart, onLyricSelectLine,
   artistInfo, credits, plays = 0, onQueueMenu = null,
@@ -227,7 +229,7 @@ export function NowPlayingFullView({
             {tab === 'queue' ? (
               <QueueTab current={track} upNext={upNext} acc={acc} coverFor={coverFor}
                 onSelectTrack={onSelectTrack} isPlaying={isPlaying}
-                onReorder={onReorderQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
+                onReorder={onReorderQueue} onClear={onClearQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
             ) : tab === 'lyrics' ? (
               <LyricsTab lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} track={track}
                 onBrowseLyrics={onBrowseLyrics}
@@ -275,7 +277,7 @@ function PanelDockBody({
   lyricsData, onLyricsSaved, onBrowseLyrics,
   lyricSelection = null, onLyricSelectStart, onLyricSelectLine,
   isPlaying = false, onSeek, onExpand,
-  onReorderQueue, queueOffset = 0,
+  onReorderQueue, onClearQueue, queueOffset = 0,
   artistInfo, credits, plays = 0, onQueueMenu = null,
 }) {
   if (!open) return null;
@@ -349,14 +351,9 @@ function PanelDockBody({
           </>
         ) : null}
       </FadeSwap>
-      {/* On the bar surface the only overlay is a whisper of depth — anything
-          heavier reintroduces the very gap this option exists to close. */}
-      <FadeLayer show={(surface === 'bar' && !!barWash) || surface === 'colour' || surface === 'custom'} style={{ zIndex: 0 }}>
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0, pointerEvents: 'none',
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0.10) 100%)',
-        }} />
-      </FadeLayer>
+      {/* Match bar and Color are flat: the panel is exactly that color, top to
+          bottom. A light-to-dark shading used to sit on top, which left the
+          panel lighter than the bar at the top and darker at the bottom. */}
 
       <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
         {/* Tabs. One panel with switchable content, rather than one panel per
@@ -393,7 +390,7 @@ function PanelDockBody({
         {tab === 'queue' ? (
           <QueueTab current={track} upNext={upNext} acc={acc} coverFor={coverFor}
             onSelectTrack={onSelectTrack} isPlaying={isPlaying}
-            onReorder={onReorderQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
+            onReorder={onReorderQueue} onClear={onClearQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
         ) : tab === 'lyrics' ? (
           <LyricsTab lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} track={track}
             onBrowseLyrics={onBrowseLyrics}
@@ -439,6 +436,9 @@ const QUEUE_CSS = `
 .sth-q-txt small { display: block; margin-top: 1px; font-size: 12px; color: rgba(var(--st-sub-rgb), 0.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sth-q-grip { flex-shrink: 0; color: rgba(var(--st-sub-rgb), 0.5); opacity: 0; transition: opacity 0.12s ease; }
 .sth-q-row:hover .sth-q-grip { opacity: 1; }
+.sth-q-clear { flex-shrink: 0; border: none; background: none; padding: 0; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 700;
+  color: rgba(var(--st-text-rgb), 0.62); transition: color .12s ease; }
+.sth-q-clear:hover, .sth-q-clear:focus-visible { color: var(--st-text); }
 .sth-q-empty { padding: 6px 6px; font-size: 12.5px; color: rgba(var(--st-sub-rgb), 0.45); }
 `;
 
@@ -516,7 +516,7 @@ function QueueRow({
    (its scrubber), and neither tab needs to follow it. */
 const QueueTab = React.memo(function QueueTab({
   current, upNext, acc, coverFor, onSelectTrack, isPlaying = false,
-  onReorder, queueOffset = 0, onRowMenu = null,
+  onReorder, onClear = null, queueOffset = 0, onRowMenu = null,
 }) {
   /* The row being dragged and where it would land, local until the drop. */
   const [dragFrom, setDragFrom] = useState(null);
@@ -562,6 +562,9 @@ const QueueTab = React.memo(function QueueTab({
       <div className="sth-q-h">
         {from ? <>Next from: <b>{from}</b></> : 'Next up'}
         {upNext.length ? <span className="m">{upNext.length} {upNext.length === 1 ? 'song' : 'songs'}{runtime ? ` · ${runtime}` : ''}</span> : null}
+        {upNext.length && onClear ? (
+          <button type="button" className="sth-q-clear" onClick={onClear} title={`Clear Queue (${keysText('clearQueue')})`}>Clear</button>
+        ) : null}
       </div>
       {upNext.length ? upNext.map((t, i) => (
         <QueueRow {...rowProps} key={`${t.id}-${i}`} t={t} index={i + 1} onClick={() => onSelectTrack?.(t)} />
@@ -1046,6 +1049,8 @@ function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFai
     const t = setTimeout(() => setPhase(null), 600);
     return () => clearTimeout(t);
   }, [phase]);
+  const fav = saved || track;
+  const burst = useFavBurst(fav.id, fav.isFavorite);
 
   if (phase === 'check' || (track.streamOnly && !saved && saveBusy)) {
     return (
@@ -1074,10 +1079,12 @@ function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFai
       {onToggleFavorite ? (
         <button type="button" className={`sth-npbtn${t.isFavorite ? ' is-on' : ''}${arrive ? ' sth-lib-arrive' : ''}`} onClick={() => onToggleFavorite(t.id)}
           title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-          aria-label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={!!t.isFavorite}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          aria-label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={!!t.isFavorite}
+          style={{ position: 'relative', overflow: 'visible' }}>
+          <svg key={burst.key} className={heartAnim(burst)} width="18" height="18" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
           </svg>
+          <HeartBurst burst={burst} radius={26} />
         </button>
       ) : null}
       {onAddToPlaylist ? (
@@ -1154,7 +1161,7 @@ export function NowPlayingBar(props) {
   return props.track ? <NowPlayingBarBody {...props} /> : null;
 }
 
-function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, onOpenArtist, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat }) {
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, onOpenArtist, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat, onHoverChange = null, splash = null }) {
   const currentTime = usePlaybackTime();
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
@@ -1213,9 +1220,14 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
        sits directly under the transport at 420px instead of spanning the bar,
        which is what made the old bar read as two storeys that didn't line up.
        Copy-link, colour and fullscreen moved into the overflow menu. */
-    <div className="sth-npbar" role="region" aria-label="Now playing" style={
-      solidWash ? { background: `rgb(${solidWash})` } : (animatedBg ? { background: '#000' } : undefined)
-    }>
+    <div className="sth-npbar" role="region" aria-label="Now playing" style={{
+      ...(solidWash ? { background: `rgb(${solidWash})` } : (animatedBg ? { background: '#000' } : null)),
+      /* Under a splash the bar keeps its old color until the paint has
+         covered it (about 0.62s in), then swaps out of sight beneath it. The
+         clip reaches out over the border for the splash, which paints the
+         border too, so the edge changes with everything else. */
+      ...(splash ? { transition: 'background-color 0.05s linear 0.62s', overflow: 'clip', overflowClipMargin: `${splash.bw || 0}px` } : null),
+    }}>
       <FadeLayer show={!!animatedBg && !solidWash} style={{ zIndex: 0 }}>
         <AnimatedGradientBg field accent={gradBase} mid={gradMid} wash={gradWash} coverUrl={art} isPlaying={isPlaying} vignette={false} brightness={1} />
         <div style={{
@@ -1223,10 +1235,24 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
           background: 'linear-gradient(90deg, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.16) 22%, rgba(0,0,0,0) 38%)',
         }} />
       </FadeLayer>
+      {/* A new record color spreading in from the chip that picked it (ColourStrip). */}
+      {splash ? (
+        <span key={splash.key} aria-hidden className="sth-npbar-splash"
+          style={{
+            '--sc': `rgb(${splash.rgb})`, '--sx': `${splash.x}px`, '--sy': `${splash.y}px`, '--sr': `${splash.r}px`,
+            inset: -(splash.bw || 0), zIndex: 0, borderRadius: 'inherit',
+            boxShadow: splash.bw ? `inset 0 0 0 ${splash.bw}px ${splash.line}` : undefined,
+          }} />
+      ) : null}
 
       <div className="sth-npbar-grid">
         {/* ---- Left, 282px: what's playing ---- */}
-        <div className="sth-npbar-left">
+        {/* Hovering the song's side of the bar (not the controls) pulls out the
+            record's color strip (ColourStrip), so reaching for play or the
+            volume never sets it off. */}
+        <div className="sth-npbar-left"
+          onPointerEnter={onHoverChange ? (e) => onHoverChange(true, e.currentTarget.closest('.sth-npbar')) : undefined}
+          onPointerLeave={onHoverChange ? (e) => onHoverChange(false, e.currentTarget.closest('.sth-npbar')) : undefined}>
           {art && onZoomCover ? (
             <button type="button" className="sth-npbar-art" onClick={() => onZoomCover(art)}
               title="View cover art" aria-label="View cover art full size"

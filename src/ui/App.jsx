@@ -1690,6 +1690,15 @@ export default function App() {
     if (index < currentIndex) setCurrentIndex((i) => i - 1);
   }, [currentIndex]);
 
+  /** Empty what's up next. The song playing and the ones before it stay,
+   *  so Previous still works. Returns what was taken out, for Undo. */
+  const clearQueue = useCallback(() => {
+    if (currentIndex < 0) return [];
+    const removed = queueRef.current.slice(currentIndex + 1);
+    if (removed.length) setQueue((prev) => prev.slice(0, currentIndex + 1));
+    return removed;
+  }, [currentIndex]);
+
 
 
   const handleSpotifyImportDone = async (track) => {
@@ -2832,6 +2841,7 @@ export default function App() {
            had no way to ask for a move until now. */
         onReorderQueue={reorderQueue}
         onRemoveFromQueue={removeFromQueue}
+        onClearQueue={clearQueue}
         imgbbApiKey={imgbbApiKey}
         onSetImgbbApiKey={setImgbbApiKey}
         uiFontId={uiFontId}

@@ -185,7 +185,7 @@ export function useToastBus() {
 const POS_KEY = 'studio:toastPosition';
 
 const TOAST_POSITIONS = [
-  { id: 'lane', name: 'Own Lane', note: 'The page makes room above the player; covers nothing' },
+  { id: 'lane', name: 'Own Lane', note: 'Makes room above the player so it covers nothing' },
   { id: 'player', name: 'In the Player Bar', note: 'Over the song info for a moment' },
   { id: 'right', name: 'Bottom Right', note: 'Above the player, right corner' },
   { id: 'left', name: 'Bottom Left', note: 'Over the foot of the sidebar' },
