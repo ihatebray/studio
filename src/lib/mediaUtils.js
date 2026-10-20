@@ -14,14 +14,14 @@ export const titleCollator = new Intl.Collator(undefined, { sensitivity: 'base',
 export const SORT_LABELS = {
   aToZ: 'Title (A–Z)',
   zToA: 'Title (Z–A)',
-  recentlyAdded: 'Recently added',
-  oldestFirst: 'Oldest first',
-  recentlyPlayed: 'Recently played',
-  mostPlayed: 'Most played',
+  recentlyAdded: 'Recently Added',
+  oldestFirst: 'Oldest First',
+  recentlyPlayed: 'Recently Played',
+  mostPlayed: 'Most Played',
   longest: 'Longest',
   shortest: 'Shortest',
   year: 'Year (newest)',
-  favorites: 'Favorites first',
+  favorites: 'Favorites First',
 };
 
 /** Format a duration given in SECONDS as m:ss. */
@@ -30,9 +30,9 @@ export function formatTime(s) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 }
 
-/** Format a duration given in MILLISECONDS as m:ss (— when unknown). */
+/** Format a duration given in MILLISECONDS as m:ss (blank when unknown). */
 export function formatDurationMs(ms) {
-  if (!ms || ms <= 0) return '—';
+  if (!ms || ms <= 0) return '';
   const s = Math.round(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -117,17 +117,6 @@ export function activeLyricIndex(lines, time) {
     else break;
   }
   return idx;
-}
-
-/**
- * Sort a stamped-lines array for the tap-to-sync editor.
- * Stamped lines (time !== null) float to the top, sorted by time ascending.
- * Unstamped lines stay at the bottom in their original order.
- */
-export function sortStampedLines(lines) {
-  const stamped = lines.filter((l) => l.time !== null).sort((a, b) => a.time - b.time);
-  const unstamped = lines.filter((l) => l.time === null);
-  return [...stamped, ...unstamped];
 }
 
 /* ---------------------------------------------------------------------------

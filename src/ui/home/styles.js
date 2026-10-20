@@ -358,11 +358,12 @@ export const HOME_CSS = `
           mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent 100%);
         }
         .sth-lfade > :last-child { margin-bottom: 26px; }
-        .sth-mi { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 8px 11px; border-radius: 8px; border: none; cursor: pointer; background: transparent; color: rgba(var(--st-fg-rgb), 0.86); font-size: 12.5px; font-weight: 550; font-family: inherit; transition: background 0.12s ease; }
+        .sth-mi { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 8px 11px; border-radius: var(--r-ctl-s); border: none; cursor: pointer; background: transparent; color: rgba(var(--st-fg-rgb), 0.86); font-size: 13px; font-weight: 550; font-family: inherit; transition: background 0.12s ease; }
         .sth-mi:hover { background: rgba(var(--mi-accent), 0.14); }
         .sth-mi.is-danger { color: rgb(238,124,124); }
         .sth-mi.is-danger:hover { background: rgba(230,90,90,0.13); }
-        .sth-mi-sub { display: block; font-size: 10.5px; color: rgba(var(--st-fg-rgb), 0.4); font-weight: 500; margin-top: 1px; }
+        .sth-mi-keys { flex-shrink: 0; font: inherit; font-size: 11px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.38); white-space: nowrap; }
+        .sth-mi-sub { display: block; font-size: 11px; color: rgba(var(--st-fg-rgb), 0.4); font-weight: 500; margin-top: 1px; }
         /* Hero entry — text rises and fades as the track changes. Short and
            small: a big move here reads as the page reloading rather than the
            header updating. */
@@ -588,18 +589,22 @@ export const HOME_CSS = `
            enough of a difference to skip that step — no size change, so the
            cluster still aligns. */
         .sth-libsortmenu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
-          min-width: 176px; padding: 5px; border-radius: 11px;
+          min-width: 196px; padding: 5px; border-radius: var(--r-ctl-l);
           background: var(--surface); border: 1px solid var(--border);
-          box-shadow: 0 14px 38px rgba(0, 0, 0, 0.5);
-          display: flex; flex-direction: column; gap: 1px; }
-        .sth-libsortitem { display: block; width: 100%; text-align: left; padding: 8px 11px;
-          border: none; border-radius: 7px; cursor: pointer; background: transparent;
-          font: inherit; font-size: 12.5px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.72); }
-        .sth-libsortitem:hover { background: rgba(var(--st-fg-rgb), 0.08); color: #fff; }
-        .sth-libsortitem.is-on { color: #fff; background: rgba(var(--st-acc-rgb), 0.2); }
+          box-shadow: 0 22px 60px rgba(0, 0, 0, 0.7); animation: stFadeUp 0.13s ease both;
+          display: flex; flex-direction: column; }
+        /* Rows of a choice list read like the menus' rows; the current one
+           carries a tick on the right instead of a different background. */
+        .sth-libsortitem { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 8px 11px;
+          border: none; border-radius: var(--r-ctl-s); cursor: pointer; background: transparent;
+          font: inherit; font-size: 13px; font-weight: 550; color: rgba(var(--st-fg-rgb), 0.86); transition: background 0.12s ease; }
+        .sth-libsortitem:hover { background: rgba(var(--st-acc-rgb), 0.14); }
+        .sth-libsortitem.is-on::after { content: ''; margin-left: auto; flex-shrink: 0; width: 14px; height: 14px;
+          background: rgb(var(--st-acc-rgb)); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/contain no-repeat; }
         .sth-libsortitem-reset { margin-top: 4px; padding-top: 10px; font-weight: 500;
           color: rgba(var(--st-fg-rgb), 0.5); border-top: 1px solid rgba(var(--st-fg-rgb), 0.08);
-          border-radius: 0 0 7px 7px; }
+          border-radius: 0 0 var(--r-ctl-s) var(--r-ctl-s); }
         .sth-libact-primary { color: var(--st-text); background: rgba(var(--st-acc-rgb), 0.16); }
         .sth-libact-primary:hover { background: rgba(var(--st-acc-rgb), 0.26); }
         .sth-plcover-veil { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; background: rgba(0,0,0,0.55); opacity: 0; transition: opacity 0.16s ease; }
@@ -1006,6 +1011,10 @@ export const HOME_CSS = `
         .sth-topbar.is-compact { transform: translateY(-100%); visibility: hidden; pointer-events: none; transition: transform 0.18s ease, visibility 0s linear 0.18s; }
         .sth-topbar.is-compact.is-peek { transform: none; visibility: visible; pointer-events: auto; box-shadow: 0 12px 36px rgba(0,0,0,0.45); transition: transform 0.22s cubic-bezier(0.22,1,0.36,1); }
         .sth-npbar-artist { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* The line clips to its own box, so the usual focus ring (drawn
+           outside the link) showed as a stray bar on its left edge. Focus
+           here is the underline the link gets on hover, in full white. */
+        .sth-npbar-artist .st-artist-link:focus-visible { outline: none; color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
         .sth-npbar-mid { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
         .sth-npbar-transport { display: flex; align-items: center; gap: 10px; }
         /* The original treatment: a plain white glyph, no filled plate behind
@@ -1058,10 +1067,10 @@ export const HOME_CSS = `
         .sth-side-pl:hover { background: rgba(255,255,255,0.04); }
         .sth-side-pl.on { background: rgba(255,255,255,0.08); }
         /* The song menu's playlist list (Add to playlist). */
-        .sth-pl-pick { display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 9px; border: none; border-radius: 8px; background: transparent;
-          color: rgba(var(--st-fg-rgb), 0.88); font: inherit; font-size: 12.5px; font-weight: 600; text-align: left; cursor: pointer; transition: background 0.12s ease; }
+        .sth-pl-pick { display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 9px; border: none; border-radius: var(--r-ctl-s); background: transparent;
+          color: rgba(var(--st-fg-rgb), 0.88); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; transition: background 0.12s ease; }
         .sth-pl-pick:hover { background: rgba(var(--st-fg-rgb), 0.08); }
-        .sth-pl-pick .pc { width: 26px; height: 26px; border-radius: 5px; flex-shrink: 0; background: rgba(var(--accent-rgb), 0.3) center/cover; }
+        .sth-pl-pick .pc { width: 26px; height: 26px; border-radius: var(--r-art-s); flex-shrink: 0; background: rgba(var(--accent-rgb), 0.3) center/cover; }
         .sth-pl-pick .pc.is-new { display: flex; align-items: center; justify-content: center; background: rgba(var(--st-fg-rgb), 0.08); }
         .sth-pl-pick .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sth-pl-pick .ok { flex-shrink: 0; color: rgb(var(--accent-rgb)); }

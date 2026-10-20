@@ -7,7 +7,6 @@ import { hexToRgb, PlayingBars, rgbToHex } from './common.jsx';
 import { INDICATOR_STYLES, setIndicatorStyle, useIndicatorStyle } from '../../lib/playingIndicator.js';
 import { NP_BAR_DEFAULT, THEME_DEFAULTS } from './constants.js';
 import FontSettings from './FontSettings.jsx';
-import { LayoutChoice, recordLayoutOf } from './RecordPage.jsx';
 import { SetHowTo, SetLit, SetRow, SetSeg, SetToggle, SpotifyAccountPanel, StudioColorPicker } from './Settings.jsx';
 import { checkForUpdate, installUpdate, useUpdate } from '../updates.js';
 import Changelog from '../Changelog.jsx';
@@ -81,12 +80,12 @@ export default function SettingsPage({
      Old stored categories map onto it. */
   const cat = setCat === 'playback' ? 'system' : setCat === 'discord' ? 'connections' : setCat;
   const CATS = {
-    colour: ['Color', 'Dark mode, Immerse, your accent and the colors behind each part of the app.'],
+    colour: ['Color', 'Dark Mode, Immerse, your accent and the colors behind each part of the app.'],
     font: ['Font', 'The font used across the app. Add your own under My Fonts.'],
     layout: ['Layout', 'How pages, lists and the window are arranged.'],
-    library: ['Library', 'Following artists, Spotify links and managing your library.'],
+    library: ['Library', 'Following artists and managing your library.'],
     system: ['System', 'Updates and playback.'],
-    connections: ['Connections', 'The accounts and services Studio connects to.'],
+    connections: ['Connections', 'The accounts and services Studio connects to, and Spotify links.'],
   };
   const indicator = useIndicatorStyle();
   const [tourStep, setTourStep] = useState(0);
@@ -105,7 +104,7 @@ export default function SettingsPage({
   const off = { opacity: 0.4, pointerEvents: 'none' };
   const darkDim = dark ? off : undefined;
   const dim = npAnimatedBg || dark ? off : undefined;
-  const darkNote = 'Turn off Dark mode to use this.';
+  const darkNote = 'Turn off Dark Mode to use this.';
   const ACCENT_SWATCHES = [['255, 122, 89', 'Coral'], ['120, 170, 255', 'Blue'], ['123, 224, 176', 'Mint'], ['214, 150, 255', 'Violet']];
   /* Each tour step starts at the top of its page, where the card is. */
   const bodyRef = React.useRef(null);
@@ -129,22 +128,24 @@ export default function SettingsPage({
         {/* The tour sits at the top of the page, above the title, so it
             pushes the settings down instead of covering any of them. */}
         {tour ? <SettingsTour step={tourStep} setStep={setTourStep} onEnd={onEndTour} /> : null}
-        <div style={{ marginBottom: 20 }}>
-          <h1 className="st-page-title">{CATS[cat]?.[0]}</h1>
-          <p style={{ fontSize: 14, color: 'var(--text-dim)', margin: '8px 0 0' }}>{CATS[cat]?.[1]}</p>
+        {/* The library pages' header: the title, and the line about it
+            beside it in the same small faint type. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 12px', marginBottom: 18 }}>
+          <h1 className="sth-libhead-t" style={{ margin: 0 }}>{CATS[cat]?.[0]}</h1>
+          <span className="sth-libhead-m" style={{ whiteSpace: 'normal' }}>{CATS[cat]?.[1]}</span>
         </div>
 
         {cat === 'colour' ? (
           <div className="sth-set-list">
-            <SetRow title="Dark mode" wide={false}>
-              <SetToggle label="Dark mode" on={dark} onToggle={() => setThemeKey('darkMode', !dark)} />
+            <SetRow title="Dark Mode" wide={false}>
+              <SetToggle label="Dark Mode" on={dark} onToggle={() => setThemeKey('darkMode', !dark)} />
             </SetRow>
             <SetRow title="Immerse" note={dark ? darkNote : 'A slow moving gradient from the cover behind the Now Playing bar, side panel and library pages. Replaces the background settings below while on.'} wide={false}>
               <span style={{ display: 'contents', ...darkDim }}><SetToggle label="Immerse" on={npAnimatedBg && !dark} onToggle={toggleNpAnimatedBg} /></span>
             </SetRow>
-            <SetRow title="Accent" note="The color of buttons, toggles and the progress bar. Follow Artwork matches the song playing. Fixed uses a color you pick.">
+            <SetRow title="Accent" note="The color of buttons, toggles and the progress bar. Follow Cover Art matches the song playing. Fixed uses a color you pick.">
               <SetSeg label="Accent" value={accentMode} onPick={pickAccentMode}
-                options={[['white', 'White'], ['artwork', 'Follow artwork'], ['fixed', 'Fixed']]} />
+                options={[['white', 'White'], ['artwork', 'Follow Cover Art'], ['fixed', 'Fixed']]} />
               {accentMode === 'fixed' ? (
                 <span className="sth-set-sub" role="radiogroup" aria-label="Fixed accent color" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                   {ACCENT_SWATCHES.map(([rgb, name]) => (
@@ -216,18 +217,6 @@ export default function SettingsPage({
                 <SetSeg label="Home page" value={theme.showHome === false ? 'hide' : 'show'} onPick={(v) => setThemeKey('showHome', v === 'show')}
                   options={[['show', 'Show'], ['hide', 'Hide']]} />
               </SetRow>
-              <SetRow title="Album layout" note={theme.playlistLayout ? 'How album pages are laid out.' : 'How album and playlist pages are laid out.'}>
-                <LayoutChoice title={theme.playlistLayout ? 'Album layout' : 'Album and playlist layout'} value={recordLayoutOf(theme.recordLayout)} onPick={(v) => setThemeKey('recordLayout', v)} />
-              </SetRow>
-              <SetRow title="Separate playlist layout" note={theme.playlistLayout ? 'Playlists use their own layout.' : 'Playlists use the album layout.'} wide={false}>
-                <SetToggle label="Separate playlist layout" on={!!theme.playlistLayout}
-                  onToggle={() => setThemeKey('playlistLayout', theme.playlistLayout ? null : recordLayoutOf(theme.recordLayout))} />
-              </SetRow>
-              {theme.playlistLayout ? (
-                <SetRow title="Playlist layout" note="How playlist pages are laid out.">
-                  <LayoutChoice title="Playlist layout" value={recordLayoutOf(theme.playlistLayout)} onPick={(v) => setThemeKey('playlistLayout', v)} />
-                </SetRow>
-              ) : null}
               <SetRow title="Album songs" note="Show only the songs you own or the whole album from Spotify. Songs you don’t have are dimmed and can still be played or saved.">
                 <SetSeg label="Album songs" value={theme.albumSongs === 'full' ? 'full' : 'owned'} onPick={(v) => setThemeKey('albumSongs', v)}
                   options={[['owned', 'Songs you own'], ['full', 'Whole album']]} />
@@ -279,24 +268,13 @@ export default function SettingsPage({
         {cat === 'library' ? (
           <>
             <div className="sth-set-list">
-              <SetRow title="Auto-follow artists" note="Follows an artist once you have more than 5 of their songs so their new releases and countdowns show up. Big imports can take a few minutes to finish. Unfollow an artist to stop it for them.">
-                <SetSeg label="Auto-follow artists" value={theme.autoFollow === false ? 'off' : 'on'} onPick={(v) => setThemeKey('autoFollow', v === 'on')}
-                  options={[['on', 'On'], ['off', 'Off']]} />
+              <SetRow title="Auto-Follow Artists" note="Follows an artist once you have more than 5 of their songs so their new releases and countdowns show up. Big imports can take a few minutes to finish. Unfollow an artist to stop it for them." wide={false}>
+                <SetToggle label="Auto-Follow Artists" on={theme.autoFollow !== false} onToggle={() => setThemeKey('autoFollow', theme.autoFollow === false)} />
               </SetRow>
-              <SetRow title="Spotify links" note="Studio offers to open Spotify links you copy in other apps. Pasting one with Ctrl+V in Studio opens it either way.">
-                <SetSeg label="Spotify links" value={theme.linkWatch === false ? 'off' : 'on'} onPick={(v) => setThemeKey('linkWatch', v === 'on')}
-                  options={[['on', 'On'], ['off', 'Off']]} />
-              </SetRow>
-              {theme.linkWatch !== false ? (
-                <SetRow title="Link card" note="How a copied link shows up. Large adds the album, year and length. Pick one to preview it.">
-                  <SetSeg label="Link card" value={theme.linkCard || 'slim'} onPick={(v) => { setThemeKey('linkCard', v); onPreviewLinkCard?.(v); }}
-                    options={[['slim', 'Slim'], ['strip', 'Strip'], ['capsule', 'Capsule'], ['large', 'Large']]} />
-                </SetRow>
-              ) : null}
             </div>
             {onClearLibrary || onClearEverything ? (
               <>
-                <h2 className="st-section-title" style={{ fontSize: 16, margin: '36px 0 12px' }}>Danger Zone</h2>
+                <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Danger Zone</div>
                 {onClearLibrary ? (
                   <div className="sth-danger">
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -345,6 +323,27 @@ export default function SettingsPage({
             {/* The account does the work (playback, My Spotify, artist
                 pages, search); the developer keys are a backup. */}
             <SpotifyAccountPanel />
+            {/* Spotify links copied in other apps: part of what Studio does
+                with Spotify, so beside the account rather than in Library. */}
+            <section className="sth-conn">
+              <div className="sth-conn-head">
+                <div>
+                  <h2>Spotify Links</h2>
+                  <p>Copy a Spotify link in another app and Studio offers to open it. Pasting one with Ctrl+V in Studio opens it either way.</p>
+                </div>
+              </div>
+              <div className="sth-set-list">
+                <SetRow title="Offer Copied Links" note="Shows a card when you copy a Spotify link." wide={false}>
+                  <SetToggle label="Offer Copied Links" on={theme.linkWatch !== false} onToggle={() => setThemeKey('linkWatch', theme.linkWatch === false)} />
+                </SetRow>
+                {theme.linkWatch !== false ? (
+                  <SetRow title="Link Card" note="How a copied link shows up. Large adds the album, year and length. Pick one to preview it.">
+                    <SetSeg label="Link Card" value={theme.linkCard || 'slim'} onPick={(v) => { setThemeKey('linkCard', v); onPreviewLinkCard?.(v); }}
+                      options={[['slim', 'Slim'], ['strip', 'Strip'], ['capsule', 'Capsule'], ['large', 'Large']]} />
+                  </SetRow>
+                ) : null}
+              </div>
+            </section>
             <section className="sth-conn">
               <div className="sth-conn-head">
                 <div>
@@ -474,7 +473,7 @@ export default function SettingsPage({
                     </SetRow>
                     <SetRow title="Blocked songs" wide={false}
                       note={blocked.length
-                        ? `Chat can't request ${blockedCount(blocked)}. You can also block a song from its menu.`
+                        ? `Chat can’t request ${blockedCount(blocked)}. You can also block a song from its menu.`
                         : 'Songs and artists chat can\u2019t request. You can also block a song from its menu.'}>
                       <BlockedSongsControl list={blocked} onManage={() => setBlockedOpen(true)} />
                     </SetRow>
@@ -512,7 +511,7 @@ function ChangelogRow() {
   const { status: s } = useUpdate();
   return (
     <SetRow title="Changelog" note="What’s new in each version." wide={false}>
-      <button type="button" className="st-btn st-btn-outline" onClick={() => setOpen(true)}>View changelog</button>
+      <button type="button" className="st-btn st-btn-outline" onClick={() => setOpen(true)}>View Changelog</button>
       {open ? <Changelog current={s.current} onClose={() => setOpen(false)} /> : null}
     </SetRow>
   );
@@ -522,7 +521,7 @@ function ChangelogRow() {
 function ShortcutsRow() {
   return (
     <SetRow title="Keyboard shortcuts" note="Every shortcut in one place. Press ? to open it from anywhere." wide={false}>
-      <button type="button" className="st-btn st-btn-outline" onClick={openShortcuts}>View shortcuts</button>
+      <button type="button" className="st-btn st-btn-outline" onClick={openShortcuts}>View Shortcuts</button>
     </SetRow>
   );
 }
@@ -547,7 +546,7 @@ function UpdatesRow() {
         </button>
       ) : (
         <button type="button" className="st-btn st-btn-outline" disabled={busy} onClick={() => { checkForUpdate(); }}>
-          {s.state === 'checking' ? 'Checking…' : 'Check for updates'}
+          {s.state === 'checking' ? 'Checking…' : 'Check for Updates'}
         </button>
       )}
     </SetRow>
@@ -555,14 +554,14 @@ function UpdatesRow() {
 }
 
 const TOUR = [
-  { cat: 'colour', mark: false, title: 'Make Studio yours',
+  { cat: 'colour', mark: false, title: 'Make Studio Yours',
     body: 'A quick look at each part of Settings. Anything you change saves right away. Leave the tour whenever you like.' },
   { cat: 'colour', mark: true, title: 'Color',
     points: [
-      ['Dark mode', 'a dark look for every page'],
+      ['Dark Mode', 'a dark look for every page'],
       ['Immerse', 'a slow gradient from the cover behind the bar, side panel and library'],
       ['Accent', 'the color of buttons, toggles and the progress bar'],
-      ['Bar, panel and pages', 'plain, one color or tinted by the cover'],
+      ['Bar, Panel and Pages', 'plain, one color or tinted by the cover'],
     ] },
   { cat: 'font', mark: true, title: 'Font',
     points: [
@@ -574,28 +573,28 @@ const TOUR = [
       ['Pages', 'Home, album and playlist layouts and whether albums show every song'],
       ['Lists', 'row height, the playing indicator and the Date Added and Plays columns'],
       ['Window', 'Standard or Compact, the active tab marker and where notifications appear'],
-      ['Compact mode', 'the visualizer in the bar'],
+      ['Compact Mode', 'the visualizer in the bar'],
     ] },
   { cat: 'library', mark: true, title: 'Library',
     points: [
-      ['Auto-follow artists', 'artists with more than 5 songs in your library are followed for you'],
-      ['Spotify links', 'copy a Spotify link anywhere and Studio offers to open it'],
+      ['Auto-Follow Artists', 'artists with more than 5 songs in your library are followed for you'],
       ['Clear Library', 'removes songs and playlists but keeps your listening history'],
       ['Delete Everything', 'removes it all and starts setup again'],
     ] },
   { cat: 'system', mark: true, title: 'System',
     points: [
       ['Updates', 'your version, update checks and the changelog'],
-      ['Gapless playback', 'no silence between songs'],
+      ['Gapless Playback', 'no silence between songs'],
     ] },
   { cat: 'connections', mark: true, title: 'Connections',
     points: [
       ['Spotify', 'your sign-in, which plays Spotify songs and fills My Spotify'],
-      ['Spotify developer keys', 'optional backup for search'],
+      ['Spotify Links', 'copy a Spotify link anywhere and Studio offers to open it'],
+      ['Spotify Developer Keys', 'optional backup for search'],
       ['Soulseek', 'optional second source for rarer songs'],
       ['Discord', 'show what you’re playing on your profile'],
       ['Twitch', 'let viewers request songs with !sr'],
-      ['Run setup again', 'go through setup again and keep your library'],
+      ['Run Setup Again', 'go through setup again and keep your library'],
     ] },
 ];
 
@@ -641,7 +640,7 @@ function SettingsTour({ step, setStep, onEnd }) {
         <span style={{ flex: 1 }} />
         {step > 0 ? <button type="button" className="st-btn st-btn-sm st-btn-ghost" onClick={() => setStep(step - 1)}>Back</button> : null}
         {last
-          ? <button type="button" className="st-btn st-btn-sm st-btn-primary" onClick={() => onEnd?.(true)}>Start listening</button>
+          ? <button type="button" className="st-btn st-btn-sm st-btn-primary" onClick={() => onEnd?.(true)}>Start Listening</button>
           : <button type="button" className="st-btn st-btn-sm st-btn-primary" onClick={() => setStep(step + 1)}>{step === 0 ? 'Show me' : 'Next'}</button>}
       </div>
     </div>

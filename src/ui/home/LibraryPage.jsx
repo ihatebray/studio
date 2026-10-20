@@ -5,7 +5,8 @@ import ArtistGrid from '../ArtistGrid.jsx';
 import ArtistPage from '../ArtistPage.jsx';
 import { PlayIcon } from '../sharedUI.jsx';
 import { LibHeader, LibRow } from './Library.jsx';
-import RecordPage, { recordLayoutOf } from './RecordPage.jsx';
+import RecordPage from './RecordPage.jsx';
+import { EmptyState, MI } from './common.jsx';
 import { coverLayers } from '../../lib/coverUrl.js';
 import { DARK } from './constants.js';
 import { AnimatedGradientBg, FadeLayer, FadeSwap } from '../VisualEffects.jsx';
@@ -25,7 +26,6 @@ export default function LibraryPage({
   currentTrack,
   detailData,
   detailFilter,
-  detailGenres,
   detailMore,
   detailTheme,
   detailTracks,
@@ -66,25 +66,28 @@ export default function LibraryPage({
   onTogglePlay,
   onUpdateAlbumMetadata,
   openAlbumFromRow,
+  openAlbumMenu,         // (event, album): its menu, on right-click
+  openArtistMenu,        // (event, artist, portrait)
+  openLibAlbum,          // (key) → your album, in search's album view
   openArtist,
   openArtistAnywhere,
   openArtistFromRow,
   openPalette,
   openRowMenu,
   ownedTrackFor,
+  pickerFor,             // (trackIds, { exclude }) → Add to Playlist's list
   pickLibRowSort,
   pickSection,
   playCountFor,
   playEvents,
   playFromLibRows,
   setAlbumEditScope,
-  setDeletePl,
+  deletePlaylist,
   setDetailFilter,
   setDetailMore,
   setLibDetail,
   setLibFilter,
   setLibScrollTop,
-  setPlCoverFor,
   setRenamePl,
   setSetCat,
   showDateAdded,
@@ -93,6 +96,11 @@ export default function LibraryPage({
   toggleFollow,
 }) {
   const view = libView;
+  /* The Albums grid follows its search box. */
+  const albumsShown = React.useMemo(() => {
+    const q = libFilter.trim().toLowerCase();
+    return q ? libAlbums.filter((a) => a.name.toLowerCase().includes(q) || (a.artist || '').toLowerCase().includes(q)) : libAlbums;
+  }, [libAlbums, libFilter]);
   /* The hero shows the LIBRARY, always — not the playing track. The
      Now Playing bar already reports that, and two places saying the
      same thing is what made this feel off. */
@@ -113,6 +121,10 @@ export default function LibraryPage({
      own colours. */
   const pageMode = detailPage || immerse ? 'off' : theme.pageSurface;
   const immerseField = immerse && !detailPage && currentTrack;
+  /* An album or playlist page under Immerse: the same moving field, made
+     from the record's own cover, so the page is still that record's. */
+  const recordImmerse = immerse && !!detailData && !openArtist;
+  const recordWash = detailData && detailTheme ? pageWash(recordWashSource(detailTheme)) : null;
   // The song the field was last drawn for, so it can still draw while it
   // fades out after the track goes away.
   const lastImmerseTrackRef = React.useRef(null);
@@ -192,6 +204,16 @@ export default function LibraryPage({
       </FadeLayer>
       {/* Cross-faded: switching between Off, Color, Cover Art and Full Color,
           or to the next song's colour, fades rather than cuts. */}
+      <FadeLayer show={recordImmerse} style={{ zIndex: 0, overflow: 'hidden', borderRadius: 'inherit' }}>
+        {recordImmerse ? (
+          <AnimatedGradientBg field
+            accent={recordWash || accent}
+            mid={(recordWash || accent).split(',').map((n) => Math.round(Number(n) * 0.82)).join(', ')}
+            wash={detailTheme ? recordDeep(detailTheme) : (recordWash || accent).split(',').map((n) => Math.round(Number(n) * 0.45)).join(', ')}
+            coverUrl={detailData.art} isPlaying={isPlaying} vignette={false} brightness={1} />
+        ) : null}
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.38) 40%, rgba(0,0,0,0.55) 100%)' }} />
+      </FadeLayer>
       <FadeSwap swapKey={npWashRgb ? `${pageMode}:${npWashRgb}` : 'none'} style={{ zIndex: 0 }}>
         {npWashRgb ? (
         <>
@@ -245,7 +267,7 @@ export default function LibraryPage({
           isPlaying={isPlaying}
           onPlayTrack={onPlayTrack}
           onTogglePlay={onTogglePlay}
-          onOpenAlbum={(key) => setLibDetail({ kind: 'album', key })}
+          onOpenAlbum={(key, group) => openLibAlbum(group || key)}
           onJumpToFind={openPalette}
           spotifyBridge={mySpotifyBridge}
           onBack={() => setLibDetail(null)}
@@ -305,19 +327,19 @@ export default function LibraryPage({
              color when it follows the artwork, your pick when Fixed. The
              page's cover never overrides it. */
           const pageAccUI = readableAccent(accent);
-          const recordLayout = recordLayoutOf(isPl ? (theme.playlistLayout ?? theme.recordLayout) : theme.recordLayout);
           return (
             <RecordPage
-              layout={recordLayout}
+              /* Its own page per record: a new one opens at the top, not
+                 where the last one was scrolled to. */
+              key={libDetail.key}
               data={detailData}
               tracks={detailTracks}
               wash={wash}
               deep={deep}
-              exact={fixedPage || darkPage}
+              tint={darkPage ? recordWash : null}
               dark={darkPage}
+              immerse={recordImmerse}
               accUI={pageAccUI}
-              palette={fixedPage || darkPage ? [] : (dt?.palette || []).slice(0, 4).map((c) => pageWash(c))}
-              genres={detailGenres}
               libDetailKey={libDetail.key}
               currentTrack={currentTrack}
               isPlaying={isPlaying}
@@ -332,11 +354,10 @@ export default function LibraryPage({
               playCountFor={playCountFor}
               showPlayCounts={showPlayCounts}
               libAlbums={libAlbums}
-              libArtists={libArtists}
-              onOpenAlbum={(key) => setLibDetail({ kind: 'album', key })}
-              onOpenArtist={(key) => setLibDetail({ kind: 'artist', key })}
+              onOpenAlbum={(key) => openLibAlbum(key)}
+              onGoArtist={openArtistAnywhere}
               onBack={() => setLibDetail(null)}
-              onChangeCover={isPl ? () => setPlCoverFor(libDetail.key) : null}
+              onChangeCover={isPl ? () => setRenamePl({ id: libDetail.key, name: detailData.title }) : null}
               onEditAlbum={!isPl && onUpdateAlbumMetadata ? () => setAlbumEditScope({
                 key: libDetail.key,
                 album: detailData.title,
@@ -347,7 +368,7 @@ export default function LibraryPage({
                 discNumber: null,
               }) : null}
               onEditPlaylist={isPl ? () => setRenamePl({ id: libDetail.key, name: detailData.title }) : null}
-              onDeletePlaylist={isPl ? () => setDeletePl({ id: libDetail.key, name: detailData.title }) : null}
+              onDeletePlaylist={isPl ? () => deletePlaylist(libDetail.key) : null}
               moreOpen={detailMore}
               setMoreOpen={setDetailMore}
               bridge={mySpotifyBridge}
@@ -381,6 +402,7 @@ export default function LibraryPage({
               playEvents={playEvents}
               onOpen={(k) => setLibDetail({ kind: 'artist', key: k })}
               onPlay={(a) => { if (a.tracks?.length) onPlayTrack?.(a.tracks[0], a.tracks); }}
+              onMenu={openArtistMenu}
               emptyNote={libFilter.trim() ? `No artists match \u201C${libFilter.trim()}\u201D.` : undefined}
             />
             <div style={{ height: 16 }} />
@@ -405,10 +427,15 @@ export default function LibraryPage({
           <div className="sth-libscroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
             {/* auto-fill, so a wider window gains columns rather than
                 gaps (brief, Albums). */}
+            {!albumsShown.length ? (
+              libFilter.trim()
+                ? <EmptyState icon={MI.album} title="No Matches" text={`No albums match “${libFilter.trim()}”.`} />
+                : <EmptyState icon={MI.album} title="No Albums Yet" text="Albums with two or more of your songs show up here." />
+            ) : null}
             <div className="sth-alb-grid" style={{ padding: '4px 3px 18px' }}>
-              {libAlbums.map((a) => (
+              {albumsShown.map((a) => (
                 <button key={a.key} type="button" className="sth-alb" style={{ textAlign: 'left' }}
-                  onClick={() => setLibDetail({ kind: 'album', key: a.key })}>
+                  onClick={() => openLibAlbum(a.key)} onContextMenu={(e) => openAlbumMenu?.(e, a)}>
                   <div className="sth-albart" style={{ width: '100%', aspectRatio: '1' }}>
                     {a.art ? <div className="sth-albimg" style={{ backgroundImage: coverLayers(a.art, '', 640) }} /> : null}
                     {/* Fades in over the artwork's lower right. */}
@@ -419,7 +446,9 @@ export default function LibraryPage({
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginTop: 12, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}</div>
                   <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {a.artist} · {a.tracks.length} track{a.tracks.length === 1 ? '' : 's'}
+                    {/* Every card's line: type · artist · year, as needed. Here
+                        the type is the page's own. */}
+                    {[a.artist, a.tracks.find((t) => Number(t.year) > 1000)?.year].filter(Boolean).join(' · ')}
                   </div>
                 </button>
               ))}
@@ -456,7 +485,7 @@ export default function LibraryPage({
               <div>Title</div>
               <div>Artist</div>
               <div className="sth-lcol-album">Album</div>
-              <div className="sth-lcol-date">Date added</div>
+              <div className="sth-lcol-date">Date Added</div>
               <div style={{ textAlign: 'center' }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle' }}>
                   <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
@@ -565,13 +594,10 @@ export default function LibraryPage({
             })()}
           </div>
         ) : (
-          <div style={{ fontSize: 12.5, color: 'rgba(var(--st-sub-rgb), 0.4)', lineHeight: 1.6, paddingTop: 8 }}>
-            {library.length
-              ? (view === 'songs' && libFilter.trim()
-                ? `No songs match “${libFilter.trim()}”.`
-                : 'Nothing here yet.')
-              : 'Your library is empty. Import music from Home, or drag files onto the window.'}
-          </div>
+          library.length && libFilter.trim()
+            ? <EmptyState icon={MI.album} title="No Matches" text={`No songs match “${libFilter.trim()}”.`} />
+            : <EmptyState icon={MI.album} title={library.length ? 'Nothing Here Yet' : 'Your Library Is Empty'}
+              text={library.length ? null : 'Import music with Import above, or drag files onto the window.'} />
         )}
       </div>
       )}

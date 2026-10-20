@@ -1,7 +1,7 @@
 /** UI fonts: rounded only. Google Fonts load on demand; fonts you add
  *  yourself (Settings → Font) live in customFonts.js. */
 
-export const FONT_GROUPS = ['My fonts', 'Rounded', 'Rounded · Bold'];
+export const FONT_GROUPS = ['My Fonts', 'Rounded', 'Rounded · Bold'];
 
 const UI_FONT_PRESETS = [
   {
@@ -71,7 +71,7 @@ function customToPreset(f) {
     label: f.label,
     stack: `'${f.family}', 'Nunito', system-ui, sans-serif`,
     google: null,
-    group: 'My fonts',
+    group: 'My Fonts',
     isCustom: true,
     weights: f.weights || [],
   };

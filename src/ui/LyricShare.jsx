@@ -167,7 +167,7 @@ export default function LyricShare({
     () => lines.map((l) => String(l || '').trim()).filter(Boolean),
     [lines],
   );
-  const title = (track?.title || '').trim() || 'Unknown track';
+  const title = (track?.title || '').trim() || 'Unknown song';
   const artist = (track?.artist || '').trim() || 'Unknown artist';
 
   const stamp = useMemo(() => {
@@ -462,7 +462,7 @@ export default function LyricShare({
     await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
     onNotify?.(true, 'Lyric card copied.');
     onClose?.();
-  }, "Couldn't copy the lyric card."), [withCanvas, onNotify, onClose]);
+  }, "Couldn’t copy the lyric card."), [withCanvas, onNotify, onClose]);
 
   const save = useCallback(() => withCanvas(async (blob) => {
     const safe = `${artist} - ${title}`.replace(/[^\w\s-]/g, '').trim().slice(0, 60) || 'lyrics';
@@ -473,7 +473,7 @@ export default function LyricShare({
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     onNotify?.(true, 'Lyric card saved.');
     onClose?.();
-  }, "Couldn't save the lyric card."), [withCanvas, onNotify, onClose, artist, title]);
+  }, "Couldn’t save the lyric card."), [withCanvas, onNotify, onClose, artist, title]);
 
   /* ---------- UI ---------------------------------------------------------
    * The card IS the interface. With nothing left to configure, the old 260px

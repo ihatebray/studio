@@ -8,6 +8,45 @@
 
 export const CHANGELOG = [
   {
+    version: '0.1.0',
+    date: '2026-10-20',
+    sections: [
+      {
+        heading: 'Important Note',
+        items: [
+          { lead: 'What’s Next', text: 'For the next couple of updates, they will heavily focus on bug fixes, UI polish and smaller refinements to make Studio more consistent and reliable. Bigger features will follow once these foundations are in a great place.' },
+        ],
+      },
+      {
+        heading: 'New',
+        items: [
+          { lead: 'One Album View', text: 'Every album opens in the same view as search, yours or Spotify’s. That includes the Albums tab, Home, Spotify links, countdowns and Go to Album. Choose Dark, Color, Full Color or Immerse right in the view. Auto follows your settings. Album & Playlist layouts have been removed.' },
+          { lead: 'Playing From', text: 'The playlist or album you’re playing (through Search or the Home Page) appears beside the artist in the Now Playing bar. Click it to reopen the source with the current song selected. It’s also available from the … menu. This is a work in progress and will be improved over time to work in other areas.' },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Undo', text: 'Deleting a playlist, removing a song from a playlist or removing a song from the queue now happens immediately without needing confirmation, with Undo available to restore it. Only Clear Library and Delete Everything require confirmation.' },
+          { lead: 'Empty Lists', text: 'Empty lists and searches with no matches now share a consistent layout.' },
+          { lead: 'Fullscreen', text: 'The tabs now follow the same order as the side panel: Queue, Lyrics, Info.' },
+          { lead: 'New Releases', text: 'One-song releases can be played from their row and saved with the button at the end without needing to open them first.' },
+          { lead: 'Settings', text: 'Spotify Links and Link Card are now under the Connections tab.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed a playlist song’s menu offering to remove its whole album from your library.',
+          'Fixed searching on the Albums page not filtering the albums.',
+          'Fixed monthly listeners showing twice on artist pages.',
+          'Fixed A LOT more UI inconsistencies and bugs across the entire app, including but not limited to: page views, layouts, buttons, text, menus and more.',
+          'Removed unused code in multiple areas.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.0.9',
     date: '2026-10-18',
     sections: [
@@ -196,7 +235,7 @@ export const CHANGELOG = [
         heading: 'New',
         items: [
           { lead: 'Playback', text: 'Songs on artist pages and in search can now be played without being saved to your library.' },
-          { lead: 'Unreleased Songs', text: 'Songs that aren\'t out yet are shown but locked. They can\'t be played or saved until their release date.' },
+          { lead: 'Unreleased Songs', text: 'Songs that aren’t out yet are shown but locked. They can’t be played or saved until their release date.' },
         ],
       },
       {

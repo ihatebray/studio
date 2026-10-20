@@ -387,8 +387,8 @@ export function SpotifyCredsPanel({ onSaved, onStatus, compact = false, onValidC
             Open the <ExtLink href="https://developer.spotify.com/dashboard">Spotify Developer Dashboard</ExtLink>
             {' '}and log in with your Spotify account. The first time, accept the developer terms (and confirm your email if it asks).
           </li>
-          <li>Click <Lit>Create app</Lit>. The name and description can be anything; only you see them.</li>
-          <li>Under Redirect URIs enter <Lit>http://127.0.0.1:8888/callback</Lit> and click Add. Spotify requires one even though Studio never uses it. It must be <Lit>127.0.0.1</Lit>; Spotify no longer accepts <Lit>localhost</Lit>.</li>
+          <li>Click <Lit>Create app</Lit>. The name and description can be anything. Only you see them.</li>
+          <li>Under Redirect URIs enter <Lit>http://127.0.0.1:8888/callback</Lit> and click Add. Spotify requires one even though Studio never uses it. It must be <Lit>127.0.0.1</Lit>. Spotify no longer accepts <Lit>localhost</Lit>.</li>
           <li>Under “Which API/SDKs are you planning to use?” tick <Lit>Web API</Lit>, agree to the terms, and click Save.</li>
           <li>On the app’s page, open <Lit>Settings</Lit>. Copy the <strong>Client ID</strong> shown under Basic Information.</li>
           <li>Click <Lit>View client secret</Lit> just below it and copy that too. Paste both here.</li>
@@ -470,8 +470,8 @@ export function SoulseekCredsPanel({ compact = false, onStatus, onSaved }) {
     setTesting(true); setMsg(null);
     try {
       const res = await api()?.soulseekTest?.();
-      if (res?.ok) setMsg({ ok: true, text: 'Connected — Soulseek is ready.' });
-      else setMsg({ ok: false, text: res?.error || 'Connection failed — check the login.' });
+      if (res?.ok) setMsg({ ok: true, text: 'Connected. Soulseek is ready.' });
+      else setMsg({ ok: false, text: res?.error || 'Connection failed. Check the login.' });
     } catch (e) {
       setMsg({ ok: false, text: String(e?.message || e) });
     }
@@ -483,7 +483,7 @@ export function SoulseekCredsPanel({ compact = false, onStatus, onSaved }) {
       <HowTo open={false} label={compact ? 'Where do I find these?' : 'What username should I use?'}>
         <Steps>
           <li>Soulseek has no signup page. Pick any username and password here and the account is created the first time you log in.</li>
-          <li>If the name is already taken the login fails — try another. <Lit>Test Connection</Lit> below tells you either way.</li>
+          <li>If the name is already taken, the login fails, so try another. <Lit>Test Connection</Lit> below tells you either way.</li>
           <li>Nothing is shared from your machine unless you set up sharing in the official Soulseek client.</li>
         </Steps>
         <div style={{ marginTop: 10, fontSize: 11.5, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6 }}>
@@ -581,7 +581,7 @@ function SpotifySignInPanel({ onSignedIn }) {
             <div className="st-onb-signed-name">{st.displayName || 'Signed in'}</div>
             <div className="st-onb-signed-sub">
               {st.product ? `${st.product.charAt(0).toUpperCase()}${st.product.slice(1)} account` : 'Spotify account'}
-              {st.product && !premium ? ' · songs play once you’re on Premium; everything else works now' : ''}
+              {st.product && !premium ? ' · Songs play once you’re on Premium. Everything else works now.' : ''}
             </div>
           </div>
         </div>
@@ -706,7 +706,7 @@ function PlaylistImportPanel({ onCreatePlaylist, onAddTracksToPlaylist, onImport
       <div className="st-pli-foot">
         {finished !== null ? (
           <>
-            <span>{finished ? `Added ${finished} ${finished === 1 ? 'playlist' : 'playlists'}. They’re under Playlists in the sidebar.` : 'Nothing could be added this time; you can try again later from My Spotify.'}</span>
+            <span>{finished ? `Added ${finished} ${finished === 1 ? 'playlist' : 'playlists'}. They’re under Playlists in the sidebar.` : 'Nothing could be added this time. You can try again later from My Spotify.'}</span>
             <button type="button" className="st-btn st-btn-primary" style={{ marginLeft: 'auto' }} onClick={onDone}>Continue</button>
           </>
         ) : (
@@ -828,7 +828,7 @@ function DiscordPanel({ discord }) {
 const SETUP_STEPS = [
   { id: 'account', label: 'Spotify' },
   { id: 'playlists', label: 'Playlists' },
-  { id: 'keys', label: 'Backup search' },
+  { id: 'keys', label: 'Backup Search' },
   { id: 'soulseek', label: 'Soulseek' },
   { id: 'discord', label: 'Discord' },
 ];
@@ -953,11 +953,11 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
 
             <div className="st-onb-feats">
               {[
-                { hue: HUES.peach, delay: 0.9, title: 'One library', body: 'Your Spotify songs, playlists and own files, together in one place.',
+                { hue: HUES.peach, delay: 0.9, title: 'One Library', body: 'Your Spotify songs, playlists and own files, together in one place.',
                   icon: <><path d="M9 18V5.5l11-2V16" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="17.5" cy="16" r="2.5" /></> },
-                { hue: HUES.violet, delay: 1.0, title: 'Make it yours', body: 'Colors drawn from the artwork, with layouts and fonts to suit you.',
+                { hue: HUES.violet, delay: 1.0, title: 'Make It Yours', body: 'Colors drawn from the cover art, with layouts and fonts to suit you.',
                   icon: <><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></> },
-                { hue: HUES.mint, delay: 1.1, title: 'Live in it', body: 'Synced lyrics you can fix yourself, credits and the artist behind every song.',
+                { hue: HUES.mint, delay: 1.1, title: 'Live in It', body: 'Synced lyrics you can fix yourself, credits and the artist behind every song.',
                   icon: <><path d="M6.6 4.5h10.8a3 3 0 0 1 3 3v6.6a3 3 0 0 1-3 3H12l-3.9 3.4v-3.4H6.6a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3z" /><path fill="currentColor" stroke="none" d="M9.90 8.30A1.30 1.30 0 0 1 11.20 9.60C11.20 11.20 10.30 12.40 8.80 13.00L8.50 12.50C9.40 12.00 9.80 11.40 9.90 10.90A1.30 1.30 0 0 1 9.90 8.30Z M14.30 8.30A1.30 1.30 0 0 1 15.60 9.60C15.60 11.20 14.70 12.40 13.20 13.00L12.90 12.50C13.80 12.00 14.20 11.40 14.30 10.90A1.30 1.30 0 0 1 14.30 8.30Z" /></> },
                 { hue: HUES.pink, delay: 1.2, title: 'Keep up', body: 'Follow artists for their new releases, with countdowns to what\u2019s next.',
                   icon: <path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z" /> },
@@ -977,7 +977,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
 
             <div style={{ marginTop: 38, animation: 'stRise 0.6s cubic-bezier(0.34,1.4,0.5,1) 1.34s both' }}>
               <button type="button" className="st-onb-cta" onClick={() => go('account')}>
-                Let&rsquo;s go
+                Let&rsquo;s Go
               </button>
             </div>
           </div>
@@ -987,13 +987,13 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
           <StepCard
             progress={{ i: stepN, n: setupSteps.length, label: 'Spotify' }}
             title="Sign in to Spotify"
-            subtitle="This is what plays Spotify songs in Studio and fills My Spotify, artist pages and search. Songs play with Premium; everything else works on any account."
+            subtitle="This is what plays Spotify songs in Studio and fills My Spotify, artist pages and search. Songs play with Premium. Everything else works on any account."
             onBack={back}
             hue={HUES.green}
             icon={<><path d="M8 11.5c2.7-.8 6-.5 8.4 1" /><path d="M7.4 8.6c3.3-1 7.6-.7 10.6 1.1" /><path d="M8.6 14.3c2-.5 4.3-.3 6.2.8" /><circle cx="12" cy="12" r="9" /></>}
           >
             <SpotifySignInPanel onSignedIn={() => { timerRef.current = setTimeout(() => go('playlists'), 1100); }} />
-            <SkipRow onSkip={() => go('keys')} label="Skip for now — I'll sign in later" />
+            <SkipRow onSkip={() => go('keys')} label="Skip for Now" />
           </StepCard>
         ) : null}
 
@@ -1001,20 +1001,20 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
           <StepCard
             progress={{ i: stepN, n: setupSteps.length, label: 'Playlists' }}
             title="Bring your playlists"
-            subtitle="Pick any of your Spotify playlists and Studio makes them here too, with the same name, cover and songs. The songs play through your Spotify account; nothing is downloaded."
+            subtitle="Pick any of your Spotify playlists and Studio makes them here too, with the same name, cover and songs. The songs play through your Spotify account. Nothing is downloaded."
             onBack={back}
             hue={HUES.pink}
             icon={<><path d="M4 6h12M4 11h12M4 16h7" /><circle cx="17.5" cy="16.5" r="2.5" /><path d="M20 16.5V8" /></>}
           >
             <PlaylistImportPanel onCreatePlaylist={onCreatePlaylist} onAddTracksToPlaylist={onAddTracksToPlaylist}
               onImported={onImported} onDone={() => go('keys')} />
-            <SkipRow onSkip={() => go('keys')} label="Skip — I'll do it later" />
+            <SkipRow onSkip={() => go('keys')} label="Skip for Now" />
           </StepCard>
         ) : null}
 
         {step === 'keys' ? (
           <StepCard
-            progress={{ i: stepN, n: setupSteps.length, label: 'Backup search' }}
+            progress={{ i: stepN, n: setupSteps.length, label: 'Backup Search' }}
             title="Add backup search keys"
             subtitle="Optional. A free Spotify developer app gives Studio a second way to search and fill in song details when your sign-in is busy or rate-limited. About a minute."
             onBack={back}
@@ -1022,7 +1022,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
             icon={<><circle cx="8" cy="15" r="4" /><path d="M10.8 12.2 20 3M17 6l3 3M15 8l2 2" /></>}
           >
             <SpotifyCredsPanel onSaved={() => { onSpotifyCredsSaved?.(); timerRef.current = setTimeout(() => go('soulseek'), 700); }} />
-            <SkipRow onSkip={() => go('soulseek')} label="Skip — sign-in covers it" />
+            <SkipRow onSkip={() => go('soulseek')} label="Skip, Sign-In Covers It" />
           </StepCard>
         ) : null}
 
@@ -1030,7 +1030,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
           <StepCard
             progress={{ i: stepN, n: setupSteps.length, label: 'Soulseek' }}
             title="Add a second source"
-            subtitle="Soulseek finds the rare stuff, usually in better quality. Totally optional; skip it and nothing breaks."
+            subtitle="Soulseek finds the rare stuff, usually in better quality. Totally optional. Skip it and nothing breaks."
             onBack={back}
             hue={HUES.peach}
             icon={<><path d="M12 3v12" /><path d="M8 11l4 4 4-4" /><path d="M4 19h16" /></>}
@@ -1085,7 +1085,7 @@ export default function StudioOnboarding({ onComplete, onSpotifyCredsSaved, onCr
             </div>
 
             <div style={{ marginTop: 32, animation: 'stRise 0.6s cubic-bezier(0.34,1.4,0.5,1) 0.58s both' }}>
-              <button type="button" className="st-onb-cta" onClick={onComplete}>Show me around</button>
+              <button type="button" className="st-onb-cta" onClick={onComplete}>Show Me Around</button>
             </div>
           </div>
         ) : null}

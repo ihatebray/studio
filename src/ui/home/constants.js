@@ -85,8 +85,6 @@ export const THEME_DEFAULTS = {
   accent: null,             // unused; the accent is white — see `const accent`
   detailMode: 'cover',      // 'cover' | 'fixed' — album/playlist page wash
   detailColor: '70, 84, 190',
-  recordLayout: 'colour',   // album page layout; see RECORD_LAYOUTS in RecordPage.jsx
-  playlistLayout: null,     // playlist page layout; null = the same as albums
   showHome: true,
   autoFollow: true,         // follow (in Studio) artists with more than 5 songs in the library           // My Spotify → Home in the sidebar; off moves countdowns to New Releases
   linkWatch: true,          // offer to open Spotify links copied in other apps
@@ -220,9 +218,10 @@ export const NP_PANEL_TABS = [
  * The strip across the top is the window's drag region — the top bar is
  * covered, and a frameless window needs something to hold.
  */
+/* Same order as the side panel's tabs. */
 export const NP_FULL_TABS = [
-  ['lyrics', 'Lyrics', 'L'],
   ['queue', 'Queue', 'Q'],
+  ['lyrics', 'Lyrics', 'L'],
   ['info', 'Info', 'I'],
 ];
 
@@ -242,4 +241,4 @@ export const PICKER_PRESETS = [
   '#d8c04a', '#4ca86a', '#3f9fd0', '#ffffff',
 ];
 
-export const SORT_LABELS = { title: 'Title', artist: 'Artist', album: 'Album', recent: 'Recently added' };
+export const SORT_LABELS = { title: 'Title', artist: 'Artist', album: 'Album', recent: 'Recently Added' };

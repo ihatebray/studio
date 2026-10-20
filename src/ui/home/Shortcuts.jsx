@@ -168,7 +168,7 @@ export function ShortcutsDialog({ onClose, dark = false }) {
         <div className="sks-head">
           <b>Keyboard Shortcuts</b>
           <span>Press ? anywhere to open this.</span>
-          <button type="button" className="sks-esc" onClick={onClose} aria-label="Close">esc</button>
+          <button type="button" className="sks-esc" onClick={onClose} aria-label="Close">Esc</button>
         </div>
         <div className="sks-body sth-libscroll">
           {SHORTCUTS.map((g) => (

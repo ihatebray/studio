@@ -4,7 +4,7 @@ import { addFontFiles, removeCustomFont } from '../../lib/customFonts.js';
 
 /* Settings → Font. Every option is drawn in its own face, so picking is by
    eye. Fonts you own (Modulus Pro and the like) are added as files and
-   kept in the app, under My fonts. */
+   kept in the app, under My Fonts. */
 
 const SAMPLE = 'Pink + White · Frank Ocean';
 
@@ -69,7 +69,7 @@ export default function FontSettings({ uiFontId, onSetUiFontId }) {
       setMsg(parts.join(' '));
       if (added.length === 1) onSetUiFontId?.(`custom-${added[0].toLowerCase().replace(/[^a-z0-9]+/g, '-')}`);
     } catch (err) {
-      setMsg(`Couldn't add those files: ${err?.message || err}`);
+      setMsg(`Couldn’t add those files: ${err?.message || err}`);
     } finally {
       setBusy(false);
     }
@@ -123,7 +123,7 @@ export default function FontSettings({ uiFontId, onSetUiFontId }) {
 
       {FONT_GROUPS.map((group) => {
         const list = shown.filter((p) => p.group === group);
-        const mine = group === 'My fonts';
+        const mine = group === 'My Fonts';
         if (!mine && !list.length) return null;
         if (mine && q && !list.length) return null;
         return (
@@ -141,7 +141,7 @@ export default function FontSettings({ uiFontId, onSetUiFontId }) {
               <>
                 <input ref={fileRef} type="file" multiple accept=".woff2,.woff,.ttf,.otf" hidden onChange={onFiles} />
                 <p className="stf-note">
-                  Select all of a font&apos;s files at once, like ModulusPro-Regular.otf and ModulusPro-Bold.otf.
+                  Select all of a font’s files at once, like ModulusPro-Regular.otf and ModulusPro-Bold.otf.
                   Files with matching names become one font. Studio keeps a copy so the originals can stay where
                   they are.
                 </p>

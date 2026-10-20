@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../lib/format.js';
+import { EmptyState } from './common.jsx';
 import { artistEntry, entryLabel, sameEntry, songEntry } from '../../lib/srBlock.js';
 
 /* Settings → Connections → Twitch → Blocked Songs.
@@ -175,7 +176,7 @@ export function BlockedSongsManager({ list, onChange, onClose, pushToast }) {
   const remove = (b) => {
     onChange((l) => l.filter((x) => !sameEntry(x, b)));
     pushToast?.({
-      message: `${entryLabel(b)} can be requested again`,
+      message: `${entryLabel(b)} can be requested again.`,
       action: { label: 'Undo', onClick: () => onChange((l) => (l.some((x) => sameEntry(x, b)) ? l : [...l, b])) },
     });
   };
@@ -289,10 +290,9 @@ export function BlockedSongsManager({ list, onChange, onClose, pushToast }) {
             </div>
           </>
         ) : (
-          <div className="stbl-empty">
-            <b>Nothing blocked yet</b>
-            <span>Search above to block a song, or every song by an artist. You can also block a song from its menu.</span>
-          </div>
+          <EmptyState title="Nothing Blocked Yet"
+            icon={<><circle cx="12" cy="12" r="9" /><path d="M5.6 5.6l12.8 12.8" /></>}
+            text="Search above to block a song, or every song by an artist. You can also block a song from its menu." />
         )}
       </div>
     </div>,

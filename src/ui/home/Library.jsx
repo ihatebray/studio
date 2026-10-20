@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { formatTime } from '../../lib/mediaUtils.js';
 import { CompactVizSlot } from '../CompactVisualizer.jsx';
 import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
-import { PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
+import { MENU_SURFACE, MI, MenuItem, PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
 import { SORT_LABELS } from './constants.js';
 
 /* =========================================================================
@@ -17,25 +17,16 @@ import { SORT_LABELS } from './constants.js';
 
 
 
-export function ImportMenuItem({ label, hint, onClick }) {
-  const [h, setH] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
-      style={{
-        display: 'block', width: '100%', textAlign: 'left',
-        padding: '7px 9px', borderRadius: 8, border: 'none', cursor: 'pointer',
-        background: h ? 'rgba(var(--st-fg-rgb), 0.08)' : 'transparent',
-        transition: 'background 0.13s ease',
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--st-text)' }}>{label}</div>
-      <div style={{ fontSize: 10, color: 'rgba(var(--st-sub-rgb), 0.42)', marginTop: 1 }}>{hint}</div>
-    </button>
-  );
+/* A row in the Import and + menus: the shared menu item, with its hint
+   under the label. */
+export const IMPORT_ICONS = {
+  files: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>,
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  spotify: <><path d="M12 4v11" /><path d="M7 10l5 5 5-5" /><path d="M5 20h14" /></>,
+  playlist: MI.playlist,
+};
+export function ImportMenuItem({ label, hint, icon, onClick }) {
+  return <MenuItem accentRgb="var(--accent-rgb)" icon={icon} label={label} sub={hint} onClick={onClick} />;
 }
 
 /**
@@ -105,7 +96,7 @@ function LibFilterTag({ filter, onFilter, label = 'Search' }) {
       <button
         type="button"
         className="sth-libtag-btn"
-        aria-label={expanded ? label : `${label} — open`}
+        aria-label={expanded ? label : `${label}, open`}
         aria-expanded={expanded}
         title={label}
         onClick={() => {
@@ -136,7 +127,7 @@ function LibFilterTag({ filter, onFilter, label = 'Search' }) {
         }}
       />
       {filter ? (
-        <button type="button" className="sth-libtag-x" title="Clear search (esc)" aria-label="Clear search"
+        <button type="button" className="sth-libtag-x" title="Clear Search (Esc)" aria-label="Clear search"
           onClick={close}>
           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
         </button>
@@ -189,7 +180,7 @@ function LibSortMenu({ value, field, onPick }) {
           {value ? (
             <button type="button" role="menuitem" className="sth-libsortitem sth-libsortitem-reset"
               onClick={() => { onPick(null); setOpen(false); }}>
-              Match the view
+              Match the View
             </button>
           ) : null}
         </div>
@@ -242,7 +233,7 @@ export function LibHeader({
         {onPlayAll ? (
           <button type="button" className="sth-libact sth-libact-primary" onClick={onPlayAll} style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
             <PlayIcon size={13} />
-            <span className="sth-libact-label">Play all</span>
+            <span className="sth-libact-label">Play All</span>
           </button>
         ) : null}
         {onShuffle ? (
@@ -287,7 +278,7 @@ function LibImportMenu({ open, onOpen, importing, onImportFiles, onImportFolder,
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}>
       <button type="button" className="sth-libact" onClick={() => onOpen(!open)} disabled={importing}
-        title="Import music" aria-label="Import music" aria-haspopup="menu" aria-expanded={open}
+        title="Import Music" aria-label="Import Music" aria-haspopup="menu" aria-expanded={open}
         style={{ flexShrink: 0, whiteSpace: 'nowrap', opacity: importing ? 0.5 : 1 }}>
         {importing ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
@@ -308,19 +299,13 @@ function LibImportMenu({ open, onOpen, importing, onImportFiles, onImportFolder,
               here has to dodge the button's own click, which is where that
               pattern usually goes wrong. */}
           <div onClick={() => onOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
-          <div role="menu" style={{
-            position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 41,
-            minWidth: 196, padding: 5, borderRadius: 11,
-            background: 'var(--st-dark-float, rgb(18, 18, 21))',
-            border: '1px solid rgba(var(--st-fg-rgb), 0.1)',
-            boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
-          }}>
+          <div role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 41, width: 236, ...MENU_SURFACE }}>
             {onImportFiles ? (
-              <ImportMenuItem label="Import files…" hint="Pick individual tracks"
+              <ImportMenuItem label="Import Files…" hint="Pick individual songs" icon={IMPORT_ICONS.files}
                 onClick={() => { onOpen(false); onImportFiles(); }} />
             ) : null}
             {onImportFolder ? (
-              <ImportMenuItem label="Import folder…" hint="Scans subfolders too"
+              <ImportMenuItem label="Import Folder…" hint="Scans subfolders too" icon={IMPORT_ICONS.folder}
                 onClick={() => { onOpen(false); onImportFolder(); }} />
             ) : null}
             {/* Ruled off: the two above read files you already have, this one
@@ -329,9 +314,9 @@ function LibImportMenu({ open, onOpen, importing, onImportFiles, onImportFolder,
             {onImportSpotify ? (
               <>
                 {(onImportFiles || onImportFolder) ? (
-                  <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.07)', margin: '4px 6px' }} />
+                  <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.08)', margin: '4px 3px' }} />
                 ) : null}
-                <ImportMenuItem label="From Spotify…" hint="Bring over your playlists"
+                <ImportMenuItem label="Import from Spotify…" hint="Bring over your playlists" icon={IMPORT_ICONS.spotify}
                   onClick={() => { onOpen(false); onImportSpotify(); }} />
               </>
             ) : null}

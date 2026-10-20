@@ -1,9 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-/* The DOCK's editor. LyricsEditor stays where it is — the fullscreen stage it
-   was designed for is unchanged — but a full-height textarea and two
-   side-by-side actions don't shrink into a 360px column, so the panel gets its
-   own. Same props, same onSave contract. See PanelLyricsEditor. */
 import { StudioMotionStyles } from './StudioOnboarding.jsx';
 import { useToast, setToastLayout, OPEN_NOTICES_EVENT } from './Toasts.jsx';
 import { useDownloadProgress, VideoPicker } from './sharedUI.jsx';
@@ -13,8 +9,8 @@ import { LyricsPickerButton } from './LyricsPicker.jsx';
 const MetadataEditor = React.lazy(() => import('./MetadataEditor.jsx').then((m) => ({ default: m.MetadataEditor })));
 const AlbumMetadataEditor = React.lazy(() => import('./MetadataEditor.jsx').then((m) => ({ default: m.AlbumMetadataEditor })));
 const LyricShare = React.lazy(() => import('./LyricShare.jsx'));
-import { sampleCoverTheme, isFallbackTheme, recordWashSource, washSourceFor, barTone, readableAccent, accentTextColor } from '../lib/coverTheme.js';
-import { titleCollator, parseGenres } from '../lib/mediaUtils.js';
+import { sampleCoverTheme, isFallbackTheme, recordWashSource, washSourceFor, barTone, readableAccent } from '../lib/coverTheme.js';
+import { titleCollator } from '../lib/mediaUtils.js';
 import { songKey } from '../lib/instantSearch.js';
 import ArtistPage from './ArtistPage.jsx';
 import { spotifyIdOf } from '../lib/spotifyMediaElement.js';
@@ -22,11 +18,12 @@ import { connectTwitchChat, twitchChannelOf } from '../lib/twitchChat.js';
 import { blockedBy, entryLabel, sameEntry, songEntry } from '../lib/srBlock.js';
 import { CompactVizContext, COMPACT_VIZ_KEY, COMPACT_VIZ_COVER_KEY } from './CompactVisualizer.jsx';
 import { VIZ_IDS } from '../lib/compactVizStyles.js';
-import { SpotifyHome, SpotifyReleases, SpotifyLinkPanel } from './MySpotify.jsx';
+import { SpotifyHome, SpotifyReleases, loadCollection, recordFor } from './MySpotify.jsx';
 import NotificationsButton from './Notifications.jsx';
 import DarkModeButton from './home/DarkModeButton.jsx';
 import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from '../lib/studioFollows.js';
 import { notePlayContext } from '../lib/playContext.js';
+import { fullAlbumRows, mergeAlbum } from './home/RecordPage.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT } from '../lib/accentTokens.js';
 import { api, fmtMs } from '../lib/format.js';
 import { ColourStrip, makeHoverSource } from './home/ColourStrip.jsx';
@@ -36,10 +33,10 @@ import { CoverLightbox, NowPlayingBar, NowPlayingFullView, NowPlayingPanelDock }
 import { HOME_CSS } from './home/styles.js';
 import { DARK, LEGACY_SECTIONS, LIB_VIEWS, MY_SPOTIFY, MY_SPOTIFY_IDS, NP_BAR_DEFAULT, NP_PANEL_W, SIDEBAR_W, THEME_DEFAULTS, TOPBAR_H, viewTheme } from './home/constants.js';
 import WindowControls from './WindowControls.jsx';
-import { MenuItem, Modal, albumKeyOf, hexToRgb, primaryArtistOf } from './home/common.jsx';
+import { DIALOG_CSS, Dialog, MENU_SURFACE, MI, MenuHead, MenuItem, Modal, ObjectMenu, PlaylistPickList, albumKeyOf, hexToRgb, primaryArtistOf } from './home/common.jsx';
 import SettingsPage from './home/SettingsPage.jsx';
 import LibraryPage from './home/LibraryPage.jsx';
-import { ImportMenuItem } from './home/Library.jsx';
+import { IMPORT_ICONS, ImportMenuItem } from './home/Library.jsx';
 
 /** An album name for comparing: case and spacing don't count. */
 const normAlbum = (a) => String(a || '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -52,8 +49,10 @@ export default function StudioHome({
   importing = false,     // an import is in flight — disable the buttons
   queue = [],
   queueIndex = -1,
+  playSource = null,     // { item, ids }: the playlist, album or mix the queue came from (App's playTrack)
   onReorderQueue,
   onRemoveFromQueue,
+  onRestoreToQueue,      // (track, after): puts back what onRemoveFromQueue took out
   onClearQueue,          // () → App: empty up next, returns what it took out
   albumCoverOverrides = {},
   currentTrack = null,
@@ -605,13 +604,13 @@ export default function StudioHome({
       const result = onSetDiscordPresenceDetail?.(detail);
       if (result?.catch) result.catch((e) => {
         console.error('[discordPresenceDetail]', e);
-        pushToast?.({ message: 'Could not save the Discord profile detail.', kind: 'error' });
+        pushToast?.({ message: 'Couldn’t save the Discord profile detail.', kind: 'error' });
       });
     } catch (e) {
       // A parent integration mismatch must not crash Settings. The parent should
       // still be corrected to pass its dedicated Discord detail setter.
       console.error('[discordPresenceDetail]', e);
-      pushToast?.({ message: 'Could not save the Discord profile detail.', kind: 'error' });
+      pushToast?.({ message: 'Couldn’t save the Discord profile detail.', kind: 'error' });
     }
   }, [onSetDiscordPresenceDetail, pushToast]);
 
@@ -665,7 +664,7 @@ export default function StudioHome({
       let spotifyUrl = directUrl;
       if (!spotifyUrl) {
         if (!api?.spotifySearch) {
-          pushToast?.({ message: 'Spotify isn\'t connected.', kind: 'error' });
+          pushToast?.({ message: 'Spotify isn’t connected.', kind: 'error' });
           return;
         }
         const result = await api.spotifySearch(`${t.title || ''} ${t.artist || ''}`.trim());
@@ -680,7 +679,7 @@ export default function StudioHome({
             && (!wantA || ra.includes(wantA));
         });
         if (!hit) {
-          pushToast?.({ message: `Couldn't find "${t.title}" on Spotify.`, kind: 'error', durationMs: 5000 });
+          pushToast?.({ message: `Couldn’t find “${t.title}” on Spotify.`, kind: 'error', durationMs: 5000 });
           return;
         }
         spotifyUrl = hit.spotifyUrl;
@@ -691,7 +690,7 @@ export default function StudioHome({
       pushToast?.({ message: 'Spotify link copied', kind: 'success' });
     } catch (e) {
       console.error('[copySpotifyLink]', e);
-      pushToast?.({ message: 'Could not copy the link. Please try again.', kind: 'error' });
+      pushToast?.({ message: 'Couldn’t copy the link. Please try again.', kind: 'error' });
     } finally {
       setSharing(null);
     }
@@ -710,7 +709,7 @@ export default function StudioHome({
   const [pick, setPick] = useState(null); // { meta, seed, dlKey } | null
   const openPicker = useCallback((meta, res, dlKey) => {
     // A failed Save (not signed in, no Spotify match) has no video to pick.
-    if (res?.noPicker) { toastError(res.error, `Couldn't save "${meta?.title || 'this track'}".`); return; }
+    if (res?.noPicker) { toastError(res.error, `Couldn’t save “${meta?.title || 'this song'}”.`); return; }
     const seed = res && Array.isArray(res.candidates) ? res.candidates : null;
     setPick({ meta, seed, dlKey });
   }, [toastError]);
@@ -743,7 +742,28 @@ export default function StudioHome({
     const want = normAlbum(album);
     return copies.find((t) => normAlbum(t.album) === want) || null;
   }, [ownedByKey]);
-  const alreadyOwned = useCallback((title, artists, album) => !!ownedTrackFor(title, artists, album), [ownedTrackFor]);
+  /* The Spotify songs in your library, by id: the exact match, checked
+     before the looser title, artist and album one. */
+  const ownedSids = useMemo(() => {
+    const m = new Set();
+    for (const t of library) { const sid = spotifyIdOf(t); if (sid) m.add(sid); }
+    return m;
+  }, [library]);
+  const alreadyOwned = useCallback((title, artists, album, sid = null) => (!!sid && ownedSids.has(sid)) || !!ownedTrackFor(title, artists, album), [ownedTrackFor, ownedSids]);
+  /* "Saved" means it's in your library. A save that finished stops counting
+     once that song isn't there any more (removed since, say), or every view
+     would go on showing it as saved. */
+  useEffect(() => {
+    setDlState((m) => {
+      let next = null;
+      for (const [k, v] of Object.entries(m)) {
+        if (v !== 'done' || !k.startsWith('s:') || ownedSids.has(k.slice(2))) continue;
+        if (!next) next = { ...m };
+        delete next[k];
+      }
+      return next || m;
+    });
+  }, [ownedSids]);
 
   /* Resolve a track to the artwork the app should SHOW for it.
    *
@@ -813,7 +833,7 @@ export default function StudioHome({
   const toggleCompactMode = useCallback(() => {
     const n = !compactRef.current;
     pickCompactMode(n);
-    if (n) pushToast?.({ message: 'Compact mode on. Touch the top or left edge for navigation. Ctrl+Shift+C to exit.', durationMs: 5000 });
+    if (n) pushToast?.({ message: 'Compact Mode on. Move the pointer to the top or left edge for navigation. Ctrl+Shift+C to exit.', durationMs: 5000 });
   }, [pickCompactMode, pushToast]);
   useEffect(() => {
     const onKey = (e) => {
@@ -941,7 +961,7 @@ export default function StudioHome({
       <input
         ref={inputRef}
         className="sth-searchbar-input"
-        placeholder="Search for a song, album or artist"
+        placeholder="Search songs, albums and artists"
         value=""
         readOnly
         /* Anything that focuses this — the / shortcut, a tab, a stray click
@@ -973,9 +993,9 @@ export default function StudioHome({
       markDl(key, 'failed');
       // In a "download all" batch the picker stays closed — the row goes
       // retryable and retrying it individually opens the picker.
-      if (opts.noPicker) toastError(res?.error, `Couldn't download "${row.title}".`);
+      if (opts.noPicker) toastError(res?.error, `Couldn’t download “${row.title}”.`);
       else openPicker(meta, res, key);
-    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn't download "${row.title}".`); }
+    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn’t download “${row.title}”.`); }
     return null;
   }, [onTrackImported, markDl, toastError, openPicker]);
 
@@ -990,8 +1010,8 @@ export default function StudioHome({
       });
       if (res?.ok && res.track) { onTrackImported?.(res.track); markDl(key, 'done'); return res.track; }
       markDl(key, 'failed');
-      toastError(res?.error, `Couldn't download "${row.filename}".`);
-    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn't download "${row.filename}".`); }
+      toastError(res?.error, `Couldn’t download “${row.filename}”.`);
+    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn’t download “${row.filename}”.`); }
     return null;
   }, [onTrackImported, markDl, toastError]);
 
@@ -1006,12 +1026,12 @@ export default function StudioHome({
       for (const t of got) onTrackImported?.(t);
       if (got.length) {
         markDl(key, 'done');
-        if (res?.partial) pushToast?.({ message: res.error || `Some tracks on "${alb.displayName || 'this album'}" couldn't be downloaded.`, kind: 'warning', durationMs: 7000 });
+        if (res?.partial) pushToast?.({ message: res.error || `Some songs on “${alb.displayName || 'this album'}” couldn’t be downloaded.`, kind: 'warning', durationMs: 7000 });
       } else {
         markDl(key, 'failed');
-        toastError(res?.error, `Couldn't download "${alb.displayName || 'this album'}".`);
+        toastError(res?.error, `Couldn’t download “${alb.displayName || 'this album'}”.`);
       }
-    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn't download "${alb.displayName || 'this album'}".`); }
+    } catch (e) { markDl(key, 'failed'); toastError(e?.message || e, `Couldn’t download “${alb.displayName || 'this album'}”.`); }
   }, [dlState, markDl, onTrackImported, pushToast, toastError]);
 
   /* downloadAlbumMissing and ensureAlbumTracks went with the Find page's
@@ -1175,7 +1195,7 @@ export default function StudioHome({
       const key = albName ? `${albName.toLowerCase()}::${primary.toLowerCase()}` : '::singles';
       let g = map.get(key);
       if (!g) {
-        g = { key, name: albName || 'Singles', artist: albName ? primary : 'Loose tracks', tracks: [], newest: 0, isSingles: !albName };
+        g = { key, name: albName || 'Singles', artist: albName ? primary : 'Loose songs', tracks: [], newest: 0, isSingles: !albName };
         map.set(key, g);
       }
       g.tracks.push(t);
@@ -1399,13 +1419,6 @@ export default function StudioHome({
    * `libDetail` is what you drilled INTO, kept separate from `libView` (the
    * rail selection) so closing the detail returns you to the same list rather
    * than resetting the rail. */
-  /* ---- Profile & library artwork ----------------------------------------
-   * Both are purely local presentation, so localStorage is the right home —
-   * no schema change, and clearing the library shouldn't wipe your name. */
-  const saveProfile = useCallback((next) => {
-    try { localStorage.setItem('studio:profile', JSON.stringify(next)); } catch { /* ignore */ }
-  }, []);
-  const [editProfile, setEditProfile] = useState(null);   // { name, avatar } | null
 
 
   /* Sampled theme for the library wash. Same sampler + pageWash() clamp the
@@ -1637,19 +1650,52 @@ export default function StudioHome({
      switchable in Settings so the three options can be compared on real
      records rather than by rebuilding each time. */
   const [renamePl, setRenamePl] = useState(null);     // { id, name } | null
-  const [deletePl, setDeletePl] = useState(null);     // { id, name } | null
+  /* Deleting a playlist is immediate: the toast's Undo brings it back
+     (App's deletePlaylist), so there's nothing to confirm. */
+  /* Menus for albums, playlists, artists and releases (built further down,
+     in menuLive). The openers stay the same across renders. */
+  const [objMenu, setObjMenu] = useState(null);   // { at, head, items } | null
+  const menuLive = useRef(null);
+  const openAlbumMenu = useCallback((e, src) => { e.preventDefault?.(); e.stopPropagation?.(); menuLive.current.album(e, src); }, []);
+  const openPlaylistMenu = useCallback((e, id) => { e.preventDefault?.(); e.stopPropagation?.(); menuLive.current.playlist(e, id); }, []);
+  const openArtistMenu = useCallback((e, a, image) => { e.preventDefault?.(); e.stopPropagation?.(); menuLive.current.artist(e, a, image); }, []);
+  const openItemMenu = useCallback((e, item, extra) => { e.preventDefault?.(); e.stopPropagation?.(); menuLive.current.item(e, item, extra); }, []);
+  const deletePlaylistNow = useCallback((id) => {
+    onDeletePlaylist?.(id);
+    setLibDetail((d) => (d?.kind === 'playlist' && d.key === id ? null : d));
+  }, [onDeletePlaylist]);
+  /* Taking a song out of a playlist is immediate too, with Undo putting it
+     back where it was. The playlist as it is when you press Undo, so a change
+     made since isn't lost. */
+  const playlistsRef = useRef(playlists);
+  playlistsRef.current = playlists;
+  const removeFromPlaylistNow = useCallback(async (plId, trackId) => {
+    const pl = (playlistsRef.current || []).find((p) => p.id === plId);
+    const at = (pl?.trackIds || []).indexOf(trackId);
+    const r = await onRemoveFromPlaylist?.(plId, trackId);
+    if (r && r.ok === false) {
+      pushToast?.({ message: `Couldn’t remove it from ${pl?.name || 'that playlist'}.`, kind: 'error' });
+      return r;
+    }
+    pushToast?.({
+      message: `Removed from ${pl?.name || 'playlist'}`,
+      action: onAddTracksToPlaylist ? {
+        label: 'Undo',
+        onClick: async () => {
+          const now = ((playlistsRef.current || []).find((p) => p.id === plId)?.trackIds || []).filter((id) => id !== trackId);
+          const back = await onAddTracksToPlaylist(plId, [trackId]);
+          if (back && back.ok === false) return;
+          if (onReorderPlaylist && at >= 0 && at < now.length) {
+            onReorderPlaylist(plId, [...now.slice(0, at), trackId, ...now.slice(at)]);
+          }
+        },
+      } : null,
+    });
+    return r;
+  }, [onRemoveFromPlaylist, onAddTracksToPlaylist, onReorderPlaylist, pushToast]);
   const [albumEditScope, setAlbumEditScope] = useState(null);  // AlbumMetadataEditor scope
-  const [plCoverFor, setPlCoverFor] = useState(null); // playlist id whose cover is being set
-  const [addSongsTo, setAddSongsTo] = useState(null); // playlist id we're adding tracks to
-  const [addSongsQuery, setAddSongsQuery] = useState('');
-  /* The playlist picker — the inverse of addSongsTo. That sheet picks SONGS
-     for one playlist; this one picks PLAYLISTS for one song.
-     { track, initial: [plId], sel: [plId] } — `initial` is which playlists
-     already held the song when the sheet opened, so Done can work out the
-     difference rather than blindly re-adding everything ticked. */
+  /* The Now Playing bar's playlist popover: { track, x, y, above }. */
   const [plPicker, setPlPicker] = useState(null);
-  const [plPickerQuery, setPlPickerQuery] = useState('');
-  const [plPickerNew, setPlPickerNew] = useState(null); // typed name while creating, or null
   // Clear the filter when you open a different record — carrying it over makes
   // a full album look half-empty.
   useEffect(() => { setDetailFilter(''); }, [libDetail?.key]);
@@ -1974,11 +2020,13 @@ export default function StudioHome({
     setLibDetail({ kind: 'artist', key });
   }, [libArtists]);
 
+  // Your albums open in search's album view (openLibAlbum, further down).
+  const openLibAlbumRef = useRef(null);
   const openAlbumFromRow = useCallback((t) => {
     const key = albumKeyOf(t);
-    if (!key || key === '::' || !libAlbums.some((a) => a.key === key)) return;
-    setLibDetail({ kind: 'album', key });
-  }, [libAlbums]);
+    if (!key || key === '::' || !(t.album || '').trim()) return;
+    openLibAlbumRef.current?.(key, t);
+  }, []);
 
   /** Follow state for an artist page: Studio's own follows (studioFollows.js),
    *  the list New Releases reads. Following here doesn't touch Spotify. */
@@ -1992,7 +2040,7 @@ export default function StudioHome({
       return;
     }
     const r = await followArtist({ spotifyId: artist.spotifyId, name: artist.name, image: artist.art || artist.image });
-    if (r?.ok) pushToast?.({ message: `Following ${artist.name}`, kind: 'success', durationMs: 3500, detail: 'Their new albums and singles show up in My Spotify → New Releases. This is Studio’s own follow; nothing changes on Spotify.', log: false });
+    if (r?.ok) pushToast?.({ message: `Following ${artist.name}`, kind: 'success', durationMs: 3500, detail: 'Their new albums and singles show up in My Spotify → New Releases. This is Studio’s own follow. Nothing changes on Spotify.', log: false });
     else pushToast?.({ message: r?.error || `Couldn’t follow ${artist.name}`, kind: 'error', source: 'Follow' });
   }, [studioFollows, pushToast]);
 
@@ -2143,22 +2191,6 @@ export default function StudioHome({
       : null
   ), [libDetail, onReorderPlaylist, detailFilter, movePlaylistSong]);
 
-  /** Genres present on the open record, for the pill row. One pill per genre:
-   *  a track tagged "Emo Rap; Alternative Rock" contributes two, rather than
-   *  rendering the raw delimited string inside a single pill. */
-  const detailGenres = useMemo(() => {
-    if (!detailData) return [];
-    const seen = new Map();
-    for (const t of detailData.tracks) {
-      for (const g of parseGenres(t.genre)) {
-        const k = g.toLowerCase();
-        seen.set(k, (seen.get(k) || { g, n: 0 }));
-        seen.get(k).n += 1;
-      }
-    }
-    return [...seen.values()].sort((a, b) => b.n - a.n).slice(0, 6).map((x) => x.g);
-  }, [detailData]);
-
   const libTitle = useMemo(() => {
     if (libView.startsWith('pl:')) {
       const pl = playlists.find((x) => x.id === libView.slice(3));
@@ -2223,7 +2255,6 @@ export default function StudioHome({
    * which the collator sorts to the front.
    */
   const libAzIndex = useMemo(() => {
-    if (libFilter.trim()) return null;
     // Follows the effective sort. Keyed to the view instead, the rail would
     // jump to "M" by title while the list was ordered by artist.
     const field = libSortField === 'recent' ? null : libSortField;
@@ -2235,8 +2266,9 @@ export default function StudioHome({
       if (!map.has(letter)) map.set(letter, i);
     });
     // One letter means every row starts the same way — a rail with a single
-    // live target is just clutter.
-    return map.size > 1 ? map : null;
+    // live target is just clutter. While searching it stays (letters with no
+    // match dim), so the columns don't shift as you type.
+    return map.size > 1 || libFilter.trim() ? map : null;
   }, [libRows, libSortField, libFilter]);
 
   /** Relative "date added" — absolute dates read as noise in a dense table.
@@ -2245,7 +2277,8 @@ export default function StudioHome({
    *  below ~1e11 are unambiguously seconds (that ceiling is year 5138 in
    *  seconds, but only 1973 in ms), so scale those up. */
   const fmtAdded = useCallback((raw) => {
-    if (!raw) return '—';
+    // Not known: left blank rather than a dash.
+    if (!raw) return '';
     const ms = raw < 1e11 ? raw * 1000 : raw;
     const d = Math.floor((Date.now() - ms) / 86400000);
     if (d <= 0) return 'Today';
@@ -2257,7 +2290,6 @@ export default function StudioHome({
 
   const [newPlaylist, setNewPlaylist] = useState(null);   // { name } | null
   const [plAddMenu, setPlAddMenu] = useState(null);       // the sidebar's + menu: { left, top } | null
-  const [addToPl, setAddToPl] = useState(null);           // { trackIds } | null
 
   /* The same menu, opened from a button rather than a right-click.
    *
@@ -2289,8 +2321,6 @@ export default function StudioHome({
    */
   const openPlaylistPicker = useCallback((track, anchor) => {
     if (!track) return;
-    setPlPickerQuery('');
-    setPlPickerNew(null);
     /* Anchored, not centred. This is a menu — it belongs beside the control
        that opened it, the way the row menu does. A centred dialog over a
        dimmed screen is the right shape for something that interrupts you;
@@ -2334,29 +2364,76 @@ export default function StudioHome({
     const has = (pl?.trackIds || []).includes(cur.track.id);
     setPlPicker(null);
     if (has) {
-      const r = await onRemoveFromPlaylist?.(id, cur.track.id);
-      pushToast?.(r && r.ok === false ? { message: `Couldn’t remove it from ${pl?.name || 'that playlist'}.`, kind: 'error' } : { message: `Removed from ${pl?.name || 'playlist'}` });
+      await removeFromPlaylistNow(id, cur.track.id);
       return;
     }
     const song = await libCopyFor(cur.track);
     if (!song) return;
     const r = await onAddTracksToPlaylist?.(id, [song.id]);
     pushToast?.(r && r.ok === false ? { message: `Couldn’t add it to ${pl?.name || 'that playlist'}.`, kind: 'error' } : { message: `Added to ${pl?.name || 'playlist'}` });
-  }, [plPicker, playlists, onAddTracksToPlaylist, onRemoveFromPlaylist, pushToast, libCopyFor]);
+  }, [plPicker, playlists, onAddTracksToPlaylist, removeFromPlaylistNow, pushToast, libCopyFor]);
 
   /* A new playlist from the picker, with the song already in it. */
-  const createFromPlPicker = useCallback(async () => {
-    const name = (plPickerNew || '').trim();
+  const createFromPlPicker = useCallback(async (typed) => {
+    const name = String(typed || '').trim();
     const cur = plPicker;
     if (!name || !cur) return;
-    setPlPickerNew(null);
     setPlPicker(null);
     const r = await onCreatePlaylist?.({ name });
-    if (!r?.ok || !r.id) { pushToast?.({ message: 'Could not create that playlist.', kind: 'error' }); return; }
+    if (!r?.ok || !r.id) { pushToast?.({ message: 'Couldn’t create that playlist.', kind: 'error' }); return; }
     const song = await libCopyFor(cur.track);
     if (song) await onAddTracksToPlaylist?.(r.id, [song.id]);
     pushToast?.({ message: `Added to ${name}` });
-  }, [plPickerNew, plPicker, onCreatePlaylist, onAddTracksToPlaylist, pushToast, libCopyFor]);
+  }, [plPicker, onCreatePlaylist, onAddTracksToPlaylist, pushToast, libCopyFor]);
+  /* Add to Playlist for any set of your songs (an album, a playlist, an
+     artist's), as the list beside its menu. A playlist with all of them is
+     ticked; one with some gets the rest. One song toggles, as in the song
+     menu. */
+  const libById = useMemo(() => new Map(library.map((t) => [t.id, t])), [library]);
+  const plArt = useCallback((pl) => {
+    if (pl.coverArt) return pl.coverArt;
+    const first = pl.trackIds?.length ? libById.get(pl.trackIds[0]) : null;
+    return first ? coverFor(first) : null;
+  }, [libById, coverFor]);
+  const pickerFor = useCallback((ids, { exclude = null } = {}) => {
+    const list = (ids || []).filter(Boolean);
+    const stateOf = (pl) => {
+      const have = new Set(pl.trackIds || []);
+      const n = list.filter((id) => have.has(id)).length;
+      return list.length && n === list.length ? 'all' : n ? 'some' : 'none';
+    };
+    const addTo = async (plId, name) => {
+      const pl = (playlistsRef.current || []).find((x) => x.id === plId);
+      const have = new Set(pl?.trackIds || []);
+      const missing = list.filter((id) => !have.has(id));
+      if (!missing.length) return;
+      const r = await onAddTracksToPlaylist?.(plId, missing);
+      pushToast?.(r && r.ok === false
+        ? { message: `Couldn’t add ${missing.length === 1 ? 'it' : 'them'} to ${name}.`, kind: 'error' }
+        : { message: missing.length === 1 ? `Added to ${name}` : `Added ${missing.length} songs to ${name}` });
+    };
+    return {
+      playlists: (playlists || []).filter((pl) => pl.id !== exclude),
+      artFor: plArt,
+      multi: list.length > 1,
+      stateOf,
+      onPick: (pl) => {
+        const st = stateOf(pl);
+        if (st === 'all') {
+          if (list.length === 1) removeFromPlaylistNow(pl.id, list[0]);
+          else pushToast?.({ message: `Already in ${pl.name}` });
+          return;
+        }
+        addTo(pl.id, pl.name);
+      },
+      onCreate: onCreatePlaylist ? async (name) => {
+        const r = await onCreatePlaylist({ name });
+        if (!r?.ok || !r.id) { pushToast?.({ message: 'Couldn’t create that playlist.', kind: 'error' }); return; }
+        const res = await onAddTracksToPlaylist?.(r.id, list);
+        pushToast?.(res && res.ok === false ? { message: `Couldn’t add ${list.length === 1 ? 'it' : 'them'} to ${name}.`, kind: 'error' } : { message: `Added to ${name}` });
+      } : null,
+    };
+  }, [playlists, plArt, onAddTracksToPlaylist, onCreatePlaylist, removeFromPlaylistNow, pushToast]);
   const createPlaylistNow = useCallback(async () => {
     const name = (newPlaylist?.name || '').trim();
     if (!name || !onCreatePlaylist) return;
@@ -2495,9 +2572,107 @@ export default function StudioHome({
       durationMs: Math.round((t.duration || 0) * 1000), explicit: !!t.explicit,
     }, { noPicker: true }).then((saved) => {
       // A failure says so itself (downloadSpotifyRow's error toast).
-      if (saved) pushToast?.({ message: `Saved “${t.title || 'the song'}” to your library`, kind: 'success', durationMs: 3500, log: false });
+      if (saved) pushToast?.({ message: `Saved “${t.title || 'the song'}” to your library.`, kind: 'success', durationMs: 3500, log: false });
     });
   }, [downloadSpotifyRow, pushToast]);
+  /* An album, playlist or countdown from Home, a Spotify link, Go to album
+     or the bar's Playing From: search's album view, opened straight onto it
+     (recordFor). Your own albums open there too (libAlbumRecord). */
+  const [paletteRecord, setPaletteRecord] = useState(null);
+  const openRecord = useCallback((item) => { setPaletteRecord(recordFor(item)); setPaletteOpen(true); }, []);
+  /* One of your albums as a record for that view: your copies, in order,
+     playing as your library does (local files included). With Album Songs
+     on Whole Album it's the whole album from Spotify, your copies where you
+     have them and the rest ready to get. A new id each time, so an edit
+     since it was last open shows. */
+  const libOpenSeq = useRef(0);
+  /* `src` is an album key (libAlbums, or a one-song album it leaves out) or
+     a group of your songs (an artist page's single). */
+  const libAlbumRecord = useCallback((src, focusTrack = null) => {
+    const a = (() => {
+      if (src && typeof src === 'object' && Array.isArray(src.tracks)) {
+        const credit = src.tracks.map((t) => String(t.artist || '').trim()).filter(Boolean).sort((x, y) => x.length - y.length)[0] || '';
+        return { key: src.key, name: src.name, artist: src.artist || credit, art: src.art || coverFor(src.tracks[0]) || null, tracks: src.tracks };
+      }
+      const hit = libAlbums.find((x) => x.key === src);
+      if (hit) return hit;
+      const tracks = src && src !== '::' ? library.filter((t) => (t.album || '').trim() && albumKeyOf(t) === src) : [];
+      if (!tracks.length) return null;
+      tracks.sort((x, y) => (x.discNumber || 1) - (y.discNumber || 1) || (x.trackNumber || 0) - (y.trackNumber || 0));
+      return { key: src, name: tracks[0].album.trim(), artist: String(tracks[0].artist || '').trim(), art: coverFor(tracks[0]) || null, tracks };
+    })();
+    if (!a) return null;
+    const key = a.key;
+    const row = (t) => ({
+      title: t.title || '', artists: t.artist || '', album: t.album || a.name, trackNumber: t.trackNumber || null,
+      durationMs: Math.round((Number(t.duration) || 0) * 1000), explicit: !!t.explicit,
+      spotifyId: spotifyIdOf(t) || undefined, albumArtUrl: coverFor(t) || a.art || '', libTrack: t,
+    });
+    const years = a.tracks.map((t) => Number(t.year)).filter((y) => y > 1000);
+    libOpenSeq.current += 1;
+    return {
+      focusId: focusTrack ? (spotifyIdOf(focusTrack) || `lib:${focusTrack.id}`) : null,
+      album: {
+        albumId: `lib:${key}:${libOpenSeq.current}`, name: a.name, artists: a.artist || '', albumArtUrl: a.art || '',
+        releaseDate: years.length ? String(Math.max(...years)) : '', label: a.tracks.length === 1 ? 'Single' : 'Album', collection: false, lib: true,
+        load: async () => {
+          if (theme.albumSongs === 'full') {
+            const merged = mergeAlbum(await fullAlbumRows(key, a.name, a.artist).catch(() => null), a.tracks);
+            if (merged) return merged.map((x) => (x.lib ? row(x.lib) : x.row));
+          }
+          return a.tracks.map(row);
+        },
+        /* Plays from the song picked: your copies as your library does, the
+           rest streamed. */
+        play: (rows, index = 0, shuffle = false) => {
+          const want = rows[index];
+          const live = rows.filter((r) => !r.notOut);
+          const list = live.map((r) => r.libTrack || spotifyPlayable(r));
+          if (!list.length) return;
+          if (shuffle) { const sh = [...list].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); return; }
+          const at = Math.max(0, live.indexOf(want));
+          onPlayTrack?.(list[at], list);
+        },
+        edit: onUpdateAlbumMetadata ? () => {
+          setPaletteOpen(false);
+          setAlbumEditScope({
+            key, album: a.name, artist: a.artist, coverArt: a.art, sampleTrack: a.tracks[0],
+            trackIds: a.tracks.map((t) => t.id), discNumber: null,
+          });
+        } : null,
+      },
+    };
+  }, [libAlbums, library, coverFor, theme.albumSongs, onPlayTrack, onUpdateAlbumMetadata, spotifyPlayable]);
+  const openLibAlbum = useCallback((src, focusTrack = null) => {
+    const rec = libAlbumRecord(src, focusTrack);
+    if (!rec) return;
+    setPaletteRecord(rec);
+    setPaletteOpen(true);
+  }, [libAlbumRecord]);
+  openLibAlbumRef.current = openLibAlbum;
+  /* How the album view looks until you pick one in it: what your settings
+     give the rest of the app (Dark mode, Immerse, or Library pages on Cover
+     Art or Full Color). */
+  const albumLook = theme.darkMode ? 'dark' : npAnim ? 'immerse'
+    : vtheme.pageSurface === 'coverFull' ? 'full' : vtheme.pageSurface === 'off' ? 'dark' : 'color';
+  /* Where the song playing came from, for the bar's link back to it and
+     the bar menu's Go to item. Opens with the song picked out. */
+  const npFrom = playSource && currentTrack && playSource.ids.has(currentTrack.id) ? playSource.item : null;
+  const openFrom = useCallback(() => {
+    if (npFrom) openRecord({ ...npFrom, focusId: spotifyIdOf(currentTrack) || null });
+  }, [npFrom, currentTrack, openRecord]);
+  /* Shown only when it says something the bar doesn't already: an artist's
+     Popular songs would read "Frank Ocean · Frank Ocean", and a one-song
+     release would repeat the song's own title. */
+  const npFromShown = useMemo(() => {
+    if (!npFrom?.name || !currentTrack) return null;
+    const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+    const artists = String(currentTrack.artist || '').split(/\s*(?:,|&|\bfeat\.?|\bft\.?)\s*/i);
+    if (same(npFrom.name, currentTrack.title) || same(npFrom.name, currentTrack.artist) || artists.some((a) => same(a, npFrom.name))) return null;
+    return npFrom;
+  }, [npFrom, currentTrack]);
+  /* The queue's "Next from" link: the same view the bar's link opens. */
+  const openQueueSource = useCallback((item) => { if (item) openRecord(item); }, [openRecord]);
   const mySpotifyBridge = useMemo(() => {
     const saveState = (row) => {
       if (libBySpotifyId.has(row.spotifyId) || ownedTrackFor(row.title, row.artists, row.album || '')) return 'saved';
@@ -2506,7 +2681,7 @@ export default function StudioHome({
     };
     const currentSid = spotifyIdOf(currentTrack);
     return {
-      playRows(rows, index = 0, { shuffle = false, context = null } = {}) {
+      playRows(rows, index = 0, { shuffle = false, context = null, source = null } = {}) {
         /* Songs Spotify lists but hasn't released (notOut) are skipped:
            playing one only fails. Clicking one does nothing. */
         const want = (rows || [])[index];
@@ -2515,17 +2690,22 @@ export default function StudioHome({
         notePlayContext(spotifyRows, context);
         const list = spotifyRows.map(spotifyPlayable);
         if (!list.length) return;
+        /* What the bar links back to: the page it was played from, or a
+           search album, which isn't a play context for Home's history. */
+        const from = context || source || null;
         if (shuffle) {
           const mixed = [...list].sort(() => Math.random() - 0.5);
-          onPlayTrack?.(mixed[0], mixed);
+          onPlayTrack?.(mixed[0], mixed, 'list', from);
         } else {
           const at = spotifyRows.indexOf(want);
-          onPlayTrack?.(list[at >= 0 ? at : Math.min(index, list.length - 1)] || list[0], list);
+          onPlayTrack?.(list[at >= 0 ? at : Math.min(index, list.length - 1)] || list[0], list, 'list', from);
         }
       },
       // Not out yet: nothing to save.
       saveRow(row) { if (!row?.notOut && !saveState(row)) downloadSpotifyRow(row, { noPicker: true }); },
       saveState,
+      // An album, playlist or countdown, opened in search's album view.
+      openRecord,
       /* Shuffle Liked Songs: the songs you've hearted in Studio, not
          Spotify's Liked Songs. */
       likedCount: favorites.length,
@@ -2543,39 +2723,39 @@ export default function StudioHome({
       onOpenArtist: openArtistAnywhere,
       // Right-click on a Spotify row: the song menu (play, queue, playlists…).
       openMenu: (e, row) => openSongMenu(e, { row }),
+      // An album, playlist or mix: its menu (Play, Play Next, Save, …).
+      openItemMenu,
       onConnect: () => { pickSection('settings'); setSetCat('connections'); },
     };
-  }, [libBySpotifyId, ownedTrackFor, dlState, favorites, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection, openSongMenu]);
+  }, [libBySpotifyId, ownedTrackFor, dlState, favorites, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection, openSongMenu, openRecord, openItemMenu]);
 
   /* ---------- Spotify links (spotifyLinks.js) ----------------------------
      Ctrl+V anywhere in Studio, or pasting into search, opens a Spotify link;
      one copied in another app is offered in a notification. A song plays
      and its album opens with it marked; an album or playlist opens in the
      side panel; an artist opens their page. */
-  const [linkPanel, setLinkPanel] = useState(null);
   const openSpotifyLink = useCallback((info, { play = true } = {}) => {
     if (!info?.id) {
-      pushToast?.({ message: 'Couldn’t open that Spotify link', kind: 'error', durationMs: 4000, dedupeKey: 'spotify-link', log: false });
+      pushToast?.({ message: 'Couldn’t open that Spotify link.', kind: 'error', durationMs: 4000, dedupeKey: 'spotify-link', log: false });
       return;
     }
     setPaletteOpen(false);
     if (info.kind === 'artist') {
-      setLinkPanel(null);
       openArtistAnywhere({ name: info.name, spotifyId: info.id, image: info.image || null });
       return;
     }
     if (info.kind === 'album' || info.kind === 'playlist') {
-      setLinkPanel({ kind: info.kind, id: info.id, name: info.name || 'Spotify', image: info.image || null, sub: info.sub || '', label: info.kind === 'album' ? 'Album' : 'Playlist', rows: info.rows || null });
+      openRecord({ kind: info.kind, id: info.id, name: info.name || 'Spotify', image: info.image || null, sub: info.sub || '', label: info.kind === 'album' ? 'Album' : 'Playlist', rows: info.rows || null });
       return;
     }
     // A song: play it, and open its album with it marked.
     if (play && info.rows?.length) mySpotifyBridge.playRows(info.rows, 0);
     if (info.album?.id) {
-      setLinkPanel({ kind: 'album', id: info.album.id, name: info.album.name || info.name, image: info.album.image || info.image || null, sub: info.sub || '', label: 'Album', focusId: info.id });
+      openRecord({ kind: 'album', id: info.album.id, name: info.album.name || info.name, image: info.album.image || info.image || null, sub: info.sub || '', label: 'Album', focusId: info.id });
     } else if (!info.rows?.length && info.name) {
       openPalette(info.name); // signed out: find it instead
     }
-  }, [pushToast, openArtistAnywhere, mySpotifyBridge, openPalette]);
+  }, [pushToast, openArtistAnywhere, mySpotifyBridge, openPalette, openRecord]);
   const openSpotifyLinkText = useCallback(async (text) => {
     const api = window.electronAPI;
     if (!api?.spotifyLinkResolve) return;
@@ -2611,7 +2791,7 @@ export default function StudioHome({
     const year = String(info.date || '').slice(0, 4);
     const card = { style, image: info.image || '', title: info.name || 'Spotify link', sub: info.sub || '', buttons: [] };
     const saveBtn = (done, label, save) => (done
-      ? { label: 'In your library', icon: 'check', disabled: true }
+      ? { label: 'In Your Library', icon: 'check', disabled: true }
       : { label, icon: 'plus', stay: true, again: { saved: true }, onClick: save });
     const open = { label: 'Open', icon: 'open', onClick: () => live().open(info) };
     /* The quick first version (name and cover, details still coming): the
@@ -2665,7 +2845,7 @@ export default function StudioHome({
     return card;
   }, []);
 
-  /* Settings → Library → Link card: picking a look shows it, with the song
+  /* Settings → Connections → Link Card: picking a look shows it, with the song
      that's playing (or one from the library) standing in. */
   const previewLinkCard = useCallback((style) => {
     const t = currentTrack || library.find((x) => coverFor?.(x) || x.coverArt) || library[0];
@@ -2737,10 +2917,10 @@ export default function StudioHome({
     const put = (e) => (l) => (l.some((b) => sameEntry(b, e)) ? l : [...l, e]);
     if (hit) {
       setSrBlocked(drop);
-      pushToast?.({ message: `${entryLabel(hit)} can be requested again`, action: { label: 'Undo', onClick: () => setSrBlocked(put(hit)) } });
+      pushToast?.({ message: `${entryLabel(hit)} can be requested again.`, action: { label: 'Undo', onClick: () => setSrBlocked(put(hit)) } });
     } else {
       setSrBlocked(put(entry));
-      pushToast?.({ message: `${entryLabel(entry)} can't be requested now`, action: { label: 'Undo', onClick: () => setSrBlocked((l) => l.filter((b) => !sameEntry(b, entry))) } });
+      pushToast?.({ message: `${entryLabel(entry)} can’t be requested now.`, action: { label: 'Undo', onClick: () => setSrBlocked((l) => l.filter((b) => !sameEntry(b, entry))) } });
     }
   }, [pushToast, setSrBlocked]);
   useEffect(() => {
@@ -2836,6 +3016,107 @@ export default function StudioHome({
     palette: npWashTheme?.palette || null, accent: rawAccent, coverColours: compactVizCover,
   }), [compactMode, compactViz, analyserRef, onNeedAnalyser, currentTrack, isPlaying, duration, onSeek, npWashTheme, rawAccent, compactVizCover]);
 
+  /* ---------- Menus for albums, playlists, artists and releases ----------
+     The song menu's look (ObjectMenu), opened by right-click anywhere one
+     of these shows and by a page's ··· button. Built at call time from
+     what's current, so the openers below stay stable. */
+  const atOf = (e) => (e?.at ? e.at : { x: e.clientX, y: e.clientY });
+  const songItems = (tracks, name, { exclude = null } = {}) => {
+    const ids = tracks.map((t) => t.id);
+    return [
+      onPlayTrack ? { label: 'Play', icon: MI.play, run: () => onPlayTrack(tracks[0], tracks) } : null,
+      onPlayTrack && tracks.length > 1 ? { label: 'Shuffle', icon: MI.shuffle, run: () => { const sh = [...tracks].sort(() => Math.random() - 0.5); onPlayTrack(sh[0], sh); } } : null,
+      'sep',
+      onPlayNext ? { label: 'Play Next', icon: MI.next, run: () => { onPlayNext(tracks); pushToast?.({ message: `Playing next: ${name}` }); } } : null,
+      onAddToQueue ? { label: 'Add to Queue', icon: MI.queue, run: () => { onAddToQueue(tracks); pushToast?.({ message: `Added to queue: ${name}` }); } } : null,
+      onAddTracksToPlaylist ? { label: 'Add to Playlist', icon: MI.playlist, picker: pickerFor(ids, { exclude }) } : null,
+      'sep',
+    ];
+  };
+  const copyItemLink = async (kind, id) => {
+    try { await navigator.clipboard.writeText(`https://open.spotify.com/${kind}/${id}`); pushToast?.({ message: 'Spotify link copied' }); } catch { /* ignore */ }
+  };
+  menuLive.current = {
+    /* One of your albums: a libAlbums entry or an album key. */
+    album(e, src) {
+      const a = typeof src === 'string' ? libAlbums.find((x) => x.key === src) : src;
+      if (!a?.tracks?.length) return;
+      const tracks = [...a.tracks].sort((x, y) => (x.discNumber || 1) - (y.discNumber || 1) || (x.trackNumber || 0) - (y.trackNumber || 0));
+      setObjMenu({
+        at: atOf(e),
+        head: { art: a.art || coverFor(tracks[0]), title: a.name, sub: [tracks.length === 1 ? 'Single' : 'Album', a.artist].filter(Boolean).join(' · ') },
+        items: [
+          ...songItems(tracks, a.name),
+          a.artist ? { label: 'Go to Artist', icon: MI.artist, run: () => openArtistAnywhere({ name: a.artist }) } : null,
+          onUpdateAlbumMetadata ? {
+            label: 'Edit Info', icon: MI.edit,
+            run: () => setAlbumEditScope({ key: a.key, album: a.name, artist: a.artist, coverArt: a.art, sampleTrack: tracks[0], trackIds: tracks.map((t) => t.id), discNumber: null }),
+          } : null,
+          'sep',
+          onRemoveFromLibrary ? { label: 'Remove from Library', icon: MI.trash, danger: true, run: () => onRemoveFromLibrary(tracks.map((t) => t.id)) } : null,
+        ],
+      });
+    },
+    /* One of your playlists. */
+    playlist(e, plId) {
+      const pl = (playlists || []).find((x) => x.id === plId);
+      if (!pl) return;
+      const tracks = (pl.trackIds || []).map((id) => libById.get(id)).filter(Boolean);
+      const n = (pl.trackIds || []).length;
+      setObjMenu({
+        at: atOf(e),
+        head: { art: plArt(pl), title: pl.name, sub: `Playlist · ${n} ${n === 1 ? 'song' : 'songs'}` },
+        items: [
+          ...(tracks.length ? songItems(tracks, pl.name, { exclude: pl.id }) : []),
+          onRenamePlaylist || onUpdatePlaylist ? { label: 'Edit Playlist', icon: MI.edit, run: () => setRenamePl({ id: pl.id, name: pl.name }) } : null,
+          onDeletePlaylist ? { label: 'Delete Playlist', icon: MI.trash, danger: true, run: () => deletePlaylistNow(pl.id) } : null,
+        ],
+      });
+    },
+    /* An artist in your library: { name, tracks }, plus a portrait. */
+    artist(e, a, image = null) {
+      const tracks = a?.tracks || [];
+      setObjMenu({
+        at: atOf(e),
+        head: { art: image, title: a.name, sub: `Artist · ${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}`, round: true },
+        items: [
+          ...(tracks.length ? songItems(tracks, a.name) : []),
+          { label: 'Go to Artist', icon: MI.artist, run: () => openArtistAnywhere({ name: a.name, spotifyId: a.spotifyId || null, image }) },
+          a.spotifyId ? { label: 'Copy Spotify Link', icon: MI.link, run: () => copyItemLink('artist', a.spotifyId) } : null,
+        ],
+      });
+    },
+    /* A Spotify album, playlist or mix (Home, New Releases, an artist's
+       releases): { kind, id, name, sub, image }. Its songs load when an
+       item needs them. `extra`: items of the page's own (Open Your Copy). */
+    item(e, item, extra = []) {
+      if (!item) return;
+      const rows = () => loadCollection(item).then((r) => (r || []).filter((x) => x?.spotifyId && !x.notOut));
+      const fail = () => pushToast?.({ message: 'Couldn’t load its songs.', kind: 'error' });
+      const artist = String(item.sub || '').replace(/^(album|single|ep|playlist|compilation)\s·\s/i, '');
+      const isAlbum = item.kind === 'album' && !item.countdown;
+      setObjMenu({
+        at: atOf(e),
+        head: { art: item.image || null, title: item.name, sub: item.sub || '', round: item.kind === 'artist' },
+        items: [
+          { label: 'Play', icon: MI.play, run: () => rows().then((r) => mySpotifyBridge.playRows(r, 0, { context: item }), fail) },
+          { label: 'Shuffle', icon: MI.shuffle, run: () => rows().then((r) => mySpotifyBridge.playRows(r, 0, { shuffle: true, context: item }), fail) },
+          'sep',
+          onPlayNext ? { label: 'Play Next', icon: MI.next, run: () => rows().then((r) => { notePlayContext(r, item); onPlayNext(r.map(spotifyPlayable)); pushToast?.({ message: `Playing next: ${item.name}` }); }, fail) } : null,
+          onAddToQueue ? { label: 'Add to Queue', icon: MI.queue, run: () => rows().then((r) => { notePlayContext(r, item); onAddToQueue(r.map(spotifyPlayable)); pushToast?.({ message: `Added to queue: ${item.name}` }); }, fail) } : null,
+          isAlbum ? { label: 'Save to Library', icon: MI.save, run: () => rows().then((r) => r.forEach((x) => mySpotifyBridge.saveRow(x)), fail) } : null,
+          'sep',
+          item.kind === 'artist'
+            ? { label: 'Go to Artist', icon: MI.artist, run: () => openArtistAnywhere({ name: item.name, spotifyId: item.id, image: item.image || null }) }
+            : { label: isAlbum ? 'Go to Album' : 'Open', icon: isAlbum ? MI.album : MI.open, run: () => openRecord(item) },
+          ...(extra || []),
+          isAlbum && artist ? { label: 'Go to Artist', icon: MI.artist, run: () => openArtistAnywhere({ name: artist.split(', ')[0] }) } : null,
+          item.id && /^(album|playlist|artist)$/.test(item.kind) && !item.countdown ? { label: 'Copy Spotify Link', icon: MI.link, run: () => copyItemLink(item.kind, item.id) } : null,
+        ],
+      });
+    },
+  };
+
   return (
     /* Flat black behind everything. The radial gradient that used to lift the
        top of the window read as a seam once the content became its own panel —
@@ -2883,6 +3164,7 @@ export default function StudioHome({
     }}>
       <StudioMotionStyles />
       <style>{HOME_CSS}</style>
+      <style>{DIALOG_CSS}</style>
       {/* Album wash — when viewing an album, its cover bleeds across the top
           (behind the translucent nav rail and the content) as an immersive
           backdrop. There's no ambient accent glow underneath anymore, so the
@@ -3072,21 +3354,17 @@ export default function StudioHome({
                   const r = e.currentTarget.getBoundingClientRect();
                   setPlAddMenu({ left: Math.max(8, r.right - 222), top: r.bottom + 6 });
                 }}
-                title="New playlist" aria-label="New playlist" aria-haspopup={onImportSpotify ? 'menu' : undefined} aria-expanded={onImportSpotify ? !!plAddMenu : undefined}
+                title="New Playlist" aria-label="New Playlist" aria-haspopup={onImportSpotify ? 'menu' : undefined} aria-expanded={onImportSpotify ? !!plAddMenu : undefined}
                 style={{ width: 24, height: 24, background: plAddMenu ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.07)' }}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
               </button>
               {plAddMenu ? createPortal(
                 <>
                   <div onClick={() => setPlAddMenu(null)} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
-                  <div role="menu" style={{
-                    position: 'fixed', left: plAddMenu.left, top: plAddMenu.top, zIndex: 301,
-                    width: 222, padding: 5, borderRadius: 11,
-                    background: 'var(--st-dark-float, rgb(18, 18, 21))', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 14px 38px rgba(0,0,0,0.6)',
-                  }}>
-                    <ImportMenuItem label="New playlist" hint="Start an empty one"
+                  <div role="menu" style={{ position: 'fixed', left: plAddMenu.left, top: plAddMenu.top, zIndex: 301, width: 236, ...MENU_SURFACE }}>
+                    <ImportMenuItem label="New Playlist" hint="Start an empty one" icon={IMPORT_ICONS.playlist}
                       onClick={() => { setPlAddMenu(null); setNewPlaylist({ name: '' }); }} />
-                    <ImportMenuItem label="Import from Spotify…" hint="Your playlists and Liked Songs"
+                    <ImportMenuItem label="Import from Spotify…" hint="Your playlists and Liked Songs" icon={IMPORT_ICONS.spotify}
                       onClick={() => { setPlAddMenu(null); onImportSpotify(); }} />
                   </div>
                 </>,
@@ -3111,7 +3389,8 @@ export default function StudioHome({
             const artUrl = pl.coverArt || firstArt;
             return (
               <button key={pl.id} type="button" className={`sth-side-pl${on ? ' on' : ''}`} aria-current={on ? 'page' : undefined}
-                onClick={() => { pickSection('library'); setLibDetail({ kind: 'playlist', key: pl.id }); }}>
+                onClick={() => { pickSection('library'); setLibDetail({ kind: 'playlist', key: pl.id }); }}
+                onContextMenu={(e) => openPlaylistMenu(e, pl.id)}>
                 <span className="art" aria-hidden style={{
                   backgroundImage: artUrl ? `url("${artUrl}")` : 'linear-gradient(135deg, rgba(var(--accent-rgb),0.55), rgba(var(--accent-rgb),0.2))',
                 }} />
@@ -3173,7 +3452,6 @@ export default function StudioHome({
           {sec === 'sp-home' ? <SpotifyHome bridge={mySpotifyBridge} /> : null}
           {sec === 'sp-releases' ? <SpotifyReleases bridge={mySpotifyBridge} countdowns={!homeOn} /> : null}
           {/* An album or playlist opened from a Spotify link, over any page. */}
-          {linkPanel ? <SpotifyLinkPanel item={linkPanel} bridge={mySpotifyBridge} onClose={() => setLinkPanel(null)} /> : null}
 
           {/* ================= LIBRARY =================
               Rebuilt to the mockup: a fixed left rail of views + playlists,
@@ -3185,7 +3463,7 @@ export default function StudioHome({
             <LibraryPage
               onPlayNext={onPlayNext ? (ts, name) => { onPlayNext(ts); pushToast?.({ message: `Playing next: ${name}` }); } : null}
               onAddToQueue={onAddToQueue ? (ts, name) => { onAddToQueue(ts); pushToast?.({ message: `Added to queue: ${name}` }); } : null}
-              onAddToPlaylist={onAddTracksToPlaylist ? (ids) => setAddToPl({ trackIds: ids }) : null}
+              onAddToPlaylist={onAddTracksToPlaylist ? (ids) => pickerFor(ids, { exclude: libDetail?.kind === 'playlist' ? libDetail.key : null }) : null}
               LIB_OVERSCAN={LIB_OVERSCAN}
               LIB_ROW_H={LIB_ROW_H}
               accent={accent}
@@ -3197,7 +3475,6 @@ export default function StudioHome({
               currentTrack={currentTrack}
               detailData={detailData}
               detailFilter={detailFilter}
-              detailGenres={detailGenres}
               detailMore={detailMore}
               detailTheme={detailTheme}
               detailTracks={detailTracks}
@@ -3232,31 +3509,34 @@ export default function StudioHome({
               onImportFiles={onImportFiles}
               onImportFolder={onImportFolder}
               onPlayTrack={onPlayTrack}
-              onRemoveFromPlaylist={onRemoveFromPlaylist}
+              onRemoveFromPlaylist={onRemoveFromPlaylist ? removeFromPlaylistNow : null}
               onMovePlaylistSong={moveInOpenPlaylist}
               onToggleFavorite={onToggleFavorite}
               onTogglePlay={onTogglePlay}
               onUpdateAlbumMetadata={onUpdateAlbumMetadata}
               openAlbumFromRow={openAlbumFromRow}
+              openAlbumMenu={openAlbumMenu}
+              openArtistMenu={openArtistMenu}
+              openLibAlbum={openLibAlbum}
               openArtist={openArtist}
               openArtistAnywhere={openArtistAnywhere}
               openArtistFromRow={openArtistFromRow}
               openPalette={openPalette}
               openRowMenu={openRowMenu}
               ownedTrackFor={ownedTrackFor}
+              pickerFor={pickerFor}
               pickLibRowSort={pickLibRowSort}
               pickSection={pickSection}
               playCountFor={playCountFor}
               playEvents={playEvents}
               playFromLibRows={playFromLibRows}
               setAlbumEditScope={setAlbumEditScope}
-              setDeletePl={setDeletePl}
+              deletePlaylist={deletePlaylistNow}
               setDetailFilter={setDetailFilter}
               setDetailMore={setDetailMore}
               setLibDetail={setLibDetail}
               setLibFilter={setLibFilter}
               setLibScrollTop={setLibScrollTop}
-              setPlCoverFor={setPlCoverFor}
               setRenamePl={setRenamePl}
               setSetCat={setSetCat}
               showDateAdded={showDateAdded}
@@ -3343,6 +3623,10 @@ export default function StudioHome({
            where "Remove album · 4 tracks" sat directly below "Remove from
            library" in the same red — an easy misclick between two very
            different outcomes. */}
+      {objMenu ? (
+        <ObjectMenu at={objMenu.at} head={objMenu.head} items={objMenu.items}
+          accentRgb={readableAccent(accent)} onClose={() => setObjMenu(null)} />
+      ) : null}
       {rowMenu ? (() => {
         /* The song menu, for any song anywhere: a library row (`track`), a
            Spotify row from My Spotify, an artist page or search (`row`), or a
@@ -3371,8 +3655,7 @@ export default function StudioHome({
           const has = saved && (pl.trackIds || []).includes(t.id);
           close();
           if (has) {
-            const r = await onRemoveFromPlaylist?.(pl.id, t.id);
-            pushToast?.(r && r.ok === false ? { message: `Couldn’t remove it from ${pl.name}.`, kind: 'error' } : { message: `Removed from ${pl.name}` });
+            await removeFromPlaylistNow(pl.id, t.id);
             return;
           }
           const song = await songForPlaylist();
@@ -3390,12 +3673,34 @@ export default function StudioHome({
           if (song) await onAddTracksToPlaylist?.(r.id, [song.id]);
           pushToast?.({ message: `Added to ${n}` });
         };
-        const goAlbum = () => {
+        /* Your copy's album page when you have the album; otherwise the album
+           itself, shown in the album view with this song picked out. Its
+           Spotify id comes from the song when it carries one, else from the
+           song's own Spotify entry, else from Spotify's albums by name. */
+        const goAlbum = async () => {
           close();
-          if (saved && albumKeyOf(t) !== '::' && libAlbums.some((a) => a.key === albumKeyOf(t))) { pickSection('library'); setLibDetail({ kind: 'album', key: albumKeyOf(t) }); return; }
-          const albumId = row?.albumId || t.albumId || null;
-          if (albumId) openSpotifyLink({ kind: 'album', id: albumId, name: row?.album || t.album || '', image: row?.albumArtUrl || coverFor(t) || null });
-          else openPalette(`${t.album || t.title} ${artistName}`.trim());
+          if (saved && (t.album || '').trim() && albumKeyOf(t) !== '::') { openLibAlbum(albumKeyOf(t), t); return; }
+          const albumName = row?.album || t.album || '';
+          const show = (id, name, image) => openRecord({
+            kind: 'album', id, name: name || albumName, image: image || row?.albumArtUrl || coverFor(t) || null,
+            sub: artistName ? `Album · ${artistName}` : '', focusId: sid || null,
+          });
+          const knownId = row?.albumId || t.albumId || null;
+          if (knownId) { show(knownId); return; }
+          const api = window.electronAPI;
+          if (sid && api?.spotifyLinkResolve) {
+            const info = await api.spotifyLinkResolve(`spotify:track:${sid}`).catch(() => null);
+            if (info?.album?.id) { show(info.album.id, info.album.name, info.album.image); return; }
+          }
+          if (albumName && api?.spotifySearchAlbums) {
+            const norm = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+            const hits = await api.spotifySearchAlbums(`${albumName} ${artistName}`.trim()).catch(() => []);
+            const list = Array.isArray(hits) ? hits : [];
+            const named = list.filter((h) => norm(h.name) === norm(albumName));
+            const hit = named.find((h) => !artistName || norm(h.artists).includes(norm(artistName))) || named[0];
+            if (hit?.albumId) { show(hit.albumId, hit.name, hit.albumArtUrl); return; }
+          }
+          pushToast?.({ message: `Couldn’t find ${albumName ? `“${albumName}”` : 'this album'} on Spotify.`, kind: 'error', durationMs: 4000, log: false });
         };
         const copyLink = async () => {
           close();
@@ -3409,10 +3714,11 @@ export default function StudioHome({
         const plAt = plHere ? (plHere.trackIds || []).indexOf(t.id) : -1;
         const qMax = queue.length - 1;
         const qMin = queueIndex + 1;
-        const menuLeft = Math.max(8, Math.min(rowMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1400) - 252));
-        const subOnLeft = menuLeft + 240 + 244 > (typeof window !== 'undefined' ? window.innerWidth : 1400);
-        const q = (plSub?.query || '').trim().toLowerCase();
-        const shownPls = q ? playlists.filter((p) => p.name.toLowerCase().includes(q)) : playlists;
+        /* Wide enough for the longest label next to its shortcut on one line.
+           The bar's menu adds the app options, whose shortcuts are longer. */
+        const menuW = rowMenu.bar ? 316 : 280;
+        const menuLeft = Math.max(8, Math.min(rowMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1400) - menuW - 12));
+        const subOnLeft = menuLeft + menuW + 244 > (typeof window !== 'undefined' ? window.innerWidth : 1400);
         const chev = (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5, flexShrink: 0 }}>
             <path d="M9 6l6 6-6 6" />
@@ -3434,7 +3740,7 @@ export default function StudioHome({
                 ...(rowMenu.above
                   ? { bottom: Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 900) - rowMenu.y) }
                   : { top: Math.min(rowMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 900) - 320) }),
-                width: 240, padding: 5, borderRadius: 12,
+                width: menuW, padding: 5, borderRadius: 12,
                 /* Every floating layer (menus, pickers, notifications,
                    toasts) is the app's own card colour, so they sit in the
                    same family as the pages under them. */
@@ -3466,7 +3772,7 @@ export default function StudioHome({
                       icon={<path d="M12 5v14M6 13l6 6 6-6" />} label="Move down" />
                   ) : null}
                   {onRemoveFromPlaylist ? (
-                    <MenuItem accentRgb={acc} onClick={() => { onRemoveFromPlaylist(plHere.id, t.id); pushToast?.({ message: `Removed from ${plHere.name}` }); close(); }}
+                    <MenuItem accentRgb={acc} onClick={() => { removeFromPlaylistNow(plHere.id, t.id); close(); }}
                       icon={<><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M8.5 12h7" /></>} label="Remove from playlist" />
                   ) : null}
                   {sep}
@@ -3485,14 +3791,18 @@ export default function StudioHome({
                       icon={<path d="M12 5v14M6 13l6 6 6-6" />} label="Move down" />
                   ) : null}
                   {onRemoveFromQueue ? (
-                    <MenuItem accentRgb={acc} onClick={() => { onRemoveFromQueue(rowMenu.queueIndex); close(); }}
+                    <MenuItem accentRgb={acc} onClick={() => {
+                      const out = onRemoveFromQueue(rowMenu.queueIndex);
+                      close();
+                      if (out?.track) pushToast?.({ message: 'Removed from the queue', action: onRestoreToQueue ? { label: 'Undo', onClick: () => onRestoreToQueue(out.track, out.after) } : null });
+                    }}
                       icon={<><path d="M4 6h16M4 12h10M4 18h7" /><path d="M15 16l5 5M20 16l-5 5" /></>} label="Remove from queue" />
                   ) : null}
                   {sep}
                 </>
               ) : (
                 <>
-                  {onPlayTrack ? (
+                  {onPlayTrack && !rowMenu.bar ? (
                     <MenuItem accentRgb={acc}
                       onClick={() => { if (row) mySpotifyBridge.playRows([row], 0); else onPlayTrack(t, library, 'list'); close(); }}
                       icon={<path d="M8 6.5v11l9.5-5.5z" />} label="Play" />
@@ -3520,9 +3830,9 @@ export default function StudioHome({
                   clicking one that has it (ticked) takes it out. */}
               {onAddTracksToPlaylist && !row?.notOut ? (
                 <div style={{ position: 'relative' }}
-                  onMouseEnter={() => { clearTimeout(plSubTimer.current); setPlSub((c) => c || { query: '', naming: null }); }}
-                  onMouseLeave={() => { clearTimeout(plSubTimer.current); plSubTimer.current = setTimeout(() => setPlSub((c) => (c && (c.query || c.naming != null) ? c : null)), 220); }}>
-                  <MenuItem accentRgb={acc} onClick={() => setPlSub((c) => c || { query: '', naming: null })}
+                  onMouseEnter={() => { clearTimeout(plSubTimer.current); setPlSub((c) => c || {}); }}
+                  onMouseLeave={(e) => { clearTimeout(plSubTimer.current); const host = e.currentTarget; plSubTimer.current = setTimeout(() => { if (!host.contains(document.activeElement) || document.activeElement?.tagName !== 'INPUT') setPlSub(null); }, 220); }}>
+                  <MenuItem accentRgb={acc} onClick={() => setPlSub((c) => c || {})}
                     icon={<><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M12 8.5v7M8.5 12h7" /></>}
                     label="Add to playlist"
                     trailing={<>{inPls.length ? <span style={{ fontSize: 11, color: 'rgba(var(--st-fg-rgb), 0.38)', whiteSpace: 'nowrap' }}>In {inPls.length}</span> : null}{chev}</>} />
@@ -3530,48 +3840,11 @@ export default function StudioHome({
                     <div data-rowmenu="" className="sth-libscroll" onWheel={(e) => e.stopPropagation()}
                       style={{
                         position: 'absolute', top: -6, [subOnLeft ? 'right' : 'left']: 'calc(100% + 9px)',
-                        width: 236, maxHeight: 340, overflowY: 'auto', padding: 5, borderRadius: 12,
-                        background: 'var(--surface)', border: '1px solid var(--border)', boxShadow: '0 22px 60px rgba(0,0,0,0.7)',
-                        animation: 'stFadeUp 0.12s ease both',
+                        width: 236, maxHeight: 340, overflowY: 'auto', ...MENU_SURFACE, animation: 'stFadeUp 0.12s ease both',
                       }}>
-                      {playlists.length > 7 ? (
-                        <input className="st-input" autoFocus placeholder="Find a playlist" value={plSub.query}
-                          onChange={(e) => setPlSub((c) => ({ ...c, query: e.target.value }))}
-                          onKeyDown={(e) => { if (e.key === 'Enter' && shownPls[0]) togglePlaylist(shownPls[0]); }}
-                          style={{ width: '100%', height: 32, fontSize: 12.5, marginBottom: 4 }} />
-                      ) : null}
-                      {plSub.naming != null ? (
-                        <input className="st-input" autoFocus placeholder="Playlist name" value={plSub.naming}
-                          onChange={(e) => setPlSub((c) => ({ ...c, naming: e.target.value }))}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') createWithSong(plSub.naming);
-                            if (e.key === 'Escape') { e.stopPropagation(); setPlSub((c) => ({ ...c, naming: null })); }
-                          }}
-                          style={{ width: '100%', height: 32, fontSize: 12.5, marginBottom: 4 }} />
-                      ) : onCreatePlaylist ? (
-                        <button type="button" className="sth-pl-pick" onClick={() => setPlSub((c) => ({ ...c, naming: '' }))}>
-                          <span className="pc is-new">
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-                          </span>
-                          <span className="nm">New playlist</span>
-                        </button>
-                      ) : null}
-                      {shownPls.map((pl) => {
-                        const has = saved && (pl.trackIds || []).includes(t.id);
-                        const first = !pl.coverArt && pl.trackIds?.length ? library.find((x) => x.id === pl.trackIds[0]) : null;
-                        const art = pl.coverArt || (first ? coverFor(first) : null);
-                        return (
-                          <button key={pl.id} type="button" className={`sth-pl-pick${has ? ' is-in' : ''}`} onClick={() => togglePlaylist(pl)}
-                            title={has ? `In ${pl.name}. Click to remove it.` : `Add to ${pl.name}`}>
-                            <span className="pc" style={{ backgroundImage: art ? `url("${art}")` : undefined }} />
-                            <span className="nm">{pl.name}</span>
-                            {has ? (
-                              <svg className="ok" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                      {!shownPls.length ? <div style={{ padding: '8px 10px', fontSize: 12, color: 'rgba(var(--st-fg-rgb), 0.4)' }}>{playlists.length ? 'No playlist by that name.' : 'No playlists yet.'}</div> : null}
+                      <PlaylistPickList playlists={playlists} artFor={plArt}
+                        stateOf={(pl) => (saved && (pl.trackIds || []).includes(t.id) ? 'all' : 'none')}
+                        onPick={togglePlaylist} onCreate={onCreatePlaylist ? createWithSong : null} />
                     </div>
                   ) : null}
                 </div>
@@ -3583,9 +3856,16 @@ export default function StudioHome({
               {saved && onToggleFavorite ? (
                 <MenuItem accentRgb={acc} onClick={() => { onToggleFavorite(t.id); close(); }}
                   icon={<path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />}
-                  label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} sub={rowMenu.bar ? keysText('favorite') : undefined} />
+                  label={t.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'} keys={keysText('favorite')} />
               ) : null}
               {sep}
+              {/* The bar's menu: back to the playlist or mix it's playing
+                  from. An album is Go to album, just below. */}
+              {rowMenu.bar && npFromShown && npFromShown.kind !== 'album' && t.id === currentTrack?.id ? (
+                <MenuItem accentRgb={acc} onClick={() => { close(); openFrom(); }}
+                  icon={<><path d="M4 6h12M4 12h12M4 18h8" /><path d="M16 15l3 3-3 3" /></>}
+                  label={<span style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Go to {npFromShown.name || 'playlist'}</span>} />
+              ) : null}
               {artistName ? (
                 <MenuItem accentRgb={acc} onClick={() => { close(); openArtistAnywhere({ name: artistName, spotifyId: row?.artistIds?.[0] || null }); }}
                   icon={<><circle cx="12" cy="8" r="4" /><path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5" /></>} label="Go to artist" />
@@ -3597,7 +3877,7 @@ export default function StudioHome({
               <MenuItem accentRgb={acc} onClick={copyLink}
                 icon={<><path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v14" /></>}
                 label="Copy Spotify link"
-                sub={sharing === t.id ? 'Looking up…' : rowMenu.bar ? keysText('copyLink') : undefined} />
+                sub={sharing === t.id ? 'Looking up…' : undefined} keys={keysText('copyLink')} />
               {theme.streamerMode && !row?.notOut ? (() => {
                 const hit = blockedBy(srBlocked, row || t);
                 return (
@@ -3608,7 +3888,12 @@ export default function StudioHome({
                 );
               })() : null}
               {saved && onUpdateTrackMetadata && !rowMenu.bar ? (
-                <MenuItem accentRgb={acc} onClick={() => { setEditingTrack(t); close(); }}
+                <MenuItem accentRgb={acc} onClick={() => {
+                  /* The editor opens on the page, so the album view (above
+                     it) closes first, as its own Edit Info does. */
+                  setPaletteOpen(false);
+                  setEditingTrack(t); close();
+                }}
                   icon={<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />}
                   label="Edit info" />
               ) : null}
@@ -3619,27 +3904,27 @@ export default function StudioHome({
                   {sep}
                   <MenuItem accentRgb={acc} onClick={() => { close(); setNpFull((v) => !v); }}
                     icon={<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />}
-                    label={npFull ? 'Exit fullscreen' : 'Fullscreen'} sub={keysText('fullscreen')} />
+                    label={npFull ? 'Exit Fullscreen' : 'Enter Fullscreen'} keys={keysText('fullscreen')} />
                   <MenuItem accentRgb={acc} onClick={() => { close(); setThemeKey('darkMode', !dark); }}
                     icon={<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />}
-                    label={dark ? 'Dark Mode Off' : 'Dark Mode On'} sub={keysText('darkMode')} />
+                    label={dark ? 'Turn Off Dark Mode' : 'Turn On Dark Mode'} keys={keysText('darkMode')} />
                   {/* Immerse and the record's color both paint surfaces Dark
                       mode keeps dark, so they wait until it's off. */}
                   {!dark ? (
                     <MenuItem accentRgb={acc} onClick={() => { close(); toggleNpAnimatedBg(); }}
                       icon={<path d="M12 3.2c3.4 3.6 5.4 6.2 5.4 8.9a5.4 5.4 0 1 1-10.8 0c0-2.7 2-5.3 5.4-8.9z" />}
-                      label={npAnimatedBg ? 'Turn Immerse Off' : 'Turn Immerse On'} sub={keysText('immerse')} />
+                      label={npAnimatedBg ? 'Turn Off Immerse' : 'Turn On Immerse'} keys={keysText('immerse')} />
                   ) : null}
                   {/* The color strip hangs off the Now Playing bar, which isn't
                       mounted in fullscreen, so the item goes with it. */}
                   {!npFull && !dark ? (
                     <MenuItem accentRgb={acc} onClick={() => { close(); setColourStripReq((n) => n + 1); }}
                       icon={<><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" /></>}
-                      label="Change Colors" sub={keysText('colour')} />
+                      label="Change Colors" keys={keysText('colour')} />
                   ) : null}
                   <MenuItem accentRgb={acc} onClick={() => { close(); toggleCompactMode(); }}
                     icon={<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 15h18" /></>}
-                    label={compactMode ? 'Exit Compact Mode' : 'Compact Mode'} sub={keysText('compact')} />
+                    label={compactMode ? 'Turn Off Compact Mode' : 'Turn On Compact Mode'} keys={keysText('compact')} />
                 </>
               ) : null}
               {saved && onRemoveFromLibrary && !rowMenu.bar && !inQueue ? (
@@ -3648,7 +3933,7 @@ export default function StudioHome({
                   <MenuItem accentRgb={acc} danger onClick={() => { onRemoveFromLibrary([t.id]); close(); }}
                     icon={<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />}
                     label="Remove from library" />
-                  {albumTracks.length > 1 ? (
+                  {albumTracks.length > 1 && !plHere ? (
                     <MenuItem accentRgb={acc} danger onClick={() => { onRemoveFromLibrary(albumTracks.map((x) => x.id)); close(); }}
                       icon={<><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M9 15l6-6M9 9l6 6" /></>}
                       label="Remove whole album"
@@ -3667,259 +3952,179 @@ export default function StudioHome({
       {/* Clear-library confirmation. Typed phrase, not a yes/no — a
           misclicked "Clear everything" has no undo path. */}
       {clearConfirm ? (
-        <div
-          onClick={() => { if (!clearing) setClearConfirm(null); }}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 300, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', padding: 30,
-            background: 'rgba(4,4,6,0.82)',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
+        <Dialog title="Clear Library" width={430} busy={clearing} onClose={() => setClearConfirm(null)}
+          actions={[
+            { label: 'Cancel', disabled: clearing, onClick: () => setClearConfirm(null) },
+            {
+              label: clearing ? 'Clearing…' : 'Clear Library', kind: 'danger', disabled: clearing || !(clearPhrase.trim().toLowerCase() === 'clear'),
+              onClick: async () => {
+                setClearing(true);
+                try {
+                  const r = await onClearLibrary?.({ deleteFiles: !!clearConfirm.deleteFiles });
+                  if (r?.ok) {
+                    const bits = [`Cleared ${r.cleared ?? 0} song${(r.cleared ?? 0) === 1 ? '' : 's'}`];
+                    if (r.deleted) bits.push(`${r.deleted} file${r.deleted === 1 ? '' : 's'} trashed`);
+                    if (r.skipped) bits.push(`${r.skipped} left on disk`);
+                    pushToast?.({ message: `${bits.join(' · ')}. Listening history kept.`, kind: 'success', durationMs: 6000 });
+                    setClearConfirm(null);
+                  } else {
+                    pushToast?.({ message: r?.error || 'Couldn’t clear the library.', kind: 'error', durationMs: 7000 });
+                  }
+                } finally {
+                  setClearing(false);
+                }
+              },
+            },
+          ]}>
+          <div>
+            This removes <strong style={{ color: 'var(--st-text)' }}>{library.length} song{library.length === 1 ? '' : 's'}</strong>,
+            along with your playlists and album notes. It can’t be undone.
+          </div>
+          <div style={{
+            marginTop: 12, padding: '9px 11px', borderRadius: 9,
+            background: 'rgba(120,220,150,0.08)', border: '1px solid rgba(120,220,150,0.22)',
+            fontSize: 11, color: 'rgba(170,230,190,0.95)', lineHeight: 1.5,
+          }}>
+            Listening history is kept. Re-import a song later and its play count and
+            last-played date come back automatically.
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setClearConfirm((c) => ({ ...c, deleteFiles: !c.deleteFiles }))}
             style={{
-              width: 'min(430px, 92vw)', borderRadius: 16, padding: '20px 22px',
-              background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
-              boxShadow: '0 26px 80px rgba(0,0,0,0.65)',
+              display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+              marginTop: 12, padding: '10px 11px', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${clearConfirm.deleteFiles ? 'rgba(230,90,90,0.45)' : 'rgba(var(--st-fg-rgb), 0.1)'}`,
+              background: clearConfirm.deleteFiles ? 'rgba(230,90,90,0.12)' : 'rgba(var(--st-fg-rgb), 0.035)',
             }}
           >
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--st-text)' }}>Clear your library?</div>
-            <div style={{ fontSize: 12, color: 'rgba(var(--st-sub-rgb), 0.6)', marginTop: 8, lineHeight: 1.6 }}>
-              This removes <strong style={{ color: 'var(--st-text)' }}>{library.length} track{library.length === 1 ? '' : 's'}</strong>,
-              along with your playlists and album notes. It can't be undone.
-            </div>
-            <div style={{
-              marginTop: 12, padding: '9px 11px', borderRadius: 9,
-              background: 'rgba(120,220,150,0.08)', border: '1px solid rgba(120,220,150,0.22)',
-              fontSize: 11, color: 'rgba(170,230,190,0.95)', lineHeight: 1.5,
-            }}>
-              Listening history is kept. Re-import a song later and its play count and
-              last-played date come back automatically.
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setClearConfirm((c) => ({ ...c, deleteFiles: !c.deleteFiles }))}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
-                marginTop: 12, padding: '10px 11px', borderRadius: 10, cursor: 'pointer',
-                border: `1px solid ${clearConfirm.deleteFiles ? 'rgba(230,90,90,0.45)' : 'rgba(var(--st-fg-rgb), 0.1)'}`,
-                background: clearConfirm.deleteFiles ? 'rgba(230,90,90,0.12)' : 'rgba(var(--st-fg-rgb), 0.035)',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--st-text)' }}>Also move downloaded files to the trash</div>
-                <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', marginTop: 2, lineHeight: 1.45 }}>
-                  Only files studio downloaded itself. Music you imported from elsewhere on
-                  your computer is never touched.
-                </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--st-text)' }}>Also move downloaded files to the trash</div>
+              <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', marginTop: 2, lineHeight: 1.45 }}>
+                Only files Studio downloaded itself. Music you imported from elsewhere on
+                your computer is never touched.
               </div>
-              <span aria-hidden style={{
-                width: 34, height: 20, borderRadius: 999, position: 'relative', flexShrink: 0,
-                background: clearConfirm.deleteFiles ? 'rgb(230,90,90)' : 'rgba(var(--st-fg-rgb), 0.16)',
-                border: '1px solid rgba(var(--st-fg-rgb), 0.18)',
-              }}>
-                <span style={{
-                  position: 'absolute', top: 2, left: clearConfirm.deleteFiles ? 15 : 2,
-                  width: 14, height: 14, borderRadius: '50%', background: '#fff',
-                  transition: 'left 0.16s cubic-bezier(0.3,0.9,0.3,1)',
-                }} />
-              </span>
-            </button>
-
-            <div style={{ marginTop: 14, fontSize: 11, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>
-              Type <strong style={{ color: 'var(--st-text)', fontFamily: 'ui-monospace, monospace' }}>clear</strong> to confirm
             </div>
-            <input
-              value={clearPhrase}
-              onChange={(e) => setClearPhrase(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape' && !clearing) setClearConfirm(null); }}
-              placeholder="clear"
-              autoFocus
-              spellCheck={false}
-              style={{
-                width: '100%', boxSizing: 'border-box', marginTop: 6,
-                padding: '9px 11px', borderRadius: 9, outline: 'none',
-                border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(0,0,0,0.35)',
-                color: 'var(--st-text)', fontSize: 12.5, fontFamily: 'inherit',
-              }}
-            />
+            <span aria-hidden style={{
+              width: 34, height: 20, borderRadius: 999, position: 'relative', flexShrink: 0,
+              background: clearConfirm.deleteFiles ? 'rgb(230,90,90)' : 'rgba(var(--st-fg-rgb), 0.16)',
+              border: '1px solid rgba(var(--st-fg-rgb), 0.18)',
+            }}>
+              <span style={{
+                position: 'absolute', top: 2, left: clearConfirm.deleteFiles ? 15 : 2,
+                width: 14, height: 14, borderRadius: '50%', background: '#fff',
+                transition: 'left 0.16s cubic-bezier(0.3,0.9,0.3,1)',
+              }} />
+            </span>
+          </button>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button
-                type="button"
-                onClick={() => setClearConfirm(null)}
-                disabled={clearing}
-                style={{
-                  flex: 1, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
-                  border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)',
-                  color: 'var(--st-text)', fontSize: 12, fontWeight: 700,
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={clearing || clearPhrase.trim().toLowerCase() !== 'clear'}
-                onClick={async () => {
-                  setClearing(true);
-                  try {
-                    const r = await onClearLibrary?.({ deleteFiles: !!clearConfirm.deleteFiles });
-                    if (r?.ok) {
-                      const bits = [`Cleared ${r.cleared ?? 0} track${(r.cleared ?? 0) === 1 ? '' : 's'}`];
-                      if (r.deleted) bits.push(`${r.deleted} file${r.deleted === 1 ? '' : 's'} trashed`);
-                      if (r.skipped) bits.push(`${r.skipped} left on disk`);
-                      pushToast?.({ message: `${bits.join(' · ')}. Listening history kept.`, kind: 'success', durationMs: 6000 });
-                      setClearConfirm(null);
-                    } else {
-                      pushToast?.({ message: r?.error || 'Couldn’t clear the library.', kind: 'error', durationMs: 7000 });
-                    }
-                  } finally {
-                    setClearing(false);
-                  }
-                }}
-                style={{
-                  flex: 1, padding: '10px 14px', borderRadius: 10,
-                  cursor: (clearing || clearPhrase.trim().toLowerCase() !== 'clear') ? 'default' : 'pointer',
-                  border: '1px solid rgba(230,90,90,0.5)', background: 'rgba(230,90,90,0.22)',
-                  color: 'rgb(245,160,160)', fontSize: 12, fontWeight: 700,
-                  opacity: (clearing || clearPhrase.trim().toLowerCase() !== 'clear') ? 0.45 : 1,
-                }}
-              >
-                {clearing ? 'Clearing…' : 'Clear Library'}
-              </button>
-            </div>
+          <div style={{ marginTop: 14, fontSize: 11, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>
+            Type <strong style={{ color: 'var(--st-text)', fontFamily: 'ui-monospace, monospace' }}>clear</strong> to confirm
           </div>
-        </div>
+          <input
+            value={clearPhrase}
+            onChange={(e) => setClearPhrase(e.target.value)}
+            placeholder="clear"
+            autoFocus
+            spellCheck={false}
+            style={{
+              width: '100%', boxSizing: 'border-box', marginTop: 6,
+              padding: '9px 11px', borderRadius: 9, outline: 'none',
+              border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(0,0,0,0.35)',
+              color: 'var(--st-text)', fontSize: 12.5, fontFamily: 'inherit',
+            }}
+          />
+        </Dialog>
       ) : null}
 
       {/* Delete-everything confirmation. One rung above Clear library — it
           also wipes listening stats and drops the onboarded flag, so the app
           returns to its first-run setup. Typed phrase, same rule as above. */}
       {clearAllConfirm ? (
-        <div
-          onClick={() => { if (!clearingAll) setClearAllConfirm(null); }}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 300, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', padding: 30,
-            background: 'rgba(4,4,6,0.82)',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
+        <Dialog title="Delete Everything" width={430} busy={clearingAll} onClose={() => setClearAllConfirm(null)}
+          actions={[
+            { label: 'Cancel', disabled: clearingAll, onClick: () => setClearAllConfirm(null) },
+            {
+              label: clearingAll ? 'Deleting…' : 'Delete Everything', kind: 'danger', disabled: clearingAll || !(clearAllPhrase.trim().toLowerCase() === 'delete everything'),
+              onClick: async () => {
+                setClearingAll(true);
+                try {
+                  const r = await onClearEverything?.({ deleteFiles: !!clearAllConfirm.deleteFiles });
+                  if (r?.ok) {
+                    pushToast?.({ message: 'Everything deleted. Back to a fresh install.', kind: 'success', durationMs: 5000 });
+                    setClearAllConfirm(null);
+                  } else {
+                    pushToast?.({ message: r?.error || 'Couldn’t delete everything.', kind: 'error', durationMs: 7000 });
+                  }
+                } finally {
+                  setClearingAll(false);
+                }
+              },
+            },
+          ]}>
+          <div>
+            This removes <strong style={{ color: 'var(--st-text)' }}>{library.length} song{library.length === 1 ? '' : 's'}</strong>,
+            every playlist, album note, and{' '}
+            <strong style={{ color: 'var(--st-text)' }}>all listening history</strong>, then
+            returns Studio to its first-run setup screen. It can’t be undone.
+          </div>
+          <div style={{
+            marginTop: 12, padding: '9px 11px', borderRadius: 9,
+            background: 'rgba(230,90,90,0.08)', border: '1px solid rgba(230,90,90,0.22)',
+            fontSize: 11, color: 'rgba(245,150,150,0.95)', lineHeight: 1.5,
+          }}>
+            This is the nuclear option: not even listening stats survive. Clear library,
+            by contrast, keeps your play history.
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setClearAllConfirm((c) => ({ ...c, deleteFiles: !c.deleteFiles }))}
             style={{
-              width: 'min(430px, 92vw)', borderRadius: 16, padding: '20px 22px',
-              background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.09)',
-              boxShadow: '0 26px 80px rgba(0,0,0,0.65)',
+              display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+              marginTop: 12, padding: '10px 11px', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${clearAllConfirm.deleteFiles ? 'rgba(230,90,90,0.45)' : 'rgba(var(--st-fg-rgb), 0.1)'}`,
+              background: clearAllConfirm.deleteFiles ? 'rgba(230,90,90,0.12)' : 'rgba(var(--st-fg-rgb), 0.035)',
             }}
           >
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--st-text)' }}>Delete everything?</div>
-            <div style={{ fontSize: 12, color: 'rgba(var(--st-sub-rgb), 0.6)', marginTop: 8, lineHeight: 1.6 }}>
-              This removes <strong style={{ color: 'var(--st-text)' }}>{library.length} track{library.length === 1 ? '' : 's'}</strong>,
-              every playlist, album note, and{' '}
-              <strong style={{ color: 'var(--st-text)' }}>all listening history</strong> — then
-              returns studio to its first-run setup screen. It can't be undone.
-            </div>
-            <div style={{
-              marginTop: 12, padding: '9px 11px', borderRadius: 9,
-              background: 'rgba(230,90,90,0.08)', border: '1px solid rgba(230,90,90,0.22)',
-              fontSize: 11, color: 'rgba(245,150,150,0.95)', lineHeight: 1.5,
-            }}>
-              This is the nuclear option: not even listening stats survive. Clear library,
-              by contrast, keeps your play history.
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setClearAllConfirm((c) => ({ ...c, deleteFiles: !c.deleteFiles }))}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
-                marginTop: 12, padding: '10px 11px', borderRadius: 10, cursor: 'pointer',
-                border: `1px solid ${clearAllConfirm.deleteFiles ? 'rgba(230,90,90,0.45)' : 'rgba(var(--st-fg-rgb), 0.1)'}`,
-                background: clearAllConfirm.deleteFiles ? 'rgba(230,90,90,0.12)' : 'rgba(var(--st-fg-rgb), 0.035)',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--st-text)' }}>Also move downloaded files to the trash</div>
-                <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', marginTop: 2, lineHeight: 1.45 }}>
-                  Only files studio downloaded itself. Music you imported from elsewhere on
-                  your computer is never touched.
-                </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--st-text)' }}>Also move downloaded files to the trash</div>
+              <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', marginTop: 2, lineHeight: 1.45 }}>
+                Only files Studio downloaded itself. Music you imported from elsewhere on
+                your computer is never touched.
               </div>
-              <span aria-hidden style={{
-                width: 34, height: 20, borderRadius: 999, position: 'relative', flexShrink: 0,
-                background: clearAllConfirm.deleteFiles ? 'rgb(230,90,90)' : 'rgba(var(--st-fg-rgb), 0.16)',
-                border: '1px solid rgba(var(--st-fg-rgb), 0.18)',
-              }}>
-                <span style={{
-                  position: 'absolute', top: 2, left: clearAllConfirm.deleteFiles ? 15 : 2,
-                  width: 14, height: 14, borderRadius: '50%', background: '#fff',
-                  transition: 'left 0.16s cubic-bezier(0.3,0.9,0.3,1)',
-                }} />
-              </span>
-            </button>
-
-            <div style={{ marginTop: 14, fontSize: 11, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>
-              Type <strong style={{ color: 'var(--st-text)', fontFamily: 'ui-monospace, monospace' }}>delete everything</strong> to confirm
             </div>
-            <input
-              value={clearAllPhrase}
-              onChange={(e) => setClearAllPhrase(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape' && !clearingAll) setClearAllConfirm(null); }}
-              placeholder="delete everything"
-              autoFocus
-              spellCheck={false}
-              style={{
-                width: '100%', boxSizing: 'border-box', marginTop: 6,
-                padding: '9px 11px', borderRadius: 9, outline: 'none',
-                border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(0,0,0,0.35)',
-                color: 'var(--st-text)', fontSize: 12.5, fontFamily: 'inherit',
-              }}
-            />
+            <span aria-hidden style={{
+              width: 34, height: 20, borderRadius: 999, position: 'relative', flexShrink: 0,
+              background: clearAllConfirm.deleteFiles ? 'rgb(230,90,90)' : 'rgba(var(--st-fg-rgb), 0.16)',
+              border: '1px solid rgba(var(--st-fg-rgb), 0.18)',
+            }}>
+              <span style={{
+                position: 'absolute', top: 2, left: clearAllConfirm.deleteFiles ? 15 : 2,
+                width: 14, height: 14, borderRadius: '50%', background: '#fff',
+                transition: 'left 0.16s cubic-bezier(0.3,0.9,0.3,1)',
+              }} />
+            </span>
+          </button>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button
-                type="button"
-                onClick={() => setClearAllConfirm(null)}
-                disabled={clearingAll}
-                style={{
-                  flex: 1, padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
-                  border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)',
-                  color: 'var(--st-text)', fontSize: 12, fontWeight: 700,
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={clearingAll || clearAllPhrase.trim().toLowerCase() !== 'delete everything'}
-                onClick={async () => {
-                  setClearingAll(true);
-                  try {
-                    const r = await onClearEverything?.({ deleteFiles: !!clearAllConfirm.deleteFiles });
-                    if (r?.ok) {
-                      pushToast?.({ message: 'Everything deleted. Back to a fresh install.', kind: 'success', durationMs: 5000 });
-                      setClearAllConfirm(null);
-                    } else {
-                      pushToast?.({ message: r?.error || 'Couldn’t delete everything.', kind: 'error', durationMs: 7000 });
-                    }
-                  } finally {
-                    setClearingAll(false);
-                  }
-                }}
-                style={{
-                  flex: 1, padding: '10px 14px', borderRadius: 10,
-                  cursor: (clearingAll || clearAllPhrase.trim().toLowerCase() !== 'delete everything') ? 'default' : 'pointer',
-                  border: '1px solid rgba(255,110,110,0.6)', background: 'rgba(230,70,70,0.22)',
-                  color: 'rgb(255,160,160)', fontSize: 12, fontWeight: 700,
-                  opacity: (clearingAll || clearAllPhrase.trim().toLowerCase() !== 'delete everything') ? 0.45 : 1,
-                }}
-              >
-                {clearingAll ? 'Deleting…' : 'Delete Everything'}
-              </button>
-            </div>
+          <div style={{ marginTop: 14, fontSize: 11, color: 'rgba(var(--st-sub-rgb), 0.5)' }}>
+            Type <strong style={{ color: 'var(--st-text)', fontFamily: 'ui-monospace, monospace' }}>delete everything</strong> to confirm
           </div>
-        </div>
+          <input
+            value={clearAllPhrase}
+            onChange={(e) => setClearAllPhrase(e.target.value)}
+            placeholder="delete everything"
+            autoFocus
+            spellCheck={false}
+            style={{
+              width: '100%', boxSizing: 'border-box', marginTop: 6,
+              padding: '9px 11px', borderRadius: 9, outline: 'none',
+              border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(0,0,0,0.35)',
+              color: 'var(--st-text)', fontSize: 12.5, fontFamily: 'inherit',
+            }}
+          />
+        </Dialog>
       ) : null}
 
       {/* Metadata editor — same floating glass modal the overlay uses. */}
@@ -4026,6 +4231,8 @@ export default function StudioHome({
             openPlaylistPicker(t, { x: r.right - 288, y: r.top - 10, above: true });
           } : null}
           onMore={openBarMenu}
+          from={npFromShown}
+          onOpenFrom={openFrom}
           shuffleOn={shuffleOn}
           repeat={repeat}
           onToggleShuffle={onToggleShuffle}
@@ -4050,6 +4257,8 @@ export default function StudioHome({
         onReorderQueue={onReorderQueue}
         onClearQueue={clearUpNext}
         onQueueMenu={openQueueMenu}
+        playSource={playSource}
+        onOpenSource={openQueueSource}
         /* "Up next" starts one past the current track, and reorder works in
            absolute queue positions — this is the offset between the two. */
         queueOffset={queueIndex >= 0 ? queueIndex + 1 : 0}
@@ -4123,6 +4332,8 @@ export default function StudioHome({
           onReorderQueue={onReorderQueue}
           onClearQueue={clearUpNext}
           onQueueMenu={openQueueMenu}
+          playSource={playSource}
+          onOpenSource={openQueueSource}
           queueOffset={queueIndex >= 0 ? queueIndex + 1 : 0}
           lyricsData={lyricsData}
           onLyricsSaved={onLyricsSaved}
@@ -4182,7 +4393,7 @@ export default function StudioHome({
               color: 'var(--st-text)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
             }}
           >
-            Make card
+            Make Card
           </button>
           <button type="button" onClick={clearLyricSel} title="Cancel selection (Esc)"
             style={{
@@ -4237,126 +4448,8 @@ export default function StudioHome({
         </React.Suspense>
       ) : null}
 
-      {/* Playlist cover. A file picker rather than a full editor — name is
-          already handled by Rename, and cover is the only other field. */}
-      {plCoverFor ? (
-        <Modal>
-        <div onClick={() => setPlCoverFor(null)}
-          style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
-          <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(360px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)' }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--st-text)' }}>Playlist cover</div>
-            <div style={{ fontSize: 11.5, color: 'rgba(var(--st-sub-rgb), 0.5)', marginTop: 6, lineHeight: 1.5 }}>
-              Choose an image, or clear it to fall back to the first track&rsquo;s artwork.
-            </div>
-            <label style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', height: 96, marginTop: 14,
-              borderRadius: 11, cursor: 'pointer', border: '1px dashed rgba(var(--st-fg-rgb), 0.22)',
-              color: 'rgba(var(--st-sub-rgb), 0.6)', fontSize: 12, fontWeight: 600,
-            }}>
-              Choose image…
-              <input type="file" accept="image/*" style={{ display: 'none' }}
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  const rd = new FileReader();
-                  rd.onload = async () => {
-                    await onUpdatePlaylist?.(plCoverFor, { coverArt: String(rd.result) });
-                    setPlCoverFor(null);
-                  };
-                  rd.readAsDataURL(f);
-                }} />
-            </label>
-            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              <button type="button" onClick={() => setPlCoverFor(null)}
-                style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)', color: 'var(--st-text)', fontSize: 12, fontWeight: 650 }}>Cancel</button>
-              <button type="button" onClick={async () => { await onUpdatePlaylist?.(plCoverFor, { coverArt: null }); setPlCoverFor(null); }}
-                style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'transparent', color: 'rgba(var(--st-text-rgb), 0.7)', fontSize: 12, fontWeight: 650 }}>Clear</button>
-            </div>
-          </div>
-        </div>
-        </Modal>
-      ) : null}
-
-      {/* Add songs to a playlist. Searchable, because picking from a 500-track
-          library with a plain list is unusable. Already-added tracks show as
-          such rather than being hidden — hiding them makes you wonder whether
-          the search is broken. */}
-      {addSongsTo ? (() => {
-        const pl = playlists.find((x) => x.id === addSongsTo);
-        const have = new Set(pl?.trackIds || []);
-        const q = addSongsQuery.trim().toLowerCase();
-        const rows = (q
-          ? library.filter((t) => `${t.title || ''} ${t.artist || ''} ${t.album || ''}`.toLowerCase().includes(q))
-          : library
-        ).slice(0, 80);
-        return (
-          <Modal>
-          <div onClick={() => setAddSongsTo(null)}
-            style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.82)' }}>
-            <div onClick={(e) => e.stopPropagation()}
-              style={{ width: 'min(560px, 94vw)', maxHeight: '76vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'var(--st-dark-float, rgb(15,15,18))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', overflow: 'hidden' }}>
-              <div style={{ padding: '16px 18px 10px' }}>
-                <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>Add to {pl?.name || 'playlist'}</div>
-                <input autoFocus value={addSongsQuery} onChange={(e) => setAddSongsQuery(e.target.value)}
-                  placeholder="Search your library…"
-                  style={{ width: '100%', boxSizing: 'border-box', marginTop: 12, padding: '10px 12px', borderRadius: 9, outline: 'none', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(0,0,0,0.4)', color: 'var(--st-text)', fontSize: 13, fontFamily: 'inherit' }} />
-              </div>
-              <div className="sth-libscroll" style={{ overflowY: 'auto', padding: '0 10px 12px', minHeight: 0 }}>
-                {rows.map((t) => {
-                  const added = have.has(t.id);
-                  return (
-                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '7px 9px', borderRadius: 9 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: 5, flexShrink: 0, background: coverFor(t) ? `url("${coverFor(t)}") center/cover` : 'rgba(var(--st-fg-rgb), 0.08)' }} />
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>
-                        <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.artist}</div>
-                      </div>
-                      <button type="button" disabled={added}
-                        onClick={() => onAddTracksToPlaylist?.(addSongsTo, [t.id])}
-                        title={added ? 'In this playlist' : 'Add to this playlist'} aria-label={added ? 'In this playlist' : 'Add to this playlist'}
-                        style={{
-                          width: 28, height: 28, padding: 0, borderRadius: '50%', flexShrink: 0,
-                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                          cursor: added ? 'default' : 'pointer',
-                          border: added ? 'none' : `1px solid rgba(${readableAccent(accent)},0.4)`,
-                          background: added ? 'transparent' : `rgba(${readableAccent(accent)},0.16)`,
-                          color: added ? 'rgba(140,220,160,0.9)' : `rgb(${readableAccent(accent)})`,
-                        }}>
-                        {added
-                          ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                          : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>}
-                      </button>
-                    </div>
-                  );
-                })}
-                {!rows.length ? <div style={{ fontSize: 12, color: 'rgba(var(--st-sub-rgb), 0.4)', padding: '8px 10px' }}>No matches.</div> : null}
-              </div>
-              <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(var(--st-fg-rgb), 0.07)' }}>
-                <button type="button" onClick={() => setAddSongsTo(null)}
-                  style={{ width: '100%', padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)', color: 'var(--st-text)', fontSize: 12, fontWeight: 650 }}>Done</button>
-              </div>
-            </div>
-          </div>
-          </Modal>
-        );
-      })() : null}
-
-      {/* ---- Playlist picker -------------------------------------------
-          The inverse of the sheet above: that one picks songs for a
-          playlist, this one picks playlists for a song. Same shell
-          deliberately — same width, same header/scroll/footer split, same
-          surfaces — because they are two directions of one idea and should
-          not look like two different features. */}
       {plPicker ? (() => {
         const t = plPicker.track;
-        const acc = readableAccent(accent);
-        const q = plPickerQuery.trim().toLowerCase();
-        const all = playlists || [];
-        const rows = q ? all.filter((p) => (p.name || '').toLowerCase().includes(q)) : all;
-        /* Search appears only once the list is long enough to need it. A
-           search box above three playlists is furniture. */
-        const showSearch = all.length > 7;
         const W = 288;
         const vw = typeof window !== 'undefined' ? window.innerWidth : 1400;
         const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
@@ -4375,180 +4468,21 @@ export default function StudioHome({
             <div onClick={() => setPlPicker(null)}
               onContextMenu={(e) => { e.preventDefault(); setPlPicker(null); }}
               style={{ position: 'fixed', inset: 0, zIndex: 400 }} />
-            <div onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'fixed', zIndex: 401, left, ...vpos,
-                width: W, maxHeight: 392, display: 'flex', flexDirection: 'column',
-                /* The row menu's surface exactly. The picker is usually opened
-                   from that menu, and a different background would make it
-                   look like it came from somewhere else. */
-                borderRadius: 12, background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                boxShadow: '0 22px 60px rgba(0,0,0,0.7)',
-                animation: 'stFadeUp 0.13s ease both',
-                overflow: 'hidden',
-              }}>
-
-              {/* Header, matching the row menu's: artwork, title, artist,
-                  hairline. The picker opens from the now-playing bar, from a
-                  library row, and from a row inside a playlist — three
-                  different songs — so it names the one being filed. */}
-              <div style={{ padding: '9px 11px 0' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 0 9px' }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 6, flexShrink: 0, background: coverFor(t) ? `url("${coverFor(t)}") center/cover` : 'rgba(var(--st-fg-rgb), 0.08)' }} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 650, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t?.title}</div>
-                    <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.45)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t?.artist}</div>
-                  </div>
-                </div>
-                <div style={{ height: 1, background: 'rgba(var(--st-fg-rgb), 0.08)' }} />
-                {showSearch ? (
-                  <input autoFocus value={plPickerQuery} onChange={(e) => setPlPickerQuery(e.target.value)}
-                    placeholder="Search playlists…"
-                    style={{ width: '100%', boxSizing: 'border-box', marginTop: 9, padding: '7px 10px', borderRadius: 8, outline: 'none', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(255,255,255,0.04)', color: 'var(--st-text)', fontSize: 12, fontFamily: 'inherit' }} />
-                ) : null}
-              </div>
-
-              <div className="sth-libscroll" style={{ overflowY: 'auto', padding: '5px 5px 6px', minHeight: 0 }}>
-                {/* New playlist, at the top. It expands into a name field in
-                    place rather than opening a dialog on top of the picker —
-                    a second layer is where people lose the ticks they
-                    already made. */}
-                {onCreatePlaylist ? (
-                  plPickerNew == null ? (
-                    <button type="button" className="sth-plpick" onClick={() => setPlPickerNew('')}>
-                      <span className="sth-plpick-art is-new" style={{ color: `rgb(${acc})` }}>
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                      </span>
-                      <span className="sth-plpick-txt"><span className="sth-plpick-name">New playlist</span></span>
-                    </button>
-                  ) : (
-                    <div className="sth-plpick is-editing">
-                      <span className="sth-plpick-art is-new" style={{ color: `rgb(${acc})` }}>
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                      </span>
-                      <input autoFocus value={plPickerNew}
-                        onChange={(e) => setPlPickerNew(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') { e.preventDefault(); createFromPlPicker(); }
-                          /* Escape backs out of the NAME FIELD, not the
-                             picker — stopPropagation keeps it from reaching
-                             the window handler and throwing away the ticks. */
-                          if (e.key === 'Escape') { e.stopPropagation(); setPlPickerNew(null); }
-                        }}
-                        placeholder="Playlist name"
-                        style={{ flex: 1, minWidth: 0, padding: '6px 9px', borderRadius: 7, outline: 'none', border: '1px solid rgba(var(--st-fg-rgb), 0.14)', background: 'rgba(255,255,255,0.04)', color: 'var(--st-text)', fontSize: 12, fontFamily: 'inherit' }} />
-                      <button type="button" disabled={!plPickerNew.trim()} onClick={createFromPlPicker}
-                        style={{ padding: '5px 10px', borderRadius: 7, flexShrink: 0, cursor: plPickerNew.trim() ? 'pointer' : 'default', border: 'none', background: `rgb(${acc})`, color: accentTextColor(acc), fontSize: 11, fontWeight: 700, opacity: plPickerNew.trim() ? 1 : 0.4 }}>
-                        Create
-                      </button>
-                    </div>
-                  )
-                ) : null}
-
-                {rows.map((pl) => {
-                  const on = (pl.trackIds || []).includes(t.id);
-                  const count = (pl.trackIds || []).length;
-                  return (
-                    <button type="button" key={pl.id} className={`sth-plpick${on ? ' is-on' : ''}`}
-                      onClick={() => pickPlaylistNow(pl.id)}
-                      title={on ? `In ${pl.name}. Click to remove it.` : `Add to ${pl.name}`}
-                      aria-pressed={on}
-                      style={{ '--pl-acc': acc, '--pl-acc-fg': accentTextColor(acc) }}>
-                      <span className="sth-plpick-art"
-                        style={{ background: pl.coverArt ? `url("${pl.coverArt}") center/cover` : undefined }}>
-                        {pl.coverArt ? null : (
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.45 }}>
-                            <path d="M9 17V6.5l9-1.8V15" /><circle cx="6.6" cy="17.4" r="2.6" /><circle cx="15.6" cy="15.4" r="2.6" />
-                          </svg>
-                        )}
-                      </span>
-                      <span className="sth-plpick-txt">
-                        <span className="sth-plpick-name">{pl.name}</span>
-                        <span className="sth-plpick-sub">
-                          {count} song{count === 1 ? '' : 's'}{on ? ' · has this song' : ''}
-                        </span>
-                      </span>
-                      <span className="sth-plpick-box" aria-hidden>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M20 6.5L9.2 17.3 4 12.1" />
-                        </svg>
-                      </span>
-                    </button>
-                  );
-                })}
-
-                {!rows.length ? (
-                  <div style={{ fontSize: 12, color: 'rgba(var(--st-sub-rgb), 0.42)', padding: '14px 10px', textAlign: 'center' }}>
-                    {all.length ? 'No playlists match that.' : 'You have no playlists yet.'}
-                  </div>
-                ) : null}
-              </div>
-
+            {/* The song menu's header and the same playlist list as every
+                other Add to Playlist, as a popover from the bar's button. */}
+            <div data-rowmenu="" className="sth-libscroll" onClick={(e) => e.stopPropagation()}
+              style={{ position: 'fixed', zIndex: 401, left, ...vpos, width: W, maxHeight: 392, overflowY: 'auto', ...MENU_SURFACE }}>
+              <MenuHead art={coverFor(t)} title={t?.title} sub={[t?.artist, t?.album].filter(Boolean).join(' · ')} />
+              <PlaylistPickList playlists={playlists || []} artFor={plArt}
+                stateOf={(pl) => ((pl.trackIds || []).includes(t.id) ? 'all' : 'none')}
+                onPick={(pl) => pickPlaylistNow(pl.id)}
+                onCreate={onCreatePlaylist ? createFromPlPicker : null} />
             </div>
           </Modal>
         );
       })() : null}
 
       {/* Edit profile — name and avatar. Local only; nothing is uploaded. */}
-      {editProfile ? (
-        <Modal>
-        <div onClick={() => setEditProfile(null)}
-          style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.82)' }}>
-          <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(400px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(var(--st-bg-rgb)))', border: '1px solid rgba(var(--st-fg-rgb), 0.11)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)' }}>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>Your profile</div>
-            <div style={{ display: 'flex', gap: 14, marginTop: 14 }}>
-              <label className="sth-plcover" style={{
-                position: 'relative', width: 92, height: 92, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', cursor: 'pointer',
-                background: editProfile.avatar ? `url("${editProfile.avatar}") center/cover` : `rgba(${readableAccent(accent)},0.25)`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 30, fontWeight: 700, color: 'var(--st-text)',
-              }}>
-                {!editProfile.avatar ? (editProfile.name || 'You').trim().charAt(0).toUpperCase() : null}
-                <div className="sth-plcover-veil">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="M21 16l-5-5-8 8" />
-                  </svg>
-                </div>
-                <input type="file" accept="image/*" style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    const rd = new FileReader();
-                    rd.onload = () => setEditProfile((r) => ({ ...r, avatar: String(rd.result) }));
-                    rd.readAsDataURL(f);
-                  }} />
-              </label>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.4)' }}>Name</div>
-                <input autoFocus value={editProfile.name}
-                  onChange={(e) => setEditProfile((r) => ({ ...r, name: e.target.value }))}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setEditProfile(null);
-                    if (e.key === 'Enter') { saveProfile({ name: editProfile.name.trim(), avatar: editProfile.avatar }); setEditProfile(null); }
-                  }}
-                  placeholder="Your name"
-                  style={{ width: '100%', boxSizing: 'border-box', marginTop: 6, padding: '10px 12px', borderRadius: 9, outline: 'none', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(0,0,0,0.35)', color: 'var(--st-text)', fontSize: 13, fontFamily: 'inherit' }} />
-                {editProfile.avatar ? (
-                  <button type="button" onClick={() => setEditProfile((r) => ({ ...r, avatar: null }))}
-                    style={{ marginTop: 10, padding: '5px 11px', borderRadius: 8, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'transparent', color: 'rgba(var(--st-sub-rgb), 0.6)', fontSize: 11, fontWeight: 600 }}>
-                    Remove picture
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setEditProfile(null)}
-                style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)', color: 'var(--st-text)', fontSize: 12, fontWeight: 650 }}>Cancel</button>
-              <button type="button" onClick={() => { saveProfile({ name: editProfile.name.trim(), avatar: editProfile.avatar }); setEditProfile(null); }}
-                style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: 'none', background: `rgb(${readableAccent(accent)})`, color: accentTextColor(readableAccent(accent)), fontSize: 12, fontWeight: 700 }}>Save</button>
-            </div>
-          </div>
-        </div>
-        </Modal>
-      ) : null}
-
       {/* Edit playlist — name AND cover in one dialog. They were two separate
           entry points ("Rename" plus a cover icon) for what is really one
           "edit this playlist" intent. */}
@@ -4562,188 +4496,57 @@ export default function StudioHome({
           setRenamePl(null);
         };
         return (
-          <Modal>
-          <div onClick={() => setRenamePl(null)}
-            style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.82)' }}>
-            <div onClick={(e) => e.stopPropagation()}
-              style={{ width: 'min(400px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--surface)', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.65)' }}>
-              <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>Edit playlist</div>
-
-              <div style={{ display: 'flex', gap: 14, marginTop: 14 }}>
-                <label className="sth-plcover" style={{
-                  position: 'relative', width: 104, height: 104, borderRadius: 9, flexShrink: 0, overflow: 'hidden', cursor: 'pointer',
-                  background: art ? `url("${art}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
-                  border: art ? 'none' : '1px dashed rgba(var(--st-fg-rgb), 0.2)',
-                }}>
-                  <div className="sth-plcover-veil" style={{ opacity: art ? undefined : 1, background: art ? undefined : 'transparent' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="M21 16l-5-5-8 8" />
-                    </svg>
-                    <span style={{ fontSize: 10.5, fontWeight: 650, marginTop: 6 }}>{art ? 'Replace' : 'Add cover'}</span>
-                  </div>
-                  <input type="file" accept="image/*" style={{ display: 'none' }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) return;
-                      const rd = new FileReader();
-                      rd.onload = () => setRenamePl((r) => ({ ...r, coverArt: String(rd.result) }));
-                      rd.readAsDataURL(f);
-                    }} />
-                </label>
-
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: 'rgba(var(--st-sub-rgb), 0.4)' }}>Name</div>
-                  <input autoFocus value={renamePl.name}
-                    onChange={(e) => setRenamePl((r) => ({ ...r, name: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === 'Escape') setRenamePl(null); if (e.key === 'Enter' && renamePl.name.trim()) save(); }}
-                    style={{ width: '100%', boxSizing: 'border-box', marginTop: 6, padding: '10px 12px', borderRadius: 9, outline: 'none', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(0,0,0,0.4)', color: 'var(--st-text)', fontSize: 13, fontFamily: 'inherit' }} />
-                  {art ? (
-                    <button type="button" onClick={() => setRenamePl((r) => ({ ...r, coverArt: null }))}
-                      style={{ alignSelf: 'flex-start', marginTop: 10, padding: '5px 11px', borderRadius: 8, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'transparent', color: 'rgba(var(--st-sub-rgb), 0.6)', fontSize: 11, fontWeight: 600 }}>
-                      Remove cover
-                    </button>
-                  ) : null}
+          <Dialog title="Edit Playlist" onClose={() => setRenamePl(null)}
+            start={art ? <button type="button" className="st-dlg-btn is-secondary" onClick={() => setRenamePl((r) => ({ ...r, coverArt: null }))}>Remove Cover</button> : null}
+            actions={[
+              { label: 'Cancel', onClick: () => setRenamePl(null) },
+              { label: 'Save', kind: 'primary', disabled: !renamePl.name.trim(), onClick: save },
+            ]}>
+            <div style={{ display: 'flex', gap: 14, paddingTop: 2 }}>
+              <label className="sth-plcover" style={{
+                position: 'relative', width: 104, height: 104, borderRadius: 9, flexShrink: 0, overflow: 'hidden', cursor: 'pointer',
+                background: art ? `url("${art}") center/cover` : 'rgba(var(--st-fg-rgb), 0.07)',
+                border: art ? 'none' : '1px dashed rgba(var(--st-fg-rgb), 0.2)',
+              }}>
+                <div className="sth-plcover-veil" style={{ opacity: art ? undefined : 1, background: art ? undefined : 'transparent' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="M21 16l-5-5-8 8" />
+                  </svg>
+                  <span style={{ fontSize: 10.5, fontWeight: 650, marginTop: 6 }}>{art ? 'Replace' : 'Add Cover'}</span>
                 </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-                <button type="button" onClick={() => setRenamePl(null)}
-                  style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)', color: 'var(--st-text)', fontSize: 12, fontWeight: 650 }}>Cancel</button>
-                <button type="button" disabled={!renamePl.name.trim()} onClick={save}
-                  style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: 'none', background: `rgb(${readableAccent(accent)})`, color: accentTextColor(readableAccent(accent)), fontSize: 12, fontWeight: 700, opacity: renamePl.name.trim() ? 1 : 0.45 }}>Save</button>
+                <input type="file" accept="image/*" style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    const rd = new FileReader();
+                    rd.onload = () => setRenamePl((r) => ({ ...r, coverArt: String(rd.result) }));
+                    rd.readAsDataURL(f);
+                  }} />
+              </label>
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                <div className="st-eyebrow" style={{ marginBottom: 6 }}>Name</div>
+                <input className="st-dlg-input" autoFocus value={renamePl.name}
+                  onChange={(e) => setRenamePl((r) => ({ ...r, name: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && renamePl.name.trim()) save(); }} />
               </div>
             </div>
-          </div>
-          </Modal>
+          </Dialog>
         );
       })() : null}
-
-      {/* Delete playlist. Confirmed, but no typed phrase — unlike clearing the
-          library this removes a list, not the music itself. */}
-      {deletePl ? (
-        <Modal>
-        <div onClick={() => setDeletePl(null)}
-          style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
-          <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(370px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--st-text)' }}>Delete “{deletePl.name}”?</div>
-            <div style={{ fontSize: 12, color: 'rgba(var(--st-sub-rgb), 0.55)', marginTop: 8, lineHeight: 1.55 }}>
-              The playlist is removed. The songs stay in your library.
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setDeletePl(null)}
-                style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)', color: 'var(--st-text)', fontSize: 12, fontWeight: 650 }}>Cancel</button>
-              <button type="button"
-                onClick={async () => { await onDeletePlaylist?.(deletePl.id); setDeletePl(null); setLibDetail(null); }}
-                style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(230,90,90,0.5)', background: 'rgba(230,90,90,0.2)', color: 'rgb(245,160,160)', fontSize: 12, fontWeight: 700 }}>Delete</button>
-            </div>
-          </div>
-        </div>
-        </Modal>
-      ) : null}
-
-      {/* Pick a playlist to add to. A sheet rather than a submenu: this can be
-          reached with one track or a whole album selected, and a hover menu
-          would close the moment the pointer left the row. */}
-      {addToPl ? (
-        <Modal>
-        <div onClick={() => setAddToPl(null)}
-          style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
-          <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(360px, 92vw)', maxHeight: '70vh', display: 'flex', flexDirection: 'column', borderRadius: 15, background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)', overflow: 'hidden' }}>
-            <div style={{ padding: '16px 18px 10px', fontSize: 14, fontWeight: 700, color: 'var(--st-text)' }}>
-              Add {addToPl.trackIds.length} song{addToPl.trackIds.length === 1 ? '' : 's'} to…
-            </div>
-            <div className="sth-libscroll" style={{ overflowY: 'auto', padding: '0 8px 12px' }}>
-              {playlists.length ? playlists.map((pl) => (
-                <button key={pl.id} type="button"
-                  onClick={async () => { await onAddTracksToPlaylist?.(pl.id, addToPl.trackIds); setAddToPl(null); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left',
-                    padding: '8px 10px', borderRadius: 9, border: 'none', cursor: 'pointer', background: 'transparent',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(var(--st-fg-rgb), 0.06)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 6, flexShrink: 0, background: pl.coverArt ? `url("${pl.coverArt}") center/cover` : `rgba(${readableAccent(accent)},0.28)` }} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--st-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pl.name}</div>
-                    <div style={{ fontSize: 10.5, color: 'rgba(var(--st-sub-rgb), 0.42)' }}>{(pl.trackIds || []).length} songs</div>
-                  </div>
-                </button>
-              )) : null}
-              {/* Create-and-add in one step. With no playlists the sheet was a
-                  dead end: it said "No playlists yet" and offered nothing, so
-                  "Add to playlist" appeared broken rather than empty. */}
-              {onCreatePlaylist ? (
-                <button type="button"
-                  onClick={async () => {
-                    const ids = addToPl.trackIds;
-                    const r = await onCreatePlaylist({ name: 'New playlist' });
-                    if (r?.ok && r.id) {
-                      await onAddTracksToPlaylist?.(r.id, ids);
-                      setAddToPl(null);
-                      setRenamePl({ id: r.id, name: 'New playlist' });
-                    }
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left',
-                    padding: '8px 10px', borderRadius: 9, border: 'none', cursor: 'pointer',
-                    background: 'transparent', color: `rgb(${readableAccent(accent)})`, fontSize: 12.5, fontWeight: 650,
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = `rgba(${readableAccent(accent)},0.12)`; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
-                  <span style={{ width: 30, height: 30, borderRadius: 6, flexShrink: 0, background: `rgba(${readableAccent(accent)},0.16)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-                  </span>
-                  New playlist
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
-        </Modal>
-      ) : null}
 
       {/* New playlist. A dialog rather than an inline row: the name is the
           only field, and an inline editor in the rail would shift the list
           under the pointer as you type. */}
       {newPlaylist ? (
-        <div onClick={() => setNewPlaylist(null)}
-          style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(4,4,6,0.8)' }}>
-          <div onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(380px, 92vw)', borderRadius: 15, padding: '18px 20px', background: 'var(--st-dark-float, rgb(16,16,19))', border: '1px solid rgba(var(--st-fg-rgb), 0.1)', boxShadow: '0 24px 70px rgba(0,0,0,0.6)' }}>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--st-text)' }}>New playlist</div>
-            <input
-              autoFocus
-              value={newPlaylist.name}
-              onChange={(e) => setNewPlaylist({ name: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') setNewPlaylist(null);
-                if (e.key === 'Enter' && newPlaylist.name.trim()) createPlaylistNow();
-              }}
-              placeholder="Playlist name"
-              style={{
-                width: '100%', boxSizing: 'border-box', marginTop: 12, padding: '10px 12px',
-                borderRadius: 9, outline: 'none', border: '1px solid rgba(var(--st-fg-rgb), 0.12)',
-                background: 'rgba(0,0,0,0.35)', color: 'var(--st-text)', fontSize: 13, fontFamily: 'inherit',
-              }}
-            />
-            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              <button type="button" onClick={() => setNewPlaylist(null)}
-                style={{ flex: 1, padding: '9px 14px', borderRadius: 9, cursor: 'pointer', border: '1px solid rgba(var(--st-fg-rgb), 0.12)', background: 'rgba(var(--st-fg-rgb), 0.05)', color: 'var(--st-text)', fontSize: 12, fontWeight: 650 }}>
-                Cancel
-              </button>
-              <button type="button" disabled={!newPlaylist.name.trim()} onClick={createPlaylistNow}
-                style={{
-                  flex: 1, padding: '9px 14px', borderRadius: 9, cursor: newPlaylist.name.trim() ? 'pointer' : 'default',
-                  border: 'none', background: `rgb(${readableAccent(accent)})`, color: accentTextColor(readableAccent(accent)),
-                  fontSize: 12, fontWeight: 700, opacity: newPlaylist.name.trim() ? 1 : 0.45,
-                }}>
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
+        <Dialog title="New Playlist" width={380} onClose={() => setNewPlaylist(null)}
+          actions={[
+            { label: 'Cancel', onClick: () => setNewPlaylist(null) },
+            { label: 'Create', kind: 'primary', disabled: !newPlaylist.name.trim(), onClick: createPlaylistNow },
+          ]}>
+          <input className="st-dlg-input" autoFocus value={newPlaylist.name} placeholder="Playlist name"
+            onChange={(e) => setNewPlaylist({ name: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Enter' && newPlaylist.name.trim()) createPlaylistNow(); }} />
+        </Dialog>
       ) : null}
 
       <VideoPicker
@@ -4774,7 +4577,9 @@ export default function StudioHome({
         dlState={dlState}
         dlProgress={dlProgress}
         onGetSpotifyTrack={downloadSpotifyRow}
-        onPlaySpotifyRows={(rows, i) => mySpotifyBridge.playRows(rows, i)}
+        onPlaySpotifyRows={(rows, i, opts) => mySpotifyBridge.playRows(rows, i, opts)}
+        record={paletteRecord}
+        look={albumLook}
         onGetSlskFile={downloadSoulseekRow}
         onGetSlskAlbum={downloadSsAlbum}
         onPlayTrack={(t) => onPlayTrack?.(t, library, 'list')}
@@ -4784,7 +4589,7 @@ export default function StudioHome({
           setLibFilter(q);
           pickSection('library');
         }}
-        onOpenLibraryAlbum={(t) => { pickSection('library'); openAlbumFromRow(t); }}
+        onOpenLibraryAlbum={(t) => openAlbumFromRow(t)}
         onOpenArtist={(artist) => {
           /* "Open full page" from the panel's artist view. */
           setPaletteOpen(false);
@@ -4810,8 +4615,10 @@ export default function StudioHome({
               isPlaying={isPlaying}
               onPlayTrack={onPlayTrack}
               onTogglePlay={onTogglePlay}
-              onOpenAlbum={(key) => { setPaletteOpen(false); pickSection('library'); setLibDetail({ kind: 'album', key }); }}
+              onOpenAlbum={(key, group) => { const rec = libAlbumRecord(group || key); if (rec) nav.openRecord(rec.album); }}
               onOpenRelease={nav.openAlbum}
+              viewState={nav.viewState}
+              onViewState={nav.onViewState}
               onJumpToFind={(q) => nav.search(q)}
               onOpenFullPage={nav.openPage}
               following={isFollowing(art)}

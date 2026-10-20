@@ -289,7 +289,7 @@ function VideoPicker({ open, meta, seed = null, accent = '150,150,150', onClose,
       });
       if (rid !== reqRef.current) return; // a newer search superseded this one
       if (res?.ok && Array.isArray(res.candidates) && res.candidates.length) { setCands(res.candidates); setErr(''); }
-      else { setCands([]); setErr(res?.error || 'No videos found — try refining the search.'); }
+      else { setCands([]); setErr(res?.error || 'No videos found. Try refining the search.'); }
     } catch (e) {
       if (rid !== reqRef.current) return;
       setCands([]); setErr(String(e?.message || e));
@@ -382,7 +382,7 @@ function VideoPicker({ open, meta, seed = null, accent = '150,150,150', onClose,
           ) : err ? (
             <div style={{ padding: '32px 18px', textAlign: 'center' }}>
               <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5 }}>{err}</div>
-              <button type="button" onClick={() => runSearch(q.trim())} style={{ marginTop: 14, padding: '8px 16px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.05)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Try again</button>
+              <button type="button" onClick={() => runSearch(q.trim())} style={{ marginTop: 14, padding: '8px 16px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.05)', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Try Again</button>
             </div>
           ) : cands.length === 0 ? (
             <div style={{ padding: '46px 0', textAlign: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 12.5 }}>No videos found. Refine the search above.</div>

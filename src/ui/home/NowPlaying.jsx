@@ -9,7 +9,7 @@ import { AnimatedGradientBg, FadeLayer, FadeSwap, LAYER_FADE_MS } from '../Visua
 import { ArtistLinks, PauseIcon, PlayIcon } from '../sharedUI.jsx';
 import { PlainLyrics, SyncedLyrics } from '../Lyrics.jsx';
 import { NP_FULL_TABS, NP_PANEL_TABS, NP_PANEL_W } from './constants.js';
-import { PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
+import { EmptyState, MI, PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
 import { coverLayers } from '../../lib/coverUrl.js';
 import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from '../../lib/studioFollows.js';
 import { playContextFor } from '../../lib/playContext.js';
@@ -31,7 +31,7 @@ export function NowPlayingFullView({
   coverFor, upNext = [], onSelectTrack, onReorderQueue, onClearQueue, queueOffset = 0,
   lyricsData, onLyricsSaved, onBrowseLyrics,
   lyricSelection = null, onLyricSelectStart, onLyricSelectLine,
-  artistInfo, credits, plays = 0, onQueueMenu = null,
+  artistInfo, credits, plays = 0, onQueueMenu = null, playSource = null, onOpenSource = null,
 }) {
   const acc = readableAccent(accent);
   const currentTime = usePlaybackTime();
@@ -109,7 +109,7 @@ export function NowPlayingFullView({
 
       {/* ---- Top strip: drag region, panel tabs, exit ---- */}
       <div className="sth-full-top">
-        <span className="sth-full-eyebrow">Now playing</span>
+        <span className="sth-full-eyebrow">Now Playing</span>
         <span style={{ flex: 1 }} />
         <div className="sth-full-tabs" role="tablist" aria-label="Side panel">
           {NP_FULL_TABS.map(([id, label, key]) => (
@@ -191,8 +191,8 @@ export function NowPlayingFullView({
             ) : null}
             {onToggleRepeat ? (
               <button type="button" className={`sth-npbtn is-toggle${repeat !== 'off' ? ' is-on' : ''}`} onClick={onToggleRepeat}
-                title={repeat === 'one' ? 'Repeat this track' : repeat === 'all' ? 'Repeat queue' : 'Repeat off'}
-                aria-label={repeat === 'one' ? 'Repeat: this track' : repeat === 'all' ? 'Repeat: queue' : 'Repeat: off'} aria-pressed={repeat !== 'off'}>
+                title={repeat === 'one' ? 'Repeat this song' : repeat === 'all' ? 'Repeat queue' : 'Repeat off'}
+                aria-label={repeat === 'one' ? 'Repeat: this song' : repeat === 'all' ? 'Repeat: queue' : 'Repeat: off'} aria-pressed={repeat !== 'off'}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" />
                   <polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
@@ -229,7 +229,8 @@ export function NowPlayingFullView({
             {tab === 'queue' ? (
               <QueueTab current={track} upNext={upNext} acc={acc} coverFor={coverFor}
                 onSelectTrack={onSelectTrack} isPlaying={isPlaying}
-                onReorder={onReorderQueue} onClear={onClearQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
+                onReorder={onReorderQueue} onClear={onClearQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu}
+                playSource={playSource} onOpenSource={onOpenSource} />
             ) : tab === 'lyrics' ? (
               <LyricsTab lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} track={track}
                 onBrowseLyrics={onBrowseLyrics}
@@ -278,7 +279,7 @@ function PanelDockBody({
   lyricSelection = null, onLyricSelectStart, onLyricSelectLine,
   isPlaying = false, onSeek, onExpand,
   onReorderQueue, onClearQueue, queueOffset = 0,
-  artistInfo, credits, plays = 0, onQueueMenu = null,
+  artistInfo, credits, plays = 0, onQueueMenu = null, playSource = null, onOpenSource = null,
 }) {
   if (!open) return null;
   const acc = readableAccent(accent);
@@ -390,7 +391,8 @@ function PanelDockBody({
         {tab === 'queue' ? (
           <QueueTab current={track} upNext={upNext} acc={acc} coverFor={coverFor}
             onSelectTrack={onSelectTrack} isPlaying={isPlaying}
-            onReorder={onReorderQueue} onClear={onClearQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu} />
+            onReorder={onReorderQueue} onClear={onClearQueue} queueOffset={queueOffset} onRowMenu={onQueueMenu}
+                playSource={playSource} onOpenSource={onOpenSource} />
         ) : tab === 'lyrics' ? (
           <LyricsTab lyricsData={lyricsData} onLyricsSaved={onLyricsSaved} track={track}
             onBrowseLyrics={onBrowseLyrics}
@@ -416,6 +418,8 @@ const QUEUE_CSS = `
 .sth-q-h { display: flex; align-items: baseline; gap: 8px; padding: 14px 6px 6px; font-size: 12.5px; font-weight: 700; color: rgba(var(--st-sub-rgb), 0.62); }
 .sth-q-h:first-child { padding-top: 4px; }
 .sth-q-h b { font-weight: 700; color: rgba(var(--st-text-rgb), 0.9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sth-q-from { padding: 0; border: none; background: none; font: inherit; font-weight: 700; color: rgba(var(--st-text-rgb), 0.9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; cursor: pointer; }
+.sth-q-from:hover, .sth-q-from:focus-visible { outline: none; text-decoration: underline; text-underline-offset: 2px; }
 .sth-q-h .m { margin-left: auto; flex-shrink: 0; font-size: 11.5px; font-weight: 600; color: rgba(var(--st-sub-rgb), 0.42); font-variant-numeric: tabular-nums; }
 .sth-q-row { position: relative; display: flex; align-items: center; gap: 12px; padding: 7px 6px; border-radius: 8px; user-select: none; outline: none; }
 .sth-q-row::after { content: ''; position: absolute; left: 6px; right: 6px; bottom: 0; height: 1px; background: rgba(var(--st-fg-rgb), 0.07); }
@@ -439,7 +443,6 @@ const QUEUE_CSS = `
 .sth-q-clear { flex-shrink: 0; border: none; background: none; padding: 0; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 700;
   color: rgba(var(--st-text-rgb), 0.62); transition: color .12s ease; }
 .sth-q-clear:hover, .sth-q-clear:focus-visible { color: var(--st-text); }
-.sth-q-empty { padding: 6px 6px; font-size: 12.5px; color: rgba(var(--st-sub-rgb), 0.45); }
 `;
 
 /**
@@ -517,6 +520,7 @@ function QueueRow({
 const QueueTab = React.memo(function QueueTab({
   current, upNext, acc, coverFor, onSelectTrack, isPlaying = false,
   onReorder, onClear = null, queueOffset = 0, onRowMenu = null,
+  playSource = null, onOpenSource = null,
 }) {
   /* The row being dragged and where it would land, local until the drop. */
   const [dragFrom, setDragFrom] = useState(null);
@@ -537,16 +541,17 @@ const QueueTab = React.memo(function QueueTab({
   }, [upNext]);
 
   /* "Next from: …" when every song still to come was started from the same
-     album or playlist page (Studio notes that for Spotify plays). */
+     album, playlist or artist (Studio notes that for Spotify plays, and the
+     queue's own source covers the rest). A link to it, like the bar's. */
   const from = useMemo(() => {
-    let name = null;
+    let item = null;
     for (const t of upNext) {
-      const n = playContextFor(spotifyIdOf(t))?.context?.name || null;
-      if (!n || (name && n !== name)) return null;
-      name = n;
+      const it = playContextFor(spotifyIdOf(t))?.context || (playSource?.ids?.has(t.id) ? playSource.item : null);
+      if (!it?.name || (item && it.name !== item.name)) return null;
+      item = item || it;
     }
-    return name;
-  }, [upNext]);
+    return item;
+  }, [upNext, playSource]);
 
   const rowProps = { coverFor, isPlaying, onReorder, queueOffset, dragFrom, dragOver, setDragFrom, setDragOver, onRowMenu };
 
@@ -555,12 +560,16 @@ const QueueTab = React.memo(function QueueTab({
       <style>{QUEUE_CSS}</style>
       {current ? (
         <>
-          <div className="sth-q-h">Now playing</div>
+          <div className="sth-q-h">Now Playing</div>
           <QueueRow {...rowProps} t={current} playing index={0} />
         </>
       ) : null}
       <div className="sth-q-h">
-        {from ? <>Next from: <b>{from}</b></> : 'Next up'}
+        {from ? (
+          <>Next from: {onOpenSource
+            ? <button type="button" className="sth-q-from" title={`Go to ${from.name}`} onClick={() => onOpenSource(from)}>{from.name}</button>
+            : <b>{from.name}</b>}</>
+        ) : 'Next Up'}
         {upNext.length ? <span className="m">{upNext.length} {upNext.length === 1 ? 'song' : 'songs'}{runtime ? ` · ${runtime}` : ''}</span> : null}
         {upNext.length && onClear ? (
           <button type="button" className="sth-q-clear" onClick={onClear} title={`Clear Queue (${keysText('clearQueue')})`}>Clear</button>
@@ -569,17 +578,13 @@ const QueueTab = React.memo(function QueueTab({
       {upNext.length ? upNext.map((t, i) => (
         <QueueRow {...rowProps} key={`${t.id}-${i}`} t={t} index={i + 1} onClick={() => onSelectTrack?.(t)} />
       )) : (
-        <div className="sth-q-empty">Nothing queued after this song.</div>
+        <EmptyState compact icon={MI.queue} title="Nothing Up Next" text="Play Next and Add to Queue put songs here." />
       )}
     </div>
   );
 });
 
 const LYRICS_CSS = `
-.ly-empty { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 20px 28px 48px; text-align: center; }
-.ly-empty .ic { color: rgba(var(--st-sub-rgb), 0.45); margin-bottom: 6px; }
-.ly-empty b { font-size: 15px; font-weight: 800; color: var(--st-text); }
-.ly-empty p { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: rgba(var(--st-sub-rgb), 0.55); max-width: 240px; }
 .ly-acts { display: flex; align-items: center; gap: 10px; font-size: 13px; color: rgba(var(--st-sub-rgb), 0.35); }
 .ly-link { border: none; background: none; padding: 2px 0; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; color: rgba(var(--st-text-rgb), 0.7); }
 .ly-link:hover { color: var(--st-text); }
@@ -667,17 +672,16 @@ function LyricsTab({
   if (!hasLyrics) {
     const instrumental = !!lyricsData?.instrumental;
     return (
-      <div className="ly-empty" style={{ '--ly-acc': acc }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', paddingBottom: 28, '--ly-acc': acc }}>
         <style>{LYRICS_CSS}</style>
-        <span className="ic"><Ly d={LyIcon.quote} size={24} /></span>
-        <b>{instrumental ? 'Instrumental' : 'No lyrics yet'}</b>
-        <p>{instrumental ? 'This song has no words to show.' : 'Paste them in, then time them to the song.'}</p>
-        {track && !instrumental ? (
-          <div className="ly-acts">
-            <button type="button" className="ly-link is-pri" onClick={() => setEditing('text')}>Add lyrics</button>
-            {onBrowseLyrics ? <><span aria-hidden>·</span><button type="button" className="ly-link" onClick={onBrowseLyrics}>Search online</button></> : null}
-          </div>
-        ) : null}
+        <EmptyState icon={LyIcon.quote} title={instrumental ? 'Instrumental' : 'No Lyrics Yet'}
+          text={instrumental ? 'This song has no words to show.' : 'Paste them in, then time them to the song.'}
+          action={track && !instrumental ? (
+            <div className="ly-acts">
+              <button type="button" className="ly-link is-pri" onClick={() => setEditing('text')}>Add Lyrics</button>
+              {onBrowseLyrics ? <><span aria-hidden>·</span><button type="button" className="ly-link" onClick={onBrowseLyrics}>Search Online</button></> : null}
+            </div>
+          ) : null} />
       </div>
     );
   }
@@ -846,7 +850,7 @@ const InfoTab = React.memo(function InfoTab({ track, art, artistInfo, credits, p
 
       {facts.length ? (
         <>
-          <div className="ni-h">This song</div>
+          <div className="ni-h">This Song</div>
           <dl className="ni-facts">
             {facts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd title={String(v)}>{v}</dd></div>)}
           </dl>
@@ -993,7 +997,7 @@ export function CoverLightbox({ url, track, accent, albumKey, onPin, onClose }) 
           {albumKey && onPin ? (
             <button type="button" disabled={busy} onClick={pin}
               style={{ ...btn, background: `rgba(${acc},0.22)`, borderColor: `rgba(${acc},0.4)` }}
-              title="Make every track on this album use this exact cover">
+              title="Make every song on this album use this exact cover">
               Use for this whole album
             </button>
           ) : null}
@@ -1065,7 +1069,7 @@ function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFai
   if (track.streamOnly && !saved) {
     return onSave ? (
       <button type="button" className="sth-npbtn" onClick={() => { shownAt.current = Date.now(); setPhase('check'); onSave(track); }}
-        title="Save to your library" aria-label="Save to your library">
+        title="Save to Library" aria-label="Save to Library">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" />
         </svg>
@@ -1078,8 +1082,8 @@ function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFai
     <>
       {onToggleFavorite ? (
         <button type="button" className={`sth-npbtn${t.isFavorite ? ' is-on' : ''}${arrive ? ' sth-lib-arrive' : ''}`} onClick={() => onToggleFavorite(t.id)}
-          title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-          aria-label={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={!!t.isFavorite}
+          title={t.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+          aria-label={t.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'} aria-pressed={!!t.isFavorite}
           style={{ position: 'relative', overflow: 'visible' }}>
           <svg key={burst.key} className={heartAnim(burst)} width="18" height="18" viewBox="0 0 24 24" fill={t.isFavorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M20.8 8.6a5 5 0 0 0-8.8-2.6A5 5 0 0 0 3.2 8.6c0 4.2 5.5 7.6 8.8 10.4 3.3-2.8 8.8-6.2 8.8-10.4z" />
@@ -1089,9 +1093,11 @@ function LibraryActions({ track, saved = null, onSave, saveBusy = false, saveFai
       ) : null}
       {onAddToPlaylist ? (
         <button type="button" className={`sth-npbtn${arrive ? ' sth-lib-arrive is-second' : ''}`} onClick={(e) => onAddToPlaylist(e, t)}
-          title="Add to playlist" aria-label="Add to playlist" aria-haspopup="menu">
+          title="Add to Playlist" aria-label="Add to Playlist" aria-haspopup="menu">
+          {/* The square +, as in the song menu. The circled + only ever
+              means Save to your library. */}
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" />
+            <rect x="3.5" y="3.5" width="17" height="17" rx="5" /><path d="M12 8.5v7M8.5 12h7" />
           </svg>
         </button>
       ) : null}
@@ -1161,7 +1167,7 @@ export function NowPlayingBar(props) {
   return props.track ? <NowPlayingBarBody {...props} /> : null;
 }
 
-function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, onOpenArtist, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat, onHoverChange = null, splash = null }) {
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, onOpenArtist, from = null, onOpenFrom = null, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat, onHoverChange = null, splash = null }) {
   const currentTime = usePlaybackTime();
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
@@ -1268,7 +1274,21 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
             ) : (
               <div className="sth-npbar-title" title={track.title}><Marquee text={track.title} /></div>
             )}
-            <div className="sth-npbar-artist" title={track.artist}><ArtistLinks names={track.artist} ids={artistIdsOf(track)} onOpen={onOpenArtist} /></div>
+            {/* The playlist, album or mix it's playing from, after the artist
+                so a long name is what gets cut off, never the artist. */}
+            {/* A mouse click doesn't leave a link here focused: nothing else
+                takes focus when the page or album view opens, so the next key
+                (Esc to close it) showed the focus style on it until you
+                clicked elsewhere. Enter and Tab still focus as usual. */}
+            <div className="sth-npbar-artist" title={from?.name ? `${track.artist} · ${from.name}` : track.artist}
+              onClickCapture={(e) => { if (e.detail) e.target.closest?.('button')?.blur(); }}>
+              <ArtistLinks names={track.artist} ids={artistIdsOf(track)} onOpen={onOpenArtist} />
+              {from?.name && onOpenFrom ? (
+                <>{' · '}<button type="button" className="st-artist-link" title={`Go to ${from.name}`}
+                  onClick={(e) => { e.stopPropagation(); onOpenFrom(); }}
+                  onKeyDown={(e) => e.stopPropagation()}>{from.name}</button></>
+              ) : null}
+            </div>
           </div>
           {/* Beside the title rather than in the right-hand cluster, which
               they crowded at full size: the heart and add-to-playlist are
@@ -1314,8 +1334,8 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
             ) : null}
             {onToggleRepeat ? (
               <button type="button" className={`sth-npbtn is-toggle${repeat !== 'off' ? ' is-on' : ''}`} onClick={onToggleRepeat}
-                title={repeat === 'one' ? 'Repeat this track' : repeat === 'all' ? 'Repeat queue' : 'Repeat off'}
-                aria-label={repeat === 'one' ? 'Repeat: this track' : repeat === 'all' ? 'Repeat: queue' : 'Repeat: off'} aria-pressed={repeat !== 'off'}>
+                title={repeat === 'one' ? 'Repeat this song' : repeat === 'all' ? 'Repeat queue' : 'Repeat off'}
+                aria-label={repeat === 'one' ? 'Repeat: this song' : repeat === 'all' ? 'Repeat: queue' : 'Repeat: off'} aria-pressed={repeat !== 'off'}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" />
                   <polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />

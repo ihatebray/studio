@@ -48,7 +48,7 @@ export default function DarkModeButton({ on, onToggle }) {
   return (
     <button type="button" className={`dmb${on ? ' is-on' : ''}${on && fresh ? ' is-new' : ''}`}
       onClick={() => { setFresh(!on); onToggle(); }}
-      title={on ? 'Dark mode: on' : 'Dark mode: off'} aria-label="Dark mode" aria-pressed={on}>
+      title={on ? 'Turn Off Dark Mode' : 'Turn On Dark Mode'} aria-label="Dark Mode" aria-pressed={on}>
       <style>{CSS}</style>
       <svg viewBox="0 0 24 24" aria-hidden>
         <path className="mo" d={MOON} />

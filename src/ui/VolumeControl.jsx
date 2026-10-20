@@ -180,7 +180,7 @@ function BoostPopover({ anchor, boost, onSetBoost, getGainReduction, onClose }) 
         </span>
       </div>
       <div className="stv-note">
-        Lifts quiet tracks past full volume, for local files and Spotify. If the limiter stays lit, the extra gain is mostly being taken back.
+        Lifts quiet songs past full volume, for local files and Spotify. If the limiter stays lit, the extra gain is mostly being taken back.
       </div>
     </div>,
     document.body,

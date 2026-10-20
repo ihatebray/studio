@@ -334,8 +334,10 @@ export function CompactVizPicker({ value, onPick, palette, accent, coverColours 
                 className={`sth-libsortitem${o.id === value ? ' is-on' : ''}`}
                 onMouseEnter={() => setHover(o.id)} onFocus={() => setHover(o.id)}
                 onClick={() => { onPick(o.id); setOpen(false); }}>
-                <span style={{ display: 'block' }}>{o.name}</span>
-                <span style={{ display: 'block', fontSize: 11.5, fontWeight: 500, color: 'rgba(var(--st-fg-rgb), 0.45)', marginTop: 1 }}>{o.note}</span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block' }}>{o.name}</span>
+                  <span style={{ display: 'block', fontSize: 11.5, fontWeight: 500, color: 'rgba(var(--st-fg-rgb), 0.45)', marginTop: 1 }}>{o.note}</span>
+                </span>
               </button>
             ))}
           </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { PlayIcon } from './sharedUI.jsx';
 import { api } from '../lib/format.js';
+import { EmptyState, MI } from './home/common.jsx';
 
 /* =========================================================================
  *  studio — Artists, the browse view
@@ -82,11 +83,11 @@ function initials(name) {
    looked identical despite counts of 42 and 153. */
 /* Memoized, with handlers that take the artist, so hovering or sorting
    re-renders only the tiles whose data changed. */
-const ArtistTile = React.memo(function ArtistTile({ artist, portrait, plays, onOpen, onPlay }) {
+const ArtistTile = React.memo(function ArtistTile({ artist, portrait, plays, onOpen, onPlay, onMenu }) {
   const n = artist.tracks.length;
   const open = () => onOpen?.(artist.key);
   return (
-    <div className="stag-tile">
+    <div className="stag-tile" onContextMenu={onMenu ? (e) => onMenu(e, artist, portrait) : undefined}>
       <button type="button" className="stag-art" onClick={open} aria-label={`Open ${artist.name}`}>
         {portrait ? (
           <img src={portrait} alt="" loading="lazy" decoding="async" draggable={false} />
@@ -109,16 +110,18 @@ export default function ArtistGrid({
      they take recordWashSource, which a card and its page now share. The
      prop stayed accepted-and-ignored, which is worse than absent: it looks
      like the colour is configurable here when it isn't. */
-  artists = [], playEvents = [], onOpen, onPlay, emptyNote,
+  artists = [], playEvents = [], onOpen, onPlay, onMenu = null, emptyNote,
 }) {
   const [portraits, setPortraits] = useState(() => seedFromArtistPageCache());
   const [overrides, setOverrides] = useState({});
   const askedRef = useRef(new Set());
   // Stable handlers for the memoized tiles; the latest props via a ref.
-  const handlersRef = useRef({ onOpen, onPlay });
-  handlersRef.current = { onOpen, onPlay };
+  const handlersRef = useRef({ onOpen, onPlay, onMenu });
+  handlersRef.current = { onOpen, onPlay, onMenu };
   const openTile = useCallback((key) => handlersRef.current.onOpen?.(key), []);
   const playTile = useCallback((a) => handlersRef.current.onPlay?.(a), []);
+  // Right-click: the artist's menu, with the portrait for its header.
+  const menuTile = useCallback((e, a, img) => handlersRef.current.onMenu?.(e, a, img), []);
 
   /* A picture the user chose for an artist's header is that artist's picture,
      full stop — it should be their face here too, without a round trip. */
@@ -174,14 +177,9 @@ export default function ArtistGrid({
 
 
   if (!artists.length) {
-    return (
-      <div style={{
-        padding: '40px 6px', textAlign: 'center', fontSize: 12.5, fontWeight: 600,
-        color: 'rgba(var(--st-sub-rgb), 0.4)',
-      }}>
-        {emptyNote || 'No artists yet \u2014 import some music to fill this in.'}
-      </div>
-    );
+    return emptyNote
+      ? <EmptyState icon={MI.artist} title="No Matches" text={emptyNote} />
+      : <EmptyState icon={MI.artist} title="No Artists Yet" text="Import some music to fill this in." />;
   }
 
   return (
@@ -214,6 +212,7 @@ export default function ArtistGrid({
             plays={playsFor[a.key] || 0}
             onOpen={openTile}
             onPlay={playTile}
+            onMenu={onMenu ? menuTile : null}
           />
         ))}
       </div>

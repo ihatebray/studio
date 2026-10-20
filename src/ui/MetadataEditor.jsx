@@ -123,7 +123,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
       }
       const res = await api.refetchTrackMetadata(track.id);
       if (!res?.ok) {
-        setError(res?.error || 'Could not refetch metadata.');
+        setError(res?.error || 'Couldn’t refetch metadata.');
         return;
       }
       const m = res.match || {};
@@ -153,7 +153,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
         changed.push('cover');
       }
       setRefetchNote(changed.length
-        ? `${res.source}: updated ${changed.join(', ')} — review, then Save.`
+        ? `${res.source}: updated ${changed.join(', ')}. Review, then Save.`
         : `${res.source}: everything already matches.`);
     } catch (e) {
       setError(String(e?.message || e));
@@ -200,7 +200,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
     }
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Could not read image.'));
+    reader.onerror = () => reject(new Error('Couldn’t read image.'));
     reader.readAsDataURL(file);
   });
 
@@ -217,7 +217,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
       setCoverDirty(true);
       setCoverMode('preview');
     } catch (e) {
-      setError(e?.message || 'Could not load image.');
+      setError(e?.message || 'Couldn’t load image.');
     }
   };
 
@@ -311,7 +311,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
 
     const r = await onSave(fields);
     setSaving(false);
-    if (!r?.ok) setError(r?.error || 'Could not save.');
+    if (!r?.ok) setError(r?.error || 'Couldn’t save.');
   };
 
   const inputStyle = {
@@ -361,7 +361,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '14px 16px 8px',
         }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Edit metadata</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Edit Info</div>
           <button type="button" onClick={onClose} title="Close" aria-label="Close"
             style={{
               width: 26, height: 26, borderRadius: 7, border: 'none',
@@ -390,7 +390,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
-              title="Click to choose image — or drop one here"
+              title="Click to choose an image, or drop one here"
               style={{
                 width: 96, height: 96, borderRadius: 14, overflow: 'hidden',
                 background: coverArt
@@ -434,7 +434,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
                     <circle cx="8.5" cy="8.5" r="1.5" />
                     <polyline points="21 15 16 10 5 21" />
                   </svg>
-                  <span>{dragOver ? 'Drop to set' : 'Change'}</span>
+                  <span>{dragOver ? 'Drop to Set' : 'Change'}</span>
                 </div>
               ) : null}
             </div>
@@ -447,7 +447,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
                   border: coverMode === 'url' ? `1px solid rgba(${accent},0.5)` : '1px solid rgba(255,255,255,0.12)',
                   background: coverMode === 'url' ? `rgba(${accent},0.2)` : 'rgba(255,255,255,0.03)',
                   color: coverMode === 'url' ? '#fff' : 'rgba(255,255,255,0.6)',
-                  fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer',
+                  fontSize: 10, fontWeight: 700, cursor: 'pointer',
                   transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16,1,0.3,1)',
                 }}>
                 URL
@@ -460,7 +460,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
                     border: '1px solid rgba(255,255,255,0.12)',
                     background: 'rgba(255,255,255,0.03)',
                     color: 'rgba(255,255,255,0.55)',
-                    fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer',
+                    fontSize: 10, fontWeight: 700, cursor: 'pointer',
                     transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16,1,0.3,1)',
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.color = '#f37272'; e.currentTarget.style.borderColor = 'rgba(243,114,114,0.4)'; e.currentTarget.style.background = 'rgba(243,114,114,0.1)'; }}
@@ -513,7 +513,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
                 <span style={{
                   fontSize: 11, color: 'rgba(255,255,255,0.7)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>{track.artist || '—'}</span>
+                }}>{track.artist || 'Unknown artist'}</span>
                 {(track.album || track.year) ? (
                   <span style={{
                     fontSize: 10.5, color: 'rgba(255,255,255,0.45)',
@@ -652,7 +652,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
               <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.55)', marginTop: 1 }}>
                 {explicit
                   ? 'Shows the E badge in your library.'
-                  : 'No E badge. Tap to mark this track as explicit.'}
+                  : 'No E badge. Click to mark this song as explicit.'}
               </div>
             </div>
           </div>
@@ -681,7 +681,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
             marginTop: 10, fontSize: 9.5, color: 'rgba(255,255,255,0.35)',
             lineHeight: 1.4,
           }}>
-            Changes are saved to the library only — the audio file is not modified.
+            Changes are saved to the library only. The audio file isn’t changed.
           </div>
         </div>
 
@@ -715,7 +715,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
             ) : null;
           })()}
           <button type="button" onClick={handleRefetch} disabled={refetching || saving}
-            title="Look this track up in the online catalog and fill in what it finds"
+            title="Look this song up in the online catalog and fill in what it finds"
             style={{
               padding: '8px 12px', borderRadius: 9,
               border: '1px solid rgba(255,255,255,0.1)',
@@ -831,7 +831,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
     }
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Could not read image.'));
+    reader.onerror = () => reject(new Error('Couldn’t read image.'));
     reader.readAsDataURL(file);
   });
 
@@ -848,7 +848,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
       setCoverDirty(true);
       setCoverMode('preview');
     } catch (e) {
-      setError(e?.message || 'Could not load image.');
+      setError(e?.message || 'Couldn’t load image.');
     }
   };
 
@@ -912,7 +912,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
 
     const r = await onSave(fields);
     setSaving(false);
-    if (!r?.ok) setError(r?.error || 'Could not save.');
+    if (!r?.ok) setError(r?.error || 'Couldn’t save.');
   };
 
   const inputStyle = {
@@ -927,10 +927,10 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
     fontWeight: 600, letterSpacing: '0.02em', textTransform: 'uppercase',
   };
 
-  const titleText = discNumber != null ? `Edit disc ${discNumber}` : 'Edit album';
+  const titleText = discNumber != null ? `Edit Disc ${discNumber}` : 'Edit Album';
   const scopeText = discNumber != null
-    ? `${trackIds.length} tracks on disc ${discNumber} of “${initAlbum}”`
-    : `${trackIds.length} tracks in “${initAlbum}”`;
+    ? `${trackIds.length} songs on disc ${discNumber} of “${initAlbum}”`
+    : `${trackIds.length} songs in “${initAlbum}”`;
 
   return (
     <div
@@ -994,7 +994,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
-              title="Click to choose image — or drop one here"
+              title="Click to choose an image, or drop one here"
               style={{
                 width: 96, height: 96, borderRadius: 10, overflow: 'hidden',
                 background: '#0f0f0f', cursor: 'pointer', position: 'relative',
@@ -1025,7 +1025,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
                     <circle cx="8.5" cy="8.5" r="1.5" />
                     <polyline points="21 15 16 10 5 21" />
                   </svg>
-                  <span>{dragOver ? 'Drop to set' : coverArt ? 'Change' : 'Add cover'}</span>
+                  <span>{dragOver ? 'Drop to Set' : coverArt ? 'Change' : 'Add Cover'}</span>
                 </div>
               ) : null}
             </div>
@@ -1110,7 +1110,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
                     initYear || null,
                     (initGenre || '').trim() || null,
                     fmt || null,
-                    `${trackIds.length} track${trackIds.length === 1 ? '' : 's'}`,
+                    `${trackIds.length} song${trackIds.length === 1 ? '' : 's'}`,
                   ].filter(Boolean);
                   return facts.length ? (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
@@ -1127,7 +1127,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
                   ) : null;
                 })()}
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.32)', marginTop: 4 }}>
-                  All tracks in this {discNumber != null ? 'disc' : 'album'} will get these values.
+                  All songs in this {discNumber != null ? 'disc' : 'album'} will get these values.
                 </span>
               </div>
             )}
@@ -1178,9 +1178,9 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
               border: '1px solid rgba(255,255,255,0.06)',
             }}>
               {[
-                { value: null, label: 'Leave unchanged' },
-                { value: true, label: 'Mark all explicit' },
-                { value: false, label: 'Mark all clean' },
+                { value: null, label: 'Leave Unchanged' },
+                { value: true, label: 'Mark All Explicit' },
+                { value: false, label: 'Mark All Clean' },
               ].map((opt) => {
                 const active = explicitBulk === opt.value;
                 return (
@@ -1221,7 +1221,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
             marginTop: 10, fontSize: 9.5, color: 'rgba(255,255,255,0.35)',
             lineHeight: 1.4,
           }}>
-            Changes are saved to the library only — audio files are not modified.
+            Changes are saved to the library only. Audio files aren’t changed.
           </div>
         </div>
 
@@ -1253,7 +1253,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
               transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16,1,0.3,1)',
               boxShadow: !hasChanges || saving ? 'none' : `0 2px 12px rgba(${accent},0.2)`,
             }}>
-            {saving ? 'Saving…' : `Save to ${trackIds.length} track${trackIds.length === 1 ? '' : 's'}`}
+            {saving ? 'Saving…' : `Save to ${trackIds.length} Song${trackIds.length === 1 ? '' : 's'}`}
           </button>
         </div>
       </form>

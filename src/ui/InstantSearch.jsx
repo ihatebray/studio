@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import {
   parseQuery, providerQuery, passesScopes, scoreEntity,
   slskQuality, groupSlskFiles, matchFilesToTracks, trackKey,
@@ -7,10 +7,13 @@ import {
   isSongSizedRelease, sameSongFamily, classifyRelease,
   fmtSize, fmtSpeed, normLoose, normTitle,
 } from '../lib/instantSearch.js';
-import { api, fmtMs, fmtSec } from '../lib/format.js';
+import { api, fmtMs, fmtSec, titleCase } from '../lib/format.js';
 import { parseSpotifyLink } from '../lib/spotifyLink.js';
 import { PauseIcon, PlayIcon } from './sharedUI.jsx';
 import { PlayingBars } from './home/common.jsx';
+import { coverAt } from '../lib/coverUrl.js';
+import { pageWash, recordDeep, recordWashSource, sampleCoverTheme } from '../lib/coverTheme.js';
+import { AnimatedGradientBg } from './VisualEffects.jsx';
 
 /* =========================================================================
  *  studio — instant search
@@ -105,6 +108,8 @@ const Ico = {
   spark: <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z" />,
   x: <path d="M6 6l12 12M18 6L6 18" />,
   clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
+  shuffle: <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />,
+  edit: <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />,
 };
 
 /* ---- Scope chips ---------------------------------------------------------
@@ -193,7 +198,8 @@ function Svg({ d, size = 15, w = 2, children, style }) {
 /* ------------------------------------------------------------- small bits */
 
 function QualityBadge({ q }) {
-  if (!q) return null;
+  // Nothing known about the file: no badge.
+  if (!q || !q.label) return null;
   const style = q.lossless
     ? { background: 'rgba(140,220,160,0.14)', color: 'rgb(140,220,160)', boxShadow: 'inset 0 0 0 1px rgba(140,220,160,0.22)' }
     : q.tier >= 4 ? { background: 'rgba(var(--st-acc-rgb),0.14)', color: 'rgb(var(--st-acc-rgb))', boxShadow: 'inset 0 0 0 1px rgba(var(--st-acc-rgb),0.22)' }
@@ -268,7 +274,7 @@ export default function InstantSearch({
   onClose,
   /* Library — used for the instant tier and for ownership marks. */
   library = [],
-  alreadyOwned,
+  alreadyOwned,           // (title, artists, album?, spotifyId?) → you have this song
   coverFor,
   /* Download plumbing, all owned by StudioHome. */
   dlState = {},
@@ -293,6 +299,15 @@ export default function InstantSearch({
   onSongMenu,             // (event, { track } | { row }) → the song menu (right-click)
   onSpotifyLink,          // (text) → open a pasted Spotify link instead of searching for it
   onFilterLibrary,        // (queryString) → narrow the library table and go there
+  /* { album } → open straight onto a record, from outside search (Home, a
+     Spotify link, a countdown). A new object each time it should open. The
+     record can be any list of songs: `album.load()` supplies them (a
+     playlist, Liked Songs, a mix) and `album.collection` marks one that
+     isn't an album. Back and Esc on it close the panel. */
+  record = null,
+  /* How an album looks until you pick another in it: 'dark', 'color',
+     'full' or 'immerse' (StudioHome, from your settings). */
+  look = 'color',
 }) {
   /* ---------------------------------------------------------------- state */
   // A preview started from the panel ends with the panel.
@@ -416,6 +431,41 @@ export default function InstantSearch({
   /* The drill stack. [] is the results list; each push is a frame. */
   const [stack, setStack] = useState([]);
   const frame = stack[stack.length - 1] || null;
+  const artistViews = useRef(new WeakMap());   // artist frame → where its page was left
+
+  /* How an album looks: Dark (the panel as it is), Color (the cover's color
+     across the top), Full Color (all of it) or Immerse (the cover's moving
+     colors). Auto is whatever your settings give the rest of the app; a pick
+     made here is kept. */
+  const [lookPick, setLookPick] = useState(() => { try { return localStorage.getItem('studio:albumLook') || 'auto'; } catch { return 'auto'; } });
+  const pickLook = useCallback((v) => {
+    setLookPick(v);
+    try { localStorage.setItem('studio:albumLook', v); } catch { /* kept for this session only */ }
+  }, []);
+  const albumLook = frame?.kind === 'album' ? (lookPick === 'auto' ? look : lookPick) : null;
+  // The open album's colors, read from its cover.
+  const lookArt = frame?.kind === 'album' ? frame.album.albumArtUrl || '' : '';
+  const [lookTheme, setLookTheme] = useState(null);
+  useEffect(() => {
+    if (!lookArt) { setLookTheme(null); return undefined; }
+    let live = true;
+    sampleCoverTheme(lookArt).then((t) => {
+      if (!live || !t) return;
+      const wash = pageWash(recordWashSource(t));
+      const shade = (k) => wash.split(',').map((n) => Math.round(Number(n) * k)).join(', ');
+      setLookTheme({ src: lookArt, wash, deep: recordDeep(t), mid: shade(0.82), low: shade(0.6), base: shade(0.42) });
+    }).catch(() => { if (live) setLookTheme(null); });
+    return () => { live = false; };
+  }, [lookArt]);
+  const lookColors = lookTheme && lookTheme.src === lookArt ? lookTheme : null;
+
+  // Opened onto a record from outside search: that record is the whole trail.
+  useEffect(() => {
+    if (!record?.album) return;
+    setStack([{ kind: 'album', album: record.album, root: true, focusId: record.focusId || null }]);
+    setExpandedTrack(null);
+    setExpandedSong(null);
+  }, [record]);
 
   const [cursor, setCursor] = useState(0);
   const [expandedTrack, setExpandedTrack] = useState(null); // album track with its sources open
@@ -462,15 +512,68 @@ export default function InstantSearch({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, seed]);
 
+  /* Closing plays out before the panel goes: it stays on screen, as it was,
+     for its exit, and unmounts when that animation ends (the timer is only
+     a backstop, for when animations don't run). */
+  const [present, setPresent] = useState(open);
   useEffect(() => {
-    if (open) return;
+    if (open) { setPresent(true); return undefined; }
+    const still = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const t = setTimeout(() => setPresent(false), still ? 0 : 600);
+    return () => clearTimeout(t);
+  }, [open]);
+  const onPanelAnimEnd = (e) => { if (!open && e.target === e.currentTarget) setPresent(false); };
+
+  /* Back from a release to the artist page it was opened from. The panel
+     takes the page's size at once, so the page lays out at its own width
+     and opens exactly where you left it; what animates is a mask, growing
+     from the release panel's outline out to the full panel while the page
+     fades in. Nothing resizes or reflows on the way. */
+  const panelRef = useRef(null);
+  const panelRect = useRef(null);
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!present || !el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => { panelRect.current = el.getBoundingClientRect(); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [present]);
+  /* Whether this frame was reached by going back (the stack got shorter),
+     noted once per frame change and kept while it shows, so redraws (a song
+     starting, say) never replay the way-back animation. Going back, not
+     whether a page has been left before: StrictMode's test unmount leaves
+     a saved spot behind on a first visit too. */
+  const navRef = useRef({ frame: null, len: 0, back: false });
+  if (navRef.current.frame !== frame) {
+    navRef.current = { frame, len: stack.length, back: stack.length < navRef.current.len };
+  }
+  const cameBack = navRef.current.back;
+  const backTo = cameBack && frame?.kind === 'artist' && !!renderArtist ? frame : null;
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    const from = panelRect.current;
+    if (!el) return;
+    const to = el.getBoundingClientRect();
+    panelRect.current = to;
+    if (!backTo || !from || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const inset = [from.top - to.top, to.right - from.right, to.bottom - from.bottom, from.left - to.left].map((v) => Math.max(0, v));
+    if (inset.every((v) => v < 2)) return;
+    el.animate([
+      { clipPath: `inset(${inset.map((v) => `${v}px`).join(' ')} round 18px)` },
+      { clipPath: 'inset(0px 0px 0px 0px round 18px)' },
+    ], { duration: 340, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+  }, [backTo]);
+
+  useEffect(() => {
+    if (open || present) return;
     // Closing forgets the drill position but keeps the query, so re-opening
     // lands you back where you were reading rather than on a blank field.
+    // Once it's gone, so the exit doesn't show the results flashing back.
     setStack([]);
     setExpandedTrack(null);
     setExpandedSong(null);
     setCursor(0);
-  }, [open]);
+  }, [open, present]);
 
   /* ------------------------------------------------------------- search */
   useEffect(() => {
@@ -551,7 +654,7 @@ export default function InstantSearch({
         } else settle();
       } else {
         setPhase((p) => ({ ...p, spotify: 'error' }));
-        setErrorNote('Spotify search needs credentials — add them in Settings.');
+        setErrorNote('Spotify search needs credentials. Add them in Settings.');
       }
 
       /* The background pass. Only in Best mode, and only ever ADDITIVE — when
@@ -950,7 +1053,7 @@ export default function InstantSearch({
         libTrack: null,
         spotify: r,
         slsk: byTitle.get(normLoose(r.title)) || null,
-        owned: alreadyOwned?.(r.title, r.artists, r.album || undefined) || false,
+        owned: alreadyOwned?.(r.title, r.artists, r.album || undefined, r.spotifyId) || false,
         /* Same lock as the albums above: on a bare artist-name query, a song
            BY them beats a song merely CALLED their name. Demoted rather than
            dropped — a guest credit that didn't make it into the artists
@@ -1263,17 +1366,30 @@ export default function InstantSearch({
   /* Cursor never points past the end, and a re-search puts it back on top. */
   useEffect(() => { setCursor(0); setBandPage(0); }, [raw, stack.length]);
 
+  /* A song's link opens its album with that song picked out: the cursor
+     lands on it (and scrolls to it) once the tracklist is in. */
+  const focusedFrame = useRef(null);
+  useEffect(() => {
+    if (frame?.kind !== 'album' || !frame.focusId || focusedFrame.current === frame) return;
+    if (!albumData[frame.album.albumId]?.tracks) return;
+    focusedFrame.current = frame;
+    const i = items.findIndex((x) => x.kind === 'albumtrack' && (x.data.track.spotifyId === frame.focusId
+      || (!!x.data.track.libTrack && `lib:${x.data.track.libTrack.id}` === frame.focusId)));
+    if (i >= 0) setCursor(i);
+  }, [frame, albumData, items]);
+
   /* Emptying the box means "start over", and a drilled frame has to go with it.
      The stack was only ever cleared on close, so clearing the query left the
      album tracklist sitting there over an empty search field with no crumb to
      back out of — the rows outlived the search that produced them, and the only
      way out was to close the panel entirely. */
   useEffect(() => {
-    if (hasQuery || !stack.length) return;
+    // A record opened from outside (`record`) was never a search's result.
+    if (hasQuery || !stack.length || stack[0].root) return;
     setStack([]);
     setExpandedTrack(null);
     setExpandedSong(null);
-  }, [hasQuery, stack.length]);
+  }, [hasQuery, stack]);
   useEffect(() => {
     if (cursor >= items.length) setCursor(Math.max(0, items.length - 1));
   }, [items.length, cursor]);
@@ -1317,7 +1433,7 @@ export default function InstantSearch({
     let empty = false;
     let error = '';
     try {
-      const res = await api()?.spotifyGetAlbumTracks?.(id);
+      const res = album.load ? { tracks: await album.load() } : await api()?.spotifyGetAlbumTracks?.(id);
       tracks = Array.isArray(res?.tracks) ? res.tracks : [];
       empty = !!res?.empty;
     } catch (e) {
@@ -1517,7 +1633,7 @@ export default function InstantSearch({
          Either way the tracklist above is already on screen and every row's
          Get already works — the probe only decides whether that Get pulls a
          peer's file or goes through YouTube. */
-      if (quality === 'best') probeAlbum(frame.album);
+      if (quality === 'best' && !frame.album.collection && !frame.album.lib) probeAlbum(frame.album);
     }
     if (frame?.kind === 'artist' && !renderArtist) loadArtist(frame.artist);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1601,9 +1717,11 @@ export default function InstantSearch({
   const pop = useCallback(() => {
     if (expandedTrack) { setExpandedTrack(null); return; }
     if (expandedSong) { setExpandedSong(null); return; }
+    // A record opened from outside search has no results to go back to.
+    if (stack.length === 1 && stack[0].root) { onClose?.(); return; }
     if (stack.length) { setStack((s) => s.slice(0, -1)); return; }
     onClose?.();
-  }, [expandedTrack, expandedSong, stack.length, onClose]);
+  }, [expandedTrack, expandedSong, stack, onClose]);
 
   /** Files found for a catalogue track — empty until the album is probed. */
   const sourcesFor = useCallback((tKey) => {
@@ -1631,11 +1749,27 @@ export default function InstantSearch({
     return null;
   }, [sourcesFor, onGetSlskFile, onGetSpotifyTrack]);
 
+  /* A record's songs, filled in from the record where a row leaves it out
+     (an album's tracklist doesn't repeat its own name and cover), as they're
+     played. */
+  const recordRows = useCallback((a) => (albumData[a.albumId]?.tracks || []).map((t) => ({
+    ...t, album: t.album || a.name || '', albumId: t.albumId || a.albumId, albumArtUrl: t.albumArtUrl || a.albumArtUrl || '',
+  })), [albumData]);
+  const playRecord = useCallback((a, index = 0, shuffle = false) => {
+    const rows = recordRows(a);
+    // Your album plays as your library does (StudioHome's libAlbumRecord).
+    if (a.play) { if (rows.length) a.play(rows, index, shuffle); return; }
+    /* An album found in search has no page it came from, so it's its own
+       source: the bar links back to it here. */
+    const source = a.context ? null : { kind: 'album', id: a.albumId, name: a.name, image: a.albumArtUrl || null, sub: a.artists ? `Album · ${a.artists}` : '' };
+    if (rows.length) onPlaySpotifyRows?.(rows, index, { shuffle, context: a.context || null, source });
+  }, [recordRows, onPlaySpotifyRows]);
+
   const getAlbumMissing = useCallback((album) => {
     const d = albumData[album.albumId];
     if (!d?.tracks) return;
     for (const [i, t] of d.tracks.entries()) {
-      if (t.notOut || alreadyOwned?.(t.title, t.artists || album.artists, album.name || undefined)) continue;
+      if (t.notOut || t.libTrack || alreadyOwned?.(t.title, t.artists || album.artists, album.name || undefined, t.spotifyId)) continue;
       getTrack(t, trackKey(t, i));
     }
   }, [albumData, alreadyOwned, getTrack]);
@@ -1724,13 +1858,10 @@ export default function InstantSearch({
     if (kind === 'albumtrack') {
       /* The album from this song on, the way an album page plays. */
       const a = frame?.album || {};
-      const tracks = (albumData[a.albumId]?.tracks || []).map((t) => ({
-        ...t, album: t.album || a.name || '', albumId: t.albumId || a.albumId, albumArtUrl: t.albumArtUrl || a.albumArtUrl || '',
-      }));
       // The song already playing: pause or resume it rather than starting it over.
-      if (onTogglePlay && nowOf(null, { ...data.track, album: data.track.album || a.name })) { onTogglePlay(); return; }
-      if (data.track.spotifyId && onPlaySpotifyRows) { onPlaySpotifyRows(tracks, data.index); return; }
-      const owned = alreadyOwned?.(data.track.title, data.track.artists || a.artists, a.name || undefined);
+      if (onTogglePlay && nowOf(data.track.libTrack || null, { ...data.track, album: data.track.album || a.name })) { onTogglePlay(); return; }
+      if (a.play || (data.track.spotifyId && onPlaySpotifyRows)) { playRecord(a, data.index); return; }
+      const owned = alreadyOwned?.(data.track.title, data.track.artists || a.artists, a.name || undefined, data.track.spotifyId);
       if (!owned) getTrack(data.track, data.tKey);
       return;
     }
@@ -1738,7 +1869,7 @@ export default function InstantSearch({
       // The artist's top songs, from this one on.
       const tops = items.filter((x) => x.kind === 'toptrack').map((x) => x.data);
       if (onPlaySpotifyRows) { onPlaySpotifyRows(tops, Math.max(0, tops.indexOf(data))); return; }
-      const owned = alreadyOwned?.(data.title, data.artists, data.album || undefined);
+      const owned = alreadyOwned?.(data.title, data.artists, data.album || undefined, data.spotifyId);
       if (!owned) onGetSpotifyTrack?.(data);
       return;
     }
@@ -1756,7 +1887,7 @@ export default function InstantSearch({
       }
     }
   }, [push, onOpenArtist, onOpenAlbum, onClose, onPlayTrack, onPlaySpotifyRows, onGetSlskFile, onGetSpotifyTrack, saveSong, nowPlaying, onTogglePlay,
-    onGetSlskAlbum, alreadyOwned, getTrack, frame, albumData, items, parsed, raw, onFilterLibrary, hasQuery, rememberQuery, setRaw, renderArtist]);
+    onGetSlskAlbum, alreadyOwned, getTrack, frame, albumData, items, parsed, raw, onFilterLibrary, hasQuery, rememberQuery, setRaw, renderArtist, playRecord]);
 
   /** Right arrow — go deeper, when there is a deeper. */
   const drill = useCallback((item) => {
@@ -1769,6 +1900,8 @@ export default function InstantSearch({
     }
     if (item.kind === 'album' || item.kind === 'release') { push({ kind: 'album', album: item.data }); return; }
     if (item.kind === 'albumtrack') {
+      // A playlist or mix isn't a record on the network to look through.
+      if (frame?.album?.collection) return;
       const id = frame?.album?.albumId;
       /* Asking about one track is asking about the record — probe it if it
          hasn't been, then open this track's sources when they arrive. */
@@ -1865,7 +1998,7 @@ export default function InstantSearch({
   }, [open, items.length, current, drill, activate, setRaw, pop, stack.length, expandedTrack, expandedSong, frame, renderArtist,
     band.pages, band.total, pageBand, onFilterLibrary, parsed, raw, onClose]);
 
-  if (!open) return null;
+  if (!open && !present) return null;
 
   /* ============================================================ rendering */
 
@@ -1879,11 +2012,11 @@ export default function InstantSearch({
     switch (c.kind) {
       case 'recent': return 'search';
       case 'artist': case 'album': case 'release': return 'open';
-      case 'song': return c.data.owned ? 'play' : 'get';
-      case 'albumtrack': return alreadyOwned?.(c.data.track.title, c.data.track.artists || frame?.album?.artists, frame?.album?.name || undefined) ? null : 'get';
-      case 'toptrack': return alreadyOwned?.(c.data.title, c.data.artists, c.data.album || undefined) ? null : 'get';
-      case 'folder': return 'get all';
-      case 'source': return 'get this file';
+      case 'song': return c.data.owned ? 'play' : 'save';
+      case 'albumtrack': return c.data.track.libTrack || alreadyOwned?.(c.data.track.title, c.data.track.artists || frame?.album?.artists, frame?.album?.name || undefined, c.data.track.spotifyId) ? null : 'save';
+      case 'toptrack': return alreadyOwned?.(c.data.title, c.data.artists, c.data.album || undefined, c.data.spotifyId) ? null : 'save';
+      case 'folder': return 'save all';
+      case 'source': return 'save this file';
       case 'action': return c.data.action === 'filter' ? 'filter' : 'search';
       default: return null;
     }
@@ -1972,7 +2105,7 @@ export default function InstantSearch({
               {a.inLibraryCount ? <span className="isx-mi">{a.inLibraryCount} in your library</span> : null}
             </div>
           </div>
-          <span className="isx-kb">Artist page</span>
+          <span className="isx-kb">Artist Page</span>
           {chev}
         </button>
       );
@@ -1989,7 +2122,7 @@ export default function InstantSearch({
             <div className="isx-meta">
               <span className="isx-mi">{a.artists}</span>
               {year ? <span className="isx-mi">{year}</span> : null}
-              {a.totalTracks ? <span className="isx-mi">{a.totalTracks} track{a.totalTracks === 1 ? '' : 's'}</span> : null}
+              {a.totalTracks ? <span className="isx-mi">{a.totalTracks} song{a.totalTracks === 1 ? '' : 's'}</span> : null}
             </div>
           </div>
           <span className="isx-kb">Tracklist</span>
@@ -2024,7 +2157,7 @@ export default function InstantSearch({
         <button {...common} onClick={(e) => { e.stopPropagation(); activate(item); }}
           onContextMenu={onSongMenu && (s.libTrack || s.spotify) ? (e) => onSongMenu(e, s.libTrack ? { track: s.libTrack } : { row: s.spotify }) : undefined}>
           {art
-            ? <div className={`isx-art${s.owned ? ' is-owned' : ''}`} style={{ backgroundImage: `url("${art}")` }}>{over}</div>
+            ? <div className="isx-art" style={{ backgroundImage: `url("${art}")` }}>{over}</div>
             : <div className="isx-glyph"><Svg d={Ico.note} size={17} w={1.8} />{over}</div>}
           <div className="isx-mid">
             <div className="isx-nm">{title}</div>
@@ -2048,9 +2181,8 @@ export default function InstantSearch({
             </div>
           </div>
           {dur ? <span className="isx-dur">{dur}</span> : null}
-          {/* One verb per row, decided by the row's own state. Owned plays;
-              not-owned gets. No badge explaining why a button is inert,
-              because there is no inert button. */}
+          {/* One verb per row, decided by the row's own state. Owned plays
+              and carries the library tick every list uses; not-owned gets. */}
           {s.owned ? (
             <>
               {album ? (
@@ -2060,7 +2192,7 @@ export default function InstantSearch({
                   <Svg d={Ico.chevron} size={11} w={2.4} />
                 </span>
               ) : null}
-              <span className="isx-playtag"><PlayIcon size={11} /> Play</span>
+              <OwnedMark />
             </>
           ) : (
             <>
@@ -2095,7 +2227,7 @@ export default function InstantSearch({
               <SlotTag free={!!f.slots} />
             </div>
           </div>
-          <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Save all"
+          <GetBtn dl={dlState[key]} progress={dlProgress[key]} label="Save All"
             onGrab={() => onGetSlskAlbum?.(f)} width={100} />
         </button>
       );
@@ -2105,34 +2237,44 @@ export default function InstantSearch({
       const { track, tKey } = item.data;
       const srcs = sourcesFor(tKey);
       const best = srcs[0];
-      const owned = alreadyOwned?.(track.title, track.artists || frame?.album?.artists, frame?.album?.name || undefined);
+      const owned = !!track.libTrack || alreadyOwned?.(track.title, track.artists || frame?.album?.artists, frame?.album?.name || undefined, track.spotifyId);
       const key = dlKeyFor(track, best);
       const isOpen = expandedTrack === tKey;
       return (
-        <button {...common} className={`isx-trk isx-in${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}${track.notOut ? ' is-locked' : ''}${dlState[key] === 'busy' ? ' is-saving' : ''}`}
-          onContextMenu={onSongMenu && track.spotifyId ? (e) => onSongMenu(e, { row: { ...track, album: track.album || frame?.album?.name || '', albumId: track.albumId || frame?.album?.albumId, artists: track.artists || frame?.album?.artists || '' } }) : undefined}
+        <button {...common} className={`isx-trk isx-in${frame?.album?.collection ? ' has-art' : ''}${on ? ' is-on' : ''}${isOpen ? ' is-open' : ''}${track.notOut ? ' is-locked' : ''}${dlState[key] === 'busy' ? ' is-saving' : ''}`}
+          onContextMenu={onSongMenu && track.libTrack ? (e) => onSongMenu(e, { track: track.libTrack })
+            : onSongMenu && track.spotifyId ? (e) => onSongMenu(e, { row: { ...track, album: track.album || frame?.album?.name || '', albumId: track.albumId || frame?.album?.albumId, artists: track.artists || frame?.album?.artists || '' } }) : undefined}
           {...(track.notOut ? { onClick: undefined, 'aria-disabled': true, title: 'Not out yet' } : null)}>
           {(() => {
             /* The song playing shows its bars, the highlighted row included;
                hovering it offers pause (or play while paused), which is what
                a click on it does. */
-            const now = track.notOut ? null : nowOf(null, { ...track, album: track.album || frame?.album?.name });
+            const now = track.notOut ? null : nowOf(track.libTrack || null, { ...track, album: track.album || frame?.album?.name });
             return (
-              <span className={`isx-n${track.spotifyId && !track.notOut && onPlaySpotifyRows ? ' can-play' : ''}${now ? ' is-now' : ''}`}>
+              <span className={`isx-n${(track.libTrack || (track.spotifyId && onPlaySpotifyRows)) && !track.notOut ? ' can-play' : ''}${now ? ' is-now' : ''}`}>
                 {now ? <span className="num"><PlayingBars playing={now.playing} /></span>
-                  : <span className="num">{track.trackNumber || item.data.index + 1}</span>}
+                  : <span className="num">{frame?.album?.collection ? item.data.index + 1 : (track.trackNumber || item.data.index + 1)}</span>}
                 <span className="pl">{now?.playing ? <PauseIcon size={11} /> : <PlayIcon size={11} />}</span>
               </span>
             );
           })()}
+          {/* A playlist's songs come from many records: each shows its own
+              cover. An album's all share the one in the header. */}
+          {frame?.album?.collection ? (
+            <span className="isx-tart" style={{ backgroundImage: track.albumArtUrl ? `url("${coverAt(track.albumArtUrl, 120)}")` : 'none' }} />
+          ) : null}
           {/* Title over credits: the lead artist, then anyone featured. Each
               name opens that artist in the panel. */}
           <span className="isx-tcell">
-            <span className={`isx-tt${owned ? ' is-have' : ''}`}>{track.title}</span>
+            {/* Dimmed when you have it, except in your own album: there every
+                song is yours, and the ones you don't have are the ones to see. */}
+            <span className={`isx-tt${owned && !frame?.album?.lib ? ' is-have' : ''}${frame?.album?.lib && !owned ? ' is-have' : ''}`}>{track.title}</span>
             {(() => {
               const names = String(track.artists || frame?.album?.artists || '')
                 .split(/,(?=\s)/).map((x) => x.trim()).filter(Boolean);
               if (!names.length) return null;
+              // Your album: only a song by someone other than the album's artist says who.
+              if (frame?.album?.lib && String(track.artists || '').toLowerCase() === String(frame.album.artists || '').toLowerCase()) return null;
               const [lead, ...feat] = names;
               const link = (n) => (
                 <span key={n} className="isx-tartist" role="link" tabIndex={-1} title={`Open ${n}`}
@@ -2175,7 +2317,7 @@ export default function InstantSearch({
                 </span>
               )
               : owned
-              ? <OwnedMark />
+              ? (frame?.album?.lib ? null : <OwnedMark />)
               : (best || track.spotifyId)
                 ? (
                   <GetBtn dl={dlState[key]} progress={dlProgress[key]}
@@ -2217,7 +2359,7 @@ export default function InstantSearch({
 
     if (item.kind === 'toptrack') {
       const t = item.data;
-      const owned = alreadyOwned?.(t.title, t.artists, t.album || undefined);
+      const owned = alreadyOwned?.(t.title, t.artists, t.album || undefined, t.spotifyId);
       const key = `s:${t.spotifyId}`;
       return (
         <button {...common} onContextMenu={onSongMenu && t.spotifyId ? (e) => onSongMenu(e, { row: t }) : undefined}>
@@ -2250,7 +2392,7 @@ export default function InstantSearch({
                 </span>
               </div>
             </div>
-            <span className="isx-kb">Filter list</span>
+            <span className="isx-kb">Filter List</span>
           </button>
         );
       }
@@ -2310,14 +2452,14 @@ export default function InstantSearch({
             ) : null}
             {count > 2 && !isBand && item.group !== 'Recent' ? <span className="ct">{count}</span> : null}
             {isBand && certain
-              ? <span className="isx-secnote">you already have this — didn’t search</span> : null}
+              ? <span className="isx-secnote">you already have this, so it didn’t search</span> : null}
             {/* A result count, not a pager: the prev/next chevrons and the
                 "1–3 of 6" counter are gone (brief). */}
             {isBand && band.total > BAND ? (
               <span className="isx-secnote">{band.total} in your library</span>
             ) : null}
             {item.group === 'Songs' && ownedIn
-              ? <span className="isx-secnote">{ownedIn} already yours</span> : null}
+              ? <span className="isx-secnote">{ownedIn} in your library</span> : null}
             {/* A catalogue walk arrives release by release. Saying how far in
                 it is turns a list that keeps growing from something that
                 looks unstable into something that looks like progress. */}
@@ -2332,9 +2474,7 @@ export default function InstantSearch({
                 swapping "albums matching your text" for "this artist's
                 records" would be the right answer arrived at invisibly. */}
             {item.group === 'Albums & EPs' && artistLock
-              ? <span className="isx-secnote">{artistLock.name}’s releases{lockedDiscog ? '' : ' — loading'}</span> : null}
-            {item.group === 'Tracklist'
-              ? <span className="isx-secnote">from the album record, not the filenames</span> : null}
+              ? <span className="isx-secnote">{artistLock.name}’s releases{lockedDiscog ? '' : ' · loading'}</span> : null}
           </div>,
         );
       }
@@ -2384,44 +2524,57 @@ export default function InstantSearch({
       const total = noTracks ? 0 : (d.tracks?.length || a.totalTracks || 0);
       // Songs not out yet can't be got, so they don't count as missing.
       const notOutCount = (d.tracks || []).filter((t) => t.notOut).length;
-      const ownedCount = (d.tracks || []).filter((t) => !t.notOut && alreadyOwned?.(t.title, t.artists || a.artists, a.name || undefined)).length;
+      const ownedCount = (d.tracks || []).filter((t) => !t.notOut && (t.libTrack || alreadyOwned?.(t.title, t.artists || a.artists, a.name || undefined, t.spotifyId))).length;
       const missing = total - notOutCount - ownedCount;
       const year = String(a.releaseDate || '').slice(0, 4);
+      // What the artist page calls it: a one-song single, a longer EP.
+      const kind = a.label || (/single/i.test(a.albumType || '') ? ((total || a.totalTracks || 1) > 1 ? 'EP' : 'Single')
+        : /compilation/i.test(a.albumType || '') ? 'Compilation' : 'Album');
       const unmatched = probe.match?.unmatched?.length || 0;
+      const playable = a.play ? (d.tracks || []).some((t) => !t.notOut)
+        : onPlaySpotifyRows && (d.tracks || []).some((t) => t.spotifyId && !t.notOut);
+      /* Playing from this record: Play turns into Pause (and pauses rather
+         than starting over), like a playlist page's. */
+      const nowHere = (d.tracks || []).map((t) => nowOf(t.libTrack || null, t)).find(Boolean) || null;
+      const showPause = !!nowHere?.playing;
       return (
-        <div className="isx-peek">
+        <div className="isx-peek is-album">
           <div className="isx-peekhero">
             <div className="isx-peekart" style={{ backgroundImage: a.albumArtUrl ? `url("${a.albumArtUrl}")` : 'none' }} />
             <div className="isx-mid">
-              <div className="isx-eyebrow">Album{year ? ` · ${year}` : ''}</div>
+              <div className="isx-eyebrow">{kind}{year ? ` · ${year}` : ''}</div>
               <h3 className="isx-peektitle">{a.name}</h3>
               <div className="isx-peeksub">
-                {a.artists}{total ? ` · ${total} tracks` : ''}{ownedCount ? ` · ${ownedCount} of ${total} in your library` : ''}
+                {a.artists}{total ? ` · ${total} ${total === 1 ? 'song' : 'songs'}` : ''}{ownedCount && !(a.lib && ownedCount === total) ? ` · ${ownedCount} of ${total} in your library` : ''}
               </div>
               <div className="isx-peekacts">
-                {noTracks ? (
+                {noTracks && a.collection ? null : noTracks ? (
                   <span className="isx-owned" style={{ fontSize: 12, opacity: 0.72 }}>
-                    This release has no playable tracks — it&apos;s a video or
+                    This release has no playable songs. It’s a video or
                     compilation entry the catalog lists without audio.
                   </span>
-                ) : missing > 0 ? (
-                  <GetBtn big solid width={190} label={`Get the ${missing} you're missing`} onGrab={() => getAlbumMissing(a)} />
-                ) : total ? (
-                  <span className="isx-owned" style={{ fontSize: 12 }}>Every track is in your library</span>
+                ) : missing > 0 && a.context?.kind !== 'playlist' ? (
+                  <GetBtn big solid width={190} label={`Save the ${missing} You’re Missing`} onGrab={() => getAlbumMissing(a)} />
                 ) : null}
-                {onOpenAlbum ? <button type="button" className="isx-ghost is-big" onClick={() => { onOpenAlbum(a); onClose?.(); }}>Open album page</button> : null}
+                {playable ? (
+                  <>
+                    <button type="button" className="isx-ghost is-big isx-playbtn" onClick={() => (nowHere && onTogglePlay ? onTogglePlay() : playRecord(a))}>
+                      {showPause ? <PauseIcon size={13} /> : <PlayIcon size={13} />} {showPause ? 'Pause' : 'Play'}
+                    </button>
+                    <button type="button" className="isx-ghost is-big isx-playbtn" onClick={() => playRecord(a, 0, true)}><Svg d={Ico.shuffle} size={13} w={2} /> Shuffle</button>
+                  </>
+                ) : null}
+                {a.edit ? <button type="button" className="isx-ghost is-big isx-playbtn" onClick={a.edit}><Svg d={Ico.edit} size={12} w={2} /> Edit Info</button> : null}
+                {onOpenAlbum && !a.collection ? <button type="button" className="isx-ghost is-big" onClick={() => { onOpenAlbum(a); onClose?.(); }}>Open Album Page</button> : null}
               </div>
             </div>
           </div>
-          {/* Three states, and the resting one is NOT a spinner.
-              Unprobed, this says what you already have — a working tracklist —
-              and offers the upgrade as a thing you can choose. The old version
-              opened on "Matching files against the tracklist…", which made a
-              screen that was already finished look like it wasn't. */}
+          {/* Only once Soulseek is being asked (Best, or → on a track): while
+              it looks, then what it found. Unasked, nothing sits here. */}
           {probe.busy ? (
             <div className="isx-cov is-busy">
               <span className="isx-spin" />
-              Asking the network about this record — usually a few seconds.
+              Asking the network about this record. This usually takes a few seconds.
             </div>
           ) : cov ? (
             <div className="isx-cov">
@@ -2429,19 +2582,9 @@ export default function InstantSearch({
               <span>{describeCoverage(cov, probe.folders?.length || 0)}</span>
               {unmatched ? (
                 <span className="isx-unmatched">
-                  {unmatched} file{unmatched === 1 ? '' : 's'} didn’t match any track
+                  {unmatched} file{unmatched === 1 ? '' : 's'} didn’t match any song
                 </span>
               ) : null}
-            </div>
-          ) : d.tracks?.length ? (
-            <div className="isx-cov">
-              <span>
-                Downloads use YouTube — instant, and good enough for most listening.
-              </span>
-              <button type="button" className="isx-ghost" style={{ marginLeft: 'auto' }}
-                onClick={() => probeAlbum(a)}>
-                Look for lossless files
-              </button>
             </div>
           ) : null}
         </div>
@@ -2464,7 +2607,7 @@ export default function InstantSearch({
          your library" is the same fact the removed section spelled out over
          twelve rows you couldn't press. */
       const known = (ex.tracks || []).length;
-      const owned = (ex.tracks || []).filter((t) => alreadyOwned?.(t.title, t.artists, t.album || undefined)).length;
+      const owned = (ex.tracks || []).filter((t) => alreadyOwned?.(t.title, t.artists, t.album || undefined, t.spotifyId)).length;
       const missing = known - owned;
       /* Only claimed when the expansion pass actually ran. It's opt-in now, so
          the default frame says how many releases there are and stops — a count
@@ -2506,10 +2649,19 @@ export default function InstantSearch({
         albumType: r.type || r.group || '',
       },
     }),
+    // Your album, from the artist's page.
+    openRecord: (album) => push({ kind: 'album', album }),
     search: (q) => { setStack([]); setRaw(q); setForceFor(''); setTimeout(() => inputRef.current?.focus(), 0); },
     openPage: onOpenArtist ? () => { onOpenArtist(frame.artist); onClose?.(); } : null,
     close: onClose,
+    // Where you left this artist's page, kept on its frame for the way back.
+    viewState: embedArtist ? artistViews.current.get(frame) || null : null,
+    onViewState: embedArtist ? ((f) => (v) => { artistViews.current.set(f, v); })(frame) : null,
   };
+  /* Back to an artist page you left: the panel takes the page's size at
+     once rather than growing into it, so the page draws at its own width
+     straight away, exactly where you left it, and fades in. */
+  const artistBack = embedArtist && cameBack;
 
   const crumb = stack.length ? (
     <div className="isx-crumb">
@@ -2536,7 +2688,14 @@ export default function InstantSearch({
         })}
       </div>
       <div style={{ flex: 1 }} />
-      <span className="isx-esc"><kbd>esc</kbd>back to results</span>
+      {frame?.kind === 'album' ? (
+        <div className="isx-lookseg" role="radiogroup" aria-label="Album look">
+          {[['auto', 'Auto', 'Follow your settings'], ['dark', 'Dark'], ['color', 'Color'], ['full', 'Full Color'], ['immerse', 'Immerse']].map(([v, label, tip]) => (
+            <button key={v} type="button" role="radio" aria-checked={lookPick === v} className={lookPick === v ? 'on' : ''}
+              title={tip || undefined} onClick={() => pickLook(v)}>{label}</button>
+          ))}
+        </div>
+      ) : null}
     </div>
   ) : null;
 
@@ -2544,17 +2703,17 @@ export default function InstantSearch({
      "↵ get" — Enter doesn't do those any more, and a hint for a binding
      that doesn't exist is worse than no hint. Acting on a row is a click,
      which needs no legend. */
-  const filterHint = onFilterLibrary && band.total ? [['tab', 'filter the list']] : [];
+  const filterHint = onFilterLibrary && band.total ? [['Tab', 'filter the list']] : [];
 
   const enterHint = enterVerb ? [['↵', enterVerb]] : [];
-  const pageHint = canOpenPage ? [['ctrl ↵', 'open page']] : [];
+  const pageHint = canOpenPage ? [['Ctrl ↵', 'open page']] : [];
   const albumHint = current?.kind === 'song' && current.data?.owned ? [['→', 'album']] : [];
   const footHints = embedArtist
-    ? [['esc', 'back']]
+    ? [['Esc', 'back']]
     : frame?.kind === 'album'
-    ? [['↑↓', 'move'], ...enterHint, ['→', 'sources'], ['esc', 'back']]
+    ? [['↑↓', 'move'], ...enterHint, ...(frame.album.collection ? [] : [['→', 'sources']]), ['Esc', stack.length === 1 && frame.root ? 'close' : 'back']]
     : frame?.kind === 'artist'
-      ? [['↑↓', 'move'], ...enterHint, ...pageHint, ['esc', 'back']]
+      ? [['↑↓', 'move'], ...enterHint, ...pageHint, ['Esc', 'back']]
       : items.length
         ? [['↑↓', 'move'], ...enterHint, ...albumHint, ...pageHint, ...filterHint]
         : [];
@@ -2562,8 +2721,23 @@ export default function InstantSearch({
   return (
     <>
       <style>{STYLES}</style>
-      <div className="isx-scrim" onClick={onClose} />
-      <div className={`isx-panel${stack.length ? ' is-wide' : ''}${embedArtist ? ' is-artist' : ''}`} role="dialog" aria-label="Search">
+      <div className={`isx-scrim${open ? '' : ' is-leaving'}`} onClick={onClose} />
+      <div className={`isx-panel${open ? '' : ' is-leaving'}${stack.length ? ' is-wide' : ''}${embedArtist ? ' is-artist' : ''}${artistBack ? ' is-back' : ''}${albumLook && albumLook !== 'dark' && lookColors ? ' has-look' : ''}`} role="dialog" aria-label="Search" ref={panelRef} onAnimationEnd={onPanelAnimEnd}>
+        {albumLook && albumLook !== 'dark' && lookColors ? (
+          <div className={`isx-look is-${albumLook}`} aria-hidden style={albumLook === 'color'
+            ? { background: `linear-gradient(180deg, rgba(${lookColors.wash},0.9) 0%, rgba(${lookColors.wash},0.5) 200px, rgba(${lookColors.wash},0.14) 420px, rgba(${lookColors.wash},0) 640px)` }
+            : albumLook === 'full'
+              ? { background: `linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.3) 100%), rgb(${lookColors.wash})` }
+              : { background: `rgb(${lookColors.base})` }}>
+            {albumLook === 'immerse' ? (
+              <>
+                <AnimatedGradientBg field accent={lookColors.wash} mid={lookColors.mid} wash={lookColors.low}
+                  coverUrl={lookArt} isPlaying={!!nowPlaying?.playing} vignette={false} brightness={1} />
+                <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.22) 45%, rgba(0,0,0,0.32) 100%)' }} />
+              </>
+            ) : null}
+          </div>
+        ) : null}
         {crumb}
 
         {!stack.length ? (
@@ -2608,7 +2782,7 @@ export default function InstantSearch({
                   e.preventDefault();
                   onSpotifyLink(pasted);
                 }}
-                placeholder={chips.length ? 'Add words…' : 'Search songs, albums, artists'}
+                placeholder={chips.length ? 'Add words…' : 'Search songs, albums and artists'}
                 spellCheck={false}
                 aria-label="Search"
               />
@@ -2616,7 +2790,7 @@ export default function InstantSearch({
             {/* Never skip the network silently — the chip is what separates
                 "we decided not to search" from "the search is broken". */}
             {certain ? (
-              <span className="isx-have"><Svg d={Ico.check} size={13} w={2.6} />You have this</span>
+              <span className="isx-have"><Svg d={Ico.check} size={13} w={2.6} />In Your Library</span>
             ) : null}
             {raw.trim() ? (
               <button type="button" className="isx-clear" title="Clear" aria-label="Clear search"
@@ -2624,7 +2798,7 @@ export default function InstantSearch({
                 <Svg d={Ico.x} size={12} w={2.4} />
               </button>
             ) : null}
-            <button type="button" className="isx-escbtn" onClick={onClose} title="Close (Esc)" aria-label="Close search">esc</button>
+            <button type="button" className="isx-escbtn" onClick={onClose} title="Close (Esc)" aria-label="Close search">Esc</button>
           </div>
         ) : null}
 
@@ -2646,7 +2820,7 @@ export default function InstantSearch({
                   searches follow underneath. */}
               <div className="isx-hello">
                 <span className="isx-hello-ic"><Svg d={Ico.search} size={16} w={2.2} /></span>
-                <div className="isx-hello-t">Search everything</div>
+                <div className="isx-hello-t">Search Everything</div>
                 <div className="isx-hello-l">Your library and all of Spotify in one place.</div>
                 <div className="isx-hello-l is-dim">Each song shows up once. Duplicate copies are hidden.</div>
                 <div className="isx-toks">
@@ -2676,13 +2850,15 @@ export default function InstantSearch({
           ) : frame?.kind === 'album' ? (
             <div className="isx-empty">
               <div className="isx-emptytitle">
-                {albumData[frame.album.albumId]?.error ? 'Couldn\u2019t load this release' : 'No tracks listed for this release'}
+                {albumData[frame.album.albumId]?.error ? 'Couldn\u2019t load this release'
+                  : frame.album.collection ? (frame.album.empty || 'Nothing to play here yet.') : 'No songs listed for this release'}
               </div>
-              <div className="isx-emptyhint">{albumData[frame.album.albumId]?.error || 'Spotify returned an empty tracklist.'}</div>
+              {albumData[frame.album.albumId]?.error || !frame.album.collection
+                ? <div className="isx-emptyhint">{albumData[frame.album.albumId]?.error || 'Spotify returned an empty tracklist.'}</div> : null}
               {albumData[frame.album.albumId]?.error ? (
                 <button type="button" className="isx-ghost" style={{ marginTop: 12 }}
                   onClick={() => { setAlbumData((m) => { const n = { ...m }; delete n[frame.album.albumId]; return n; }); loadAlbum(frame.album); }}>
-                  Try again
+                  Try Again
                 </button>
               ) : null}
             </div>
@@ -2690,7 +2866,7 @@ export default function InstantSearch({
             <div className="isx-empty">
               <div className="isx-emptytitle">{phase.spotify === 'error' && errorNote ? 'Search didn\u2019t go through' : <>Nothing matched “{parsed.text || parsed.artist || parsed.album}”.</>}</div>
               <div className="isx-emptyhint">
-                {errorNote || 'Try fewer words — peers match on the whole phrase, so a shorter query usually returns more.'}
+                {errorNote || 'Try fewer words. Peers match on the whole phrase, so a shorter query usually returns more.'}
               </div>
             </div>
           )}
@@ -2699,7 +2875,7 @@ export default function InstantSearch({
 
         <div className="isx-foot">
           {footHints.map(([k, label]) => (
-            <span key={k}><kbd>{k}</kbd>{label}</span>
+            <span key={k}><kbd>{k}</kbd>{titleCase(label)}</span>
           ))}
           {!hasQuery && !stack.length && !footHints.length ? (
             <span className="isx-footnote">
@@ -2737,7 +2913,8 @@ export default function InstantSearch({
  * ========================================================================= */
 const STYLES = `
 .isx-scrim { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.6);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: isxFade 0.16s ease both; }
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: isxFade 0.22s ease both; }
+.isx-scrim.is-leaving { animation: isxFadeOut 0.2s ease both; pointer-events: none; }
 /* Centred on the window, under the top bar's search. --isx-shift can move
    it off that line; the clamp keeps a 16px margin on both sides whatever the
    panel's width. */
@@ -2750,7 +2927,9 @@ const STYLES = `
   box-shadow: 0 40px 100px rgba(0,0,0,0.75); display: flex; flex-direction: column;
   max-height: calc(100vh - 180px);
   transition: width 0.22s cubic-bezier(0.22,1,0.3,1);
-  animation: isxIn 0.18s cubic-bezier(0.22,0.9,0.3,1) both; }
+  transform-origin: 50% 0; animation: isxIn 0.28s cubic-bezier(0.2,0.8,0.2,1) both; }
+/* Out: quicker than in, easing away, so closing feels immediate. */
+.isx-panel.is-leaving { animation: isxOut 0.17s cubic-bezier(0.4,0,1,1) both; pointer-events: none; }
 .isx-panel.is-wide { --isx-w: min(880px, calc(100vw - 60px)); }
 .isx-mi.is-link { cursor: pointer; border-radius: 3px; }
 .isx-mi.is-link:hover { color: var(--st-text); text-decoration: underline; text-underline-offset: 2px; }
@@ -2758,8 +2937,13 @@ const STYLES = `
    near full width, a fixed height the view scrolls inside. */
 .isx-panel.is-artist { --isx-w: min(1120px, calc(100vw - 48px)); top: 56px; height: calc(100vh - 112px); max-height: none; }
 .isx-artistbody { flex: 1; min-height: 0; display: flex; position: relative; }
+.isx-panel.is-back { transition: none; }
+.isx-panel.is-back .isx-artistbody { animation: isxBackIn 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes isxBackIn { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
 @keyframes isxFade { from { opacity: 0 } to { opacity: 1 } }
-@keyframes isxIn { from { opacity: 0; transform: translateX(-50%) translateY(-8px) } to { opacity: 1; transform: translateX(-50%) } }
+@keyframes isxIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px) scale(0.98) } to { opacity: 1; transform: translateX(-50%) } }
+@keyframes isxOut { from { opacity: 1; transform: translateX(-50%) } to { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.985) } }
+@keyframes isxFadeOut { from { opacity: 1 } to { opacity: 0 } }
 
 .isx-top { display: flex; align-items: center; gap: 10px; padding: 12px 18px; min-height: 58px; flex-shrink: 0;
   border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.07); }
@@ -2829,7 +3013,7 @@ const STYLES = `
   background: rgba(var(--st-acc-rgb), 0.16); color: rgb(var(--st-acc-rgb)); border: 1px solid rgba(var(--st-acc-rgb), 0.3); }
 .isx-token .k { opacity: 0.6; font-weight: 800; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
 
-.isx-crumb { display: flex; align-items: center; gap: 9px; padding: 11px 14px; flex-shrink: 0;
+.isx-crumb { display: flex; align-items: center; gap: 9px; padding: 11px 18px; flex-shrink: 0;
   border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.07); background: rgba(var(--st-fg-rgb), 0.02); }
 .isx-back { width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
@@ -2850,7 +3034,20 @@ const STYLES = `
 .isx-crumb-b { border: none; background: none; padding: 0; font: inherit; font-size: inherit;
   color: inherit; cursor: pointer; }
 .isx-crumb-b:hover { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
-.isx-esc { font-size: 10.5px; font-weight: 700; color: rgba(var(--st-fg-rgb), 0.28); white-space: nowrap; }
+.isx-lookseg { display: inline-flex; padding: 2px; border-radius: 8px; flex-shrink: 0;
+  background: rgba(var(--st-fg-rgb), 0.06); border: 1px solid rgba(var(--st-fg-rgb), 0.08); }
+.isx-lookseg button { border: none; background: transparent; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700;
+  padding: 3px 9px; border-radius: 6px; color: rgba(var(--st-fg-rgb), 0.55); white-space: nowrap; transition: background .12s ease, color .12s ease; }
+.isx-lookseg button:hover { color: var(--st-text); }
+.isx-lookseg button.on { background: rgba(var(--st-fg-rgb), 0.14); color: var(--st-text); }
+/* An album's look: a layer under everything in the panel. */
+.isx-look { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: inherit; }
+.isx-panel.has-look > :not(.isx-look) { position: relative; z-index: 1; }
+.isx-panel.has-look .isx-crumb { background: transparent; border-bottom-color: rgba(255,255,255,0.08); }
+.isx-panel.has-look .isx-foot { background: transparent; border-top-color: rgba(255,255,255,0.08); }
+.isx-panel.has-look .isx-eyebrow { color: rgba(255,255,255,0.72); }
+.isx-panel.has-look .isx-peeksub { color: rgba(255,255,255,0.7); }
+.isx-panel.has-look .isx-lookseg { background: rgba(0,0,0,0.18); border-color: rgba(255,255,255,0.1); }
 
 .isx-body { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px 12px;
   scrollbar-width: thin; scrollbar-color: rgba(var(--st-fg-rgb), 0.13) transparent; }
@@ -2937,6 +3134,7 @@ const STYLES = `
 .isx-ghost { flex-shrink: 0; cursor: pointer; white-space: nowrap; font-family: inherit; padding: 5px 12px; border-radius: 8px;
   font-size: 11px; font-weight: 700; border: 1px solid rgba(var(--st-fg-rgb), 0.14);
   background: rgba(var(--st-fg-rgb), 0.05); color: rgba(var(--st-fg-rgb), 0.8); }
+.isx-playbtn { display: inline-flex; align-items: center; gap: 7px; }
 .isx-ghost:hover { background: rgba(var(--st-fg-rgb), 0.1); color: #fff; }
 .isx-ghost.is-big { padding: 9px 14px; border-radius: 10px; font-size: 12px; }
 .isx-prog { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
@@ -2946,6 +3144,16 @@ const STYLES = `
 
 /* ---- peek hero ---- */
 .isx-peek { padding: 16px 16px 2px; flex-shrink: 0; }
+.isx-peek.is-album { padding: 20px 20px 8px; }
+.isx-peek.is-album .isx-peekhero { gap: 22px; align-items: center; }
+.isx-peek.is-album .isx-peekart { width: 140px; height: 140px; }
+.isx-peek.is-album .isx-eyebrow { font-size: 10.5px; }
+.isx-peek.is-album .isx-peektitle { font-size: 30px; }
+.isx-peek.is-album .isx-peeksub { font-size: 13.5px; }
+.isx-peek.is-album .isx-peekacts { margin-top: 16px; gap: 10px; }
+.isx-peek.is-album .isx-ghost.is-big, .isx-peek.is-album .isx-get.is-big { padding: 10px 16px; font-size: 13px; }
+/* Play, Shuffle and Edit Info read as one set: the same width, whatever the word. */
+.isx-peek.is-album .isx-playbtn { min-width: 116px; justify-content: center; }
 .isx-peekhero { display: flex; gap: 18px; align-items: flex-start; }
 .isx-peekart { width: 112px; height: 112px; border-radius: 12px; flex-shrink: 0; background-size: cover; background-position: center;
   background-color: rgba(var(--st-fg-rgb), 0.06); box-shadow: 0 12px 34px rgba(0,0,0,0.55); }
@@ -2961,21 +3169,26 @@ const STYLES = `
 .isx-unmatched { margin-left: auto; font-size: 11px; font-weight: 650; color: rgba(240,190,120,0.8); }
 
 /* ---- tracklist ---- */
-.isx-trk { display: grid; grid-template-columns: 26px minmax(0,1fr) auto 48px 30px; gap: 11px; align-items: center;
-  width: 100%; padding: 7px 12px; border-radius: 9px; border: none; background: transparent; color: inherit;
+/* An album's songs, sized like the app's other song lists (a little under a
+   full page's, as this is a panel), not like search results: those stay
+   dense so a long list of them scans at a glance. */
+.isx-trk.has-art { grid-template-columns: 30px 42px minmax(0,1fr) auto 52px 32px; }
+.isx-tart { width: 42px; height: 42px; border-radius: 6px; background: rgba(var(--st-fg-rgb), 0.08) center/cover no-repeat; }
+.isx-trk { display: grid; grid-template-columns: 30px minmax(0,1fr) auto 52px 32px; gap: 12px; align-items: center;
+  width: 100%; min-height: 44px; padding: 7px 12px; border-radius: 10px; border: none; background: transparent; color: inherit;
   text-align: left; cursor: pointer; font-family: inherit; }
 .isx-trk.is-on { background: rgba(var(--st-acc-rgb), 0.13); }
-.isx-trk .isx-dur { text-align: right; }
+.isx-trk .isx-dur { text-align: right; font-size: 13px; }
 /* The action column fits the + and the tick. While a song saves, its wider
    progress bar grows left over the length, which steps aside for it. */
 .isx-trk.is-saving .isx-dur { visibility: hidden; }
 .isx-trk.is-open { background: rgba(var(--st-acc-rgb), 0.09); }
-.isx-n { text-align: center; font-size: 11.5px; color: rgba(var(--st-fg-rgb), 0.32); font-variant-numeric: tabular-nums; }
-.isx-tt { min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isx-n { text-align: center; font-size: 13px; color: rgba(var(--st-fg-rgb), 0.32); font-variant-numeric: tabular-nums; }
+.isx-tt { min-width: 0; font-size: 14.5px; font-weight: 600; color: var(--st-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isx-tt.is-have { font-weight: 500; color: rgba(var(--st-text-rgb), 0.48); }
-.isx-tcell { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.isx-tcell { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .isx-tcell .isx-tt { display: block; }
-.isx-tcred { min-width: 0; font-size: 11.5px; font-weight: 550; color: rgba(var(--st-sub-rgb), 0.5);
+.isx-tcred { min-width: 0; font-size: 12.5px; font-weight: 550; color: rgba(var(--st-sub-rgb), 0.5);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isx-tartist { cursor: pointer; }
 .isx-tartist:hover { color: var(--st-text); text-decoration: underline; text-underline-offset: 2px; }
@@ -3040,14 +3253,8 @@ const STYLES = `
 .isx-better:hover { color: rgb(var(--st-acc-rgb)); background: rgba(var(--st-acc-rgb), 0.14); }
 .isx-probing { color: rgba(var(--st-acc-rgb), 0.8); animation: stPulse 1.3s ease infinite; }
 
-/* Owned rows. A play affordance rather than a disabled Get with a badge
-   apologising for itself — the row does something, so it says what. */
-.isx-playtag { display: none; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap;
-  padding: 4px 10px; border-radius: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
-  background: var(--accent); color: var(--accent-ink); }
-/* Only the highlighted row carries a PLAY chip — with Enter working
-   correctly, per-row buttons are mostly redundant (brief). */
-.isx-row.is-on .isx-playtag { display: inline-flex; }
+/* Owned rows play like every list's rows: the play icon over the cover
+   (.isx-artplay) on the highlighted row. */
 /* A hairline in the "owned" green, so the split is legible while scanning
    without every second row carrying a text badge. */
 .isx-art, .isx-glyph { position: relative; }
@@ -3065,7 +3272,6 @@ const STYLES = `
    swaps to pause under the pointer. */
 .isx-trk.is-on:not(:hover) .isx-n.is-now .num { display: inline-flex; justify-content: center; }
 .isx-trk.is-on:not(:hover) .isx-n.is-now .pl { display: none; }
-.isx-art.is-owned { box-shadow: 0 0 0 1px rgba(123,224,176,0.35); }
 
 .isx-spin { width: 11px; height: 11px; flex-shrink: 0; border-radius: 50%; display: inline-block;
   border: 1.6px solid rgba(var(--st-fg-rgb), 0.15); border-top-color: rgb(var(--st-acc-rgb));
@@ -3107,9 +3313,41 @@ const STYLES = `
 
 @media (max-width: 820px) {
   .isx-panel, .isx-panel.is-wide { --isx-w: calc(100vw - 32px); top: 70px; }
-  .isx-trk { grid-template-columns: 24px minmax(0,1fr) 44px 30px; }
+  .isx-trk { grid-template-columns: 26px minmax(0,1fr) 48px 30px; }
+  .isx-trk.has-art { grid-template-columns: 26px 42px minmax(0,1fr) 48px 30px; }
   .isx-tq { display: none; }
   .isx-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) { .isx-panel, .isx-scrim { animation: none; } }
+/* An album's look (Color, Full Color, Immerse), in any mode. Everything on
+   it is a tint of white or black over the color, never a solid fill: Dark
+   mode's near-black fills read as dark blocks on top of a color. Last in the
+   sheet so it wins over Dark mode's rules. */
+/* The color runs to the panel's edge. A border would sit outside the area
+   the panel clips its contents to, leaving a ring of the panel's own dark
+   between the color and the edge: so the border's 1px becomes padding (the
+   panel stays exactly the same size) and a faint highlight drawn over the
+   color takes its place. */
+.isx-panel.has-look { border-width: 0; padding: 1px; background: rgb(12,12,14); }
+.isx-panel.has-look::after { content: ''; position: absolute; inset: 0; z-index: 2; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
+.isx-panel.has-look .isx-ghost { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.16); color: #fff; }
+.isx-panel.has-look .isx-ghost:hover { background: rgba(255,255,255,0.17); border-color: rgba(255,255,255,0.26); }
+.isx-panel.has-look .isx-foot kbd { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.78); }
+.isx-panel.has-look [data-dark] .isx-crumb, [data-dark] .isx-panel.has-look .isx-crumb { background: transparent; }
+.isx-panel.has-look .isx-foot { color: rgba(255,255,255,0.5); }
+.isx-panel.has-look .isx-qtoggle { background: rgba(0,0,0,0.18); border-color: rgba(255,255,255,0.1); }
+.isx-panel.has-look .isx-qtoggle button { color: rgba(255,255,255,0.6); }
+.isx-panel.has-look .isx-qtoggle button.on { background: rgba(255,255,255,0.16); color: #fff; }
+.isx-panel.has-look .isx-back { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.16); color: rgba(255,255,255,0.85); }
+.isx-panel.has-look .isx-peekart { background-color: rgba(255,255,255,0.08); }
+.isx-panel.has-look .isx-cov { background: rgba(0,0,0,0.18); border-color: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+.isx-panel.has-look .isx-better, .isx-panel.has-look .isx-srcct { background: rgba(255,255,255,0.12); }
+.isx-panel.has-look .isx-trk.is-on, .isx-panel.has-look .isx-src.is-on { background: rgba(255,255,255,0.1); }
+.isx-panel.has-look .isx-trk.is-open { background: rgba(255,255,255,0.06); }
+.isx-panel.has-look .isx-sec { color: rgba(255,255,255,0.45); }
+/* The color stops at the panel's rounded edge. Its moving layers are drawn
+   apart from the page, and a rounded overflow clip alone let their square
+   corners show past the border. */
+.isx-look { clip-path: inset(0 round 18px); }
 `;

@@ -208,7 +208,7 @@ export function LyricsPickerButton({
             {/* Header */}
             <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Choose lyrics version</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Choose Lyrics Version</div>
                 {currentTrack ? (
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 3 }}>
                     {currentTrack.artist} — {currentTrack.title}

@@ -30,7 +30,7 @@ export const VIZ_STYLES = [
   { id: 'proq', name: 'Pro-Q curve', note: 'An analyzer curve over the spectrum', soft: true },
   { id: 'peakcurve', name: 'Peak curve', note: 'Pro-Q with a falling peak line', soft: true },
   { id: 'layers', name: 'Layered curves', note: 'Three curves at three speeds', soft: true },
-  { id: 'ribbon', name: 'Progress ribbon', note: 'The song end to end; click to seek' },
+  { id: 'ribbon', name: 'Progress ribbon', note: 'The song end to end. Click to seek.' },
   { id: 'steps', name: 'Beat steps', note: 'Sixteen steps, one bar of music' },
 ];
 export const VIZ_IDS = new Set(VIZ_STYLES.map((s) => s.id));

@@ -14,6 +14,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNotices, markNoticesSeen, clearNotices, removeNotice, OPEN_NOTICES_EVENT, KindIcon, KIND_RGB } from './Toasts.jsx';
 import { ago } from '../lib/format.js';
 import { installUpdate, markUpdateSeen, useUpdate } from './updates.js';
+import { EmptyState } from './home/common.jsx';
 
 const stamp = (at) => new Date(at).toLocaleString(undefined, {
   month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
@@ -59,8 +60,6 @@ const CSS = `
 .stn-x:hover { color: #fff; background: rgba(255,255,255,0.08); }
 .stn-item.is-focus { animation: stnFocus 1.8s ease-out both; }
 @keyframes stnFocus { 0%, 35% { background: rgba(var(--tk), 0.16); } 100% { background: transparent; } }
-.stn-empty { padding: 40px 20px 44px; text-align: center; color: rgba(255,255,255,0.5); font-size: 12.5px; }
-.stn-empty b { display: block; color: rgba(255,255,255,0.85); font-size: 14px; margin-bottom: 4px; }
 /* A new version, pinned above the list until it's installed. */
 .stn-up { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 11px; margin: 6px 6px 0; padding: 12px 12px 12px 10px;
   border-radius: 10px; background: rgba(255,255,255,0.05); }
@@ -149,12 +148,14 @@ export default function NotificationsButton() {
           <div className="stn-head">
             <b>Notifications</b>
             {items.length ? <span>{items.length}</span> : null}
-            {items.length ? <button type="button" className="stn-clear" onClick={clearNotices}>Clear all</button> : null}
+            {items.length ? <button type="button" className="stn-clear" onClick={clearNotices}>Clear All</button> : null}
           </div>
           {update.offer || update.status.state === 'downloading' ? <UpdateRow status={update.status} /> : null}
           <div className="stn-list" ref={listRef}>
             {items.length === 0 && !update.offer && update.status.state !== 'downloading' ? (
-              <div className="stn-empty"><b>You’re all caught up</b>New versions of Studio, and problems it runs into like Spotify rate limits, show up here.</div>
+              <EmptyState compact title="You’re All Caught Up"
+                icon={<><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></>}
+                text="New versions of Studio, and problems it runs into like Spotify rate limits, show up here." />
             ) : items.map((n) => (
               <div key={n.id} data-notice={n.id} className={`stn-item${n.at > openedSeenAt ? ' is-new' : ''}${n.id === focusId ? ' is-focus' : ''}`}
                 style={{ '--tk': KIND_RGB[n.kind] || 'var(--st-acc-rgb, 190, 190, 196)' }}>
@@ -196,7 +197,7 @@ function UpdateRow({ status: s }) {
         <div className="stn-t">{busy ? `Downloading Studio ${s.version}…` : ready ? `Studio ${s.version} is ready` : `Studio ${s.version} is out`}</div>
         <div className="stn-d">
           {busy ? 'It downloads in the background. You can keep listening.'
-            : ready ? `You’re on ${s.current}. Restart to update; your library and settings stay as they are.`
+            : ready ? `You’re on ${s.current}. Restart to update. Your library and settings stay as they are.`
               : `You’re on ${s.current}. This copy of Studio can’t update itself, so download the new one from GitHub.`}
         </div>
         {busy ? null : (

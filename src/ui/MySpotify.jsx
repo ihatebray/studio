@@ -34,7 +34,7 @@ import { coverAt } from '../lib/coverUrl.js';
 import { pageWash, recordWashSource, sampleCoverTheme } from '../lib/coverTheme.js';
 import { BoundedMap } from '../lib/boundedMap.js';
 import { ArtistLinks, PlayIcon } from './sharedUI.jsx';
-import { PlayingBars } from './home/common.jsx';
+import { EmptyState, PlayingBars } from './home/common.jsx';
 
 /* ------------------------------------------------------------------ data */
 
@@ -112,7 +112,7 @@ function LimitBanner({ until }) {
   );
 }
 
-async function loadCollection(item) {
+export async function loadCollection(item) {
   const api = window.electronAPI;
   const unwrap = (r) => {
     if (r?.ok === false) throw new Error(r.error || 'Couldn’t load this.');
@@ -283,7 +283,6 @@ const CSS = `
   padding: 6px 8px; border-radius: 10px; cursor: pointer; transition: background 0.14s ease; }
 .msp-row:hover { background: rgba(255,255,255,0.05); }
 .msp-row.on .t { color: var(--accent-line); }
-.msp-row.is-focus { background: rgba(255,255,255,0.08); }
 /* Listed but not out yet: shown so you can see the tracklist, but not
    playable or saveable until Spotify releases it. */
 .msp-row.is-locked { cursor: default; }
@@ -301,7 +300,7 @@ const CSS = `
   display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease; }
 .msp-row:hover .msp-save, .msp-save.is-saved, .msp-save.is-busy { opacity: 1; }
 .msp-save:hover { background: rgba(255,255,255,0.08); color: var(--text); }
-.msp-save.is-saved { border-color: transparent; color: var(--success); cursor: default; background: rgba(123,224,176,0.1); }
+.msp-save.is-saved { border-color: transparent; color: rgba(140,220,160,0.9); cursor: default; background: transparent; }
 .msp-save.is-busy { cursor: progress; }
 
 /* cover grids */
@@ -332,7 +331,6 @@ const CSS = `
 .msp-mixart-name { position: absolute; left: 12px; right: 12px; bottom: 10px; z-index: 1; font-size: 19px; font-weight: 800; line-height: 1.05;
   letter-spacing: -0.02em; color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,0.45);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.msp-panel-head .msp-mixart-name { display: none; }
 .msp-mixart .msp-playfab { z-index: 2; }
 .msp-rank { position: absolute; left: 8px; top: 8px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
   background: rgba(0,0,0,0.6); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center;
@@ -402,7 +400,7 @@ const CSS = `
 
 /* new releases: a library table sorted by date */
 .msp-rtable { container-type: inline-size; display: flex; flex-direction: column; }
-.msp-rrow { display: grid; grid-template-columns: 44px minmax(180px, 2.6fr) minmax(80px, 0.8fr) 64px 118px 32px; align-items: center; gap: 12px;
+.msp-rrow { display: grid; grid-template-columns: 24px minmax(180px, 2.6fr) minmax(80px, 0.8fr) 64px 118px 32px; align-items: center; gap: 12px;
   height: 56px; padding: 0 8px; border-radius: 8px; box-sizing: border-box; cursor: pointer; transition: background 0.14s ease; }
 .msp-rrow:not(.msp-rhead):hover { background: rgba(var(--st-fg-rgb), 0.05); }
 .msp-rrow.is-open { background: rgba(var(--st-fg-rgb), 0.06); border-radius: 8px 8px 0 0; }
@@ -428,16 +426,18 @@ const CSS = `
 .msp-rchev { display: flex; align-items: center; justify-content: center; color: rgba(var(--st-fg-rgb), 0.3); transition: transform 0.24s cubic-bezier(0.22,1,0.36,1), color 0.14s ease; }
 .msp-rrow:hover .msp-rchev { color: rgba(var(--st-fg-rgb), 0.7); }
 .msp-rrow.is-open .msp-rchev { transform: rotate(180deg); color: var(--st-text, var(--text)); }
+.msp-rsave { display: flex; align-items: center; justify-content: center; }
+.msp-rsave .msp-save { opacity: 1; }
 @container (max-width: 700px) {
-  .msp-rrow { grid-template-columns: 44px minmax(160px, 1fr) minmax(70px, 0.5fr) 104px 32px; }
+  .msp-rrow { grid-template-columns: 24px minmax(160px, 1fr) minmax(70px, 0.5fr) 104px 32px; }
   .msp-rrow > .c-tracks { display: none; }
 }
 @container (max-width: 520px) {
-  .msp-rrow { grid-template-columns: 44px minmax(140px, 1fr) 96px 32px; }
+  .msp-rrow { grid-template-columns: 24px minmax(140px, 1fr) 96px 32px; }
   .msp-rrow > .c-type { display: none; }
 }
 /* the songs, opened under their row */
-.msp-rexp { padding: 4px 8px 12px 64px; margin-bottom: 6px; border-radius: 0 0 10px 10px; background: rgba(var(--st-fg-rgb), 0.03);
+.msp-rexp { padding: 4px 8px 12px 44px; margin-bottom: 6px; border-radius: 0 0 10px 10px; background: rgba(var(--st-fg-rgb), 0.03);
   box-shadow: inset 0 1px 0 rgba(var(--st-fg-rgb), 0.05); animation: mspOpen 0.26s cubic-bezier(0.22,1,0.36,1) both; }
 @keyframes mspOpen { from { opacity: 0; transform: translateY(-4px); } }
 .msp-rexp-bar { display: flex; align-items: center; gap: 4px; padding: 8px 0 6px; }
@@ -490,38 +490,15 @@ const CSS = `
 .msp-chip-btn.is-accent:hover { background: rgba(var(--accent-rgb), 0.26); }
 
 /* empty / error / skeleton */
-.msp-note { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 12px;
-  padding: 60px 24px; border-radius: 18px; border: 1px dashed rgba(255,255,255,0.12); color: var(--text-dim); }
-.msp-note b { font-size: 16px; color: var(--text); }
-.msp-note p { margin: 0; font-size: 13px; max-width: 440px; line-height: 1.55; color: var(--text-faint); }
-.msp-note .ic { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  background: rgba(var(--accent-rgb), 0.16); color: var(--accent-line); }
+.msp-note { display: flex; border-radius: 18px; border: 1px dashed rgba(255,255,255,0.12); padding: 20px 24px; }
 .msp-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; font-size: 12.5px;
   background: rgba(245,190,80,0.1); color: rgb(245,190,80); border: 1px solid rgba(245,190,80,0.2); }
 .msp-sk { border-radius: 10px; background: linear-gradient(90deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.04) 100%);
   background-size: 200% 100%; animation: mspSk 1.4s ease-in-out infinite; }
 @keyframes mspSk { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
-/* collection panel */
-.msp-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,0.42); animation: mspFade 0.2s ease both; }
-@keyframes mspFade { from { opacity: 0; } }
-.msp-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 6; width: min(470px, 100%); display: flex; flex-direction: column;
-  background: rgb(var(--st-bg-rgb, 12,12,14)); border-left: 1px solid var(--border); box-shadow: -24px 0 60px rgba(0,0,0,0.45);
-  animation: mspSlide 0.34s cubic-bezier(0.22,1,0.36,1) both; }
-@keyframes mspSlide { from { transform: translateX(40px); opacity: 0; } }
-.msp-panel-head { position: relative; display: flex; gap: 16px; padding: 22px 20px 18px; overflow: hidden; isolation: isolate; }
-.msp-panel-head .bg { position: absolute; inset: -40px; z-index: -1; background-size: cover; background-position: center; filter: blur(40px) brightness(0.45) saturate(1.3); }
-.msp-panel-head .msp-art { width: 112px; height: 112px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
-.msp-panel-head .ttl { font-size: 21px; font-weight: 800; color: #fff; letter-spacing: -0.015em; line-height: 1.15;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.msp-panel-head .sub { font-size: 12.5px; color: rgba(255,255,255,0.7); margin-top: 4px; }
-.msp-panel-head .x { position: absolute; top: 10px; right: 10px; color: rgba(255,255,255,0.75); }
-.msp-panel-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 18px; }
-.msp-panel .msp-row { grid-template-columns: 26px 40px minmax(0, 1fr) auto auto;
-  /* Rows off the screen skip layout and paint until they scroll near. */
-  content-visibility: auto; contain-intrinsic-size: auto 52px; }
-.msp-panel .msp-row.no-art { grid-template-columns: 26px minmax(0, 1fr) auto auto; }
-@media (prefers-reduced-motion: reduce) { .msp-panel, .msp-scrim, .msp-sk, .msp-rexp, .msp-fm { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .msp-sk, .msp-rexp, .msp-fm { animation: none !important; } }
+
 `;
 
 /* ---------------------------------------------------------------- pieces */
@@ -555,7 +532,14 @@ function SubLine({ item, onOpenArtist }) {
 }
 
 function SaveButton({ state, onSave }) {
-  if (state === 'saved') return <span className="msp-save is-saved" title="In your library">{Icon.check(13)}</span>;
+  /* The one "in your library" mark: the green tick search and artist pages use. */
+  if (state === 'saved') {
+    return (
+      <span className="msp-save is-saved" title="In your library" aria-label="In your library">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></svg>
+      </span>
+    );
+  }
   if (state === 'busy') return <span className="msp-save is-busy" title="Saving…"><svg className="st-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M21 12a9 9 0 1 1-6.2-8.56" /></svg></span>;
   return (
     <button type="button" className="msp-save" title="Save to your library" aria-label="Save to your library"
@@ -566,20 +550,11 @@ function SaveButton({ state, onSave }) {
 }
 
 /** One track row. `n` is a rank / position; `meta` the right-hand text. */
-function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context = null, focus = false, onOpenArtist = bridge.onOpenArtist }) {
+function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context = null, onOpenArtist = bridge.onOpenArtist }) {
   const on = bridge.isCurrent(row);
-  /* The song a link pointed at: marked, and scrolled to once it's drawn. */
-  const ref = useRef(null);
-  useEffect(() => {
-    // Only the panel's list scrolls: scrollIntoView would also nudge the
-    // page behind it, whose boxes hide their overflow but still scroll.
-    const el = ref.current;
-    const box = focus ? el?.closest('.msp-panel-body') : null;
-    if (box) box.scrollTop = el.offsetTop - box.offsetTop - (box.clientHeight - el.offsetHeight) / 2;
-  }, [focus]);
   if (row.notOut) {
     return (
-      <div ref={ref} className={cx('msp-row', 'is-locked', !showArt && 'no-art')} aria-disabled title="Not out yet"
+      <div className={cx('msp-row', 'is-locked', !showArt && 'no-art')} aria-disabled title="Not out yet"
         onContextMenu={(e) => bridge.openMenu?.(e, row)}>
         <span className="n">{n}</span>
         {showArt ? <Art src={row.albumArtUrl} px={120} /> : null}
@@ -595,7 +570,7 @@ function TrackRow({ row, n, meta, list, index, bridge, showArt = true, context =
     );
   }
   return (
-    <div ref={ref} className={cx('msp-row', on && 'on', !showArt && 'no-art', focus && 'is-focus')} role="button" tabIndex={0}
+    <div className={cx('msp-row', on && 'on', !showArt && 'no-art')} role="button" tabIndex={0}
       onContextMenu={(e) => bridge.openMenu?.(e, row)}
       onClick={() => bridge.playRows(list, index, { context })}
       onKeyDown={(e) => { if (e.key === 'Enter') bridge.playRows(list, index, { context }); }}>
@@ -632,13 +607,11 @@ function SectionHead({ title, meta, children }) {
   );
 }
 
+/* A page's empty or error state: the shared EmptyState, in a dashed frame. */
 function Note({ icon, title, body, action }) {
   return (
     <div className="msp-note">
-      <span className="ic">{icon}</span>
-      <b>{title}</b>
-      {body ? <p>{body}</p> : null}
-      {action || null}
+      <EmptyState icon={icon} title={title} text={body} action={action} />
     </div>
   );
 }
@@ -647,7 +620,7 @@ function FeedError({ error, onRetry, onConnect }) {
   if (error?.step === 'signin') {
     return (
       <Note icon={Icon.spotify(24)} title="Connect your Spotify"
-        body="Sign in to Spotify in Settings to see what you've been playing, your artists, playlists and their new releases here."
+        body="Sign in to Spotify in Settings to see what you’ve been playing, your artists, playlists and their new releases here."
         action={<button type="button" className="st-btn st-btn-primary" onClick={onConnect}>Open Connections</button>} />
     );
   }
@@ -655,9 +628,9 @@ function FeedError({ error, onRetry, onConnect }) {
   return (
     <Note icon={Icon.refresh(22)} title={limited ? 'Spotify asked Studio to slow down' : 'Couldn’t reach Spotify'}
       body={limited
-        ? `Spotify is limiting how often Studio can ask for your data${error.retryAfter ? ` for about ${waitWords(error.retryAfter * 1000)}` : ''}. Playback isn't affected by this.${error.retryAfter && error.retryAfter <= 1800 ? ' This page loads by itself when the wait is over.' : ''}`
+        ? `Spotify is limiting how often Studio can ask for your data${error.retryAfter ? ` for about ${waitWords(error.retryAfter * 1000)}` : ''}. Playback isn’t affected by this.${error.retryAfter && error.retryAfter <= 1800 ? ' This page loads by itself when the wait is over.' : ''}`
         : (error?.error || 'Something went wrong.')}
-      action={<button type="button" className="st-btn st-btn-outline" onClick={onRetry}>Try again</button>} />
+      action={<button type="button" className="st-btn st-btn-outline" onClick={onRetry}>Try Again</button>} />
   );
 }
 
@@ -672,100 +645,41 @@ function RefreshButton({ loading, onClick, at, label = 'Updated' }) {
   );
 }
 
-/* ------------------------------------------------------ collection panel */
+/* ------------------------------------------------------------- records */
 
-function CollectionPanel({ item, bridge, onClose }) {
-  const [rows, setRows] = useState(null);
-  const [err, setErr] = useState(null);
-  useEffect(() => {
-    let live = true;
-    setRows(null); setErr(null);
-    loadCollection(item).then((r) => { if (live) setRows(r || []); }, (e) => { if (live) setErr(String(e?.message || e)); });
-    return () => { live = false; };
-  }, [item]);
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  /* A big collection (Liked Songs can run to thousands) draws its first 200
-     rows straight away and the rest in batches just after, so opening it
-     doesn't wait on mounting every row. */
-  const [limit, setLimit] = useState(200);
-  useEffect(() => { setLimit(200); }, [rows]);
-  useEffect(() => {
-    if (!rows || limit >= rows.length) return undefined;
-    const t = setTimeout(() => setLimit((l) => l + 400), 60);
-    return () => clearTimeout(t);
-  }, [rows, limit]);
-  const total = (rows || []).reduce((n, r) => n + (r.durationMs || 0), 0);
-  // Songs not out yet (a countdown's tracklist) can't be played or saved.
-  const outRows = (rows || []).filter((r) => !r.notOut);
-  const notOut = (rows?.length || 0) - outRows.length;
-  const unsaved = outRows.filter((r) => !bridge.saveState(r));
-  const openArtist = bridge.onOpenArtist ? (a) => { onClose(); bridge.onOpenArtist(a); } : null;
-  return (
-    <>
-      <div className="msp-scrim" onClick={onClose} />
-      <aside className="msp-panel" aria-label={item.name}>
-        <div className="msp-panel-head">
-          <span className="bg" style={{ backgroundImage: item.image ? `url("${item.image}")` : 'none' }} />
-          {item.kind === 'liked' ? <LikedArt size={40} /> : item.kind === 'mix' ? <MixArt item={item} /> : <Art src={item.image} round={item.kind === 'artist'} />}
-          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 2 }}>
-            <span className="st-eyebrow" style={{ color: 'rgba(255,255,255,0.65)' }}>
-              {item.kind === 'artist' ? 'Top songs' : item.kind === 'liked' ? 'Collection' : item.kind === 'mix' ? 'Made in Studio' : item.label || item.kind}
-            </span>
-            <span className="ttl">{item.name}</span>
-            <span className="sub">
-              {item.kind === 'liked'
-                ? `${item.sub || ''}${rows?.length && item.count > rows.length ? ` · newest ${rows.length} here` : ''}`
-                : <><SubLine item={item} onOpenArtist={openArtist} />{rows?.length ? ` · ${rows.length} songs${notOut ? ` · ${outRows.length} out` : ''} · ${Math.round(total / 60000)} min` : ''}</>}
-            </span>
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button type="button" className="st-btn st-btn-primary st-btn-sm" disabled={!outRows.length}
-                onClick={() => bridge.playRows(outRows, 0, { context: item })}>{Icon.play(12)} Play</button>
-              <button type="button" className="st-btn st-btn-sm msp-btn-glass" disabled={!outRows.length}
-                onClick={() => bridge.playRows(outRows, 0, { shuffle: true, context: item })}>{Icon.shuffle(13)} Shuffle</button>
-              {unsaved.length > 1 ? (
-                <button type="button" className="st-btn st-btn-sm msp-btn-glass" onClick={() => unsaved.forEach((r) => bridge.saveRow(r))}
-                  title="Add every song here to your library">{Icon.plus(12)} Save all</button>
-              ) : null}
-            </div>
-          </div>
-          <button type="button" className="st-icon-btn is-sm x" onClick={onClose} aria-label="Close">{Icon.close(14)}</button>
-        </div>
-        <div className="msp-panel-body">
-          {err ? <div className="msp-banner" style={{ margin: 10 }}>{err}</div> : null}
-          {!rows && !err ? Array.from({ length: 8 }, (_, i) => <div key={i} className="msp-sk" style={{ height: 40, margin: '8px 6px' }} />) : null}
-          {(rows || []).slice(0, limit).map((r, i) => (
-            <TrackRow key={`${r.spotifyId}:${i}`} row={r} n={i + 1} list={rows} index={i} bridge={bridge}
-              showArt={item.kind !== 'album'} meta={fmtMs(r.durationMs)} context={item} onOpenArtist={openArtist}
-              focus={!!item.focusId && r.spotifyId === item.focusId} />
-          ))}
-          {rows && !rows.length ? <div className="st-meta" style={{ padding: 20, textAlign: 'center' }}>{item.empty || 'Nothing to play here.'}</div> : null}
-        </div>
-      </aside>
-    </>
-  );
+/** An album, playlist, mix or countdown as search's album view opens it,
+ *  from Home, a Spotify link or a countdown (InstantSearch's `record`). An
+ *  album is fetched by its id like any album in search; anything else, a
+ *  countdown's album included, brings its own songs (loadCollection). */
+export function recordFor(item) {
+  const isAlbum = item.kind === 'album' && !item.countdown;
+  const sub = String(item.sub || '');
+  // "Album · saoirse dream": the part after the kind is who made it.
+  /* Who it's by: the sub line without its kind ("Album · SZA" → "SZA"), and
+     nothing when the line is only the kind ("Playlist"). */
+  const by = /^(album|single|ep|playlist)$/i.test(sub.trim()) ? ''
+    : /^(album|single|ep|playlist)\s·\s/i.test(sub) ? sub.slice(sub.indexOf(' · ') + 3) : sub;
+  return {
+    focusId: item.focusId || null,
+    album: {
+      albumId: isAlbum ? item.id : `${item.kind}:${item.id || item.name}`,
+      name: item.name,
+      artists: by,
+      albumArtUrl: item.image || item.covers?.[0] || '',
+      releaseDate: item.releaseDate || '',
+      totalTracks: item.count || null,
+      label: isAlbum ? undefined
+        : item.kind === 'artist' ? 'Top songs' : item.kind === 'liked' ? 'Collection' : item.kind === 'mix' ? 'Made in Studio'
+          : item.label || (item.kind === 'playlist' ? 'Playlist' : 'Album'),
+      collection: !isAlbum,
+      // Songs that came with it (a resolved link) are used as they are.
+      load: item.rows?.length ? () => Promise.resolve(item.rows) : !isAlbum ? () => loadCollection(item) : undefined,
+      empty: item.empty || '',
+      context: item,
+    },
+  };
 }
 
-/** An album, playlist or song's album opened from a Spotify link: the same
- *  side panel, over whatever page is showing. */
-export function SpotifyLinkPanel({ item, bridge, onClose }) {
-  return (
-    <div className="msp-root" style={{ zIndex: 30 }}>
-      <style>{CSS}</style>
-      <CollectionPanel item={item} bridge={bridge} onClose={onClose} />
-    </div>
-  );
-}
-
-function usePanel() {
-  const [item, setItem] = useState(null);
-  const close = useCallback(() => setItem(null), []);
-  return [item, setItem, close];
-}
 
 /* ------------------------------------------------------------------ Home */
 
@@ -865,9 +779,10 @@ function MixArt({ item, children }) {
   );
 }
 
-function MixTile({ item, onOpen, onPlay }) {
+function MixTile({ item, onOpen, onPlay, onMenu = null }) {
   return (
-    <div className="msp-tile" role="button" tabIndex={0} onClick={() => onOpen(item)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}>
+    <div className="msp-tile" role="button" tabIndex={0} onClick={() => onOpen(item)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}
+      onContextMenu={onMenu ? (e) => onMenu(e, item) : undefined}>
       <MixArt item={item}>
         <button type="button" className="msp-playfab" aria-label={`Play ${item.name}`}
           onClick={(e) => { e.stopPropagation(); onPlay(item); }}>{Icon.play(15)}</button>
@@ -962,7 +877,7 @@ function CountdownCard({ item, now, onOpen, onHide }) {
         <span className="msp-cd-t">{item.name}</span>
         <span className="msp-cd-a">{item.artistName}</span>
         {out ? (
-          <span className="msp-cd-out">{Icon.play(11)} Out now</span>
+          <span className="msp-cd-out">{Icon.play(11)} Out Now</span>
         ) : (
           <>
             <div className="msp-cd-clock" aria-label={`${parts[0][0]} days, ${parts[1][0]} hours, ${parts[2][0]} minutes left`}>
@@ -995,7 +910,7 @@ function Countdowns({ items, prefs, onOpen }) {
   );
 }
 
-/** The side panel item for a countdown: its album, whatever of the
+/** The record for a countdown: its album, whatever of the
  *  tracklist is out so far (see countdownAlbum). */
 function countdownPanelItem(x, out, when) {
   return {
@@ -1119,7 +1034,7 @@ function ShelfCustomizer({ shelves, countdowns = [], prefs, onClose }) {
     <section className="msp-fm" aria-label="Customize Home">
       <div className="msp-fm-top">
         <span className="msp-fm-note" style={{ whiteSpace: 'normal' }}>
-          Choose what Home shows. Spotify changes some of its shelves from day to day; one you turn off stays off whenever it comes back.
+          Choose what Home shows. Spotify changes some of its shelves from day to day. One you turn off stays off whenever it comes back.
         </span>
         <button type="button" className="msp-act is-sm" onClick={prefs.reset} style={{ marginLeft: 'auto' }}>Reset</button>
         <button type="button" className="st-icon-btn is-sm" onClick={onClose} aria-label="Close">{Icon.close(13)}</button>
@@ -1152,7 +1067,6 @@ export function SpotifyHome({ bridge }) {
   const { data: core, error, loading, refresh, limitedUntil } = useFeed('home');
   // What you've played in Studio (listening.js): local, so always fresh.
   const { data: mine, refresh: refreshMine } = useFeed('studio');
-  const [panel, openPanel, closePanel] = usePanel();
   const prefs = useShelfPrefs();
   const [customizing, setCustomizing] = useState(false);
   const countdowns = useCountdowns();
@@ -1273,16 +1187,16 @@ export function SpotifyHome({ bridge }) {
 
   const openItem = (it) => {
     if (it.kind === 'artist' && bridge.onOpenArtist) { bridge.onOpenArtist({ name: it.name, spotifyId: it.id, image: it.image }); return; }
-    openPanel(it);
+    bridge.openRecord?.(it);
   };
   /* A countdown opens its album at once: whatever of the tracklist Spotify
      has revealed so far, or once it's out, all of it (see countdownAlbum). */
-  const openCountdown = (x, out, when) => openPanel(countdownPanelItem(x, out, when));
+  const openCountdown = (x, out, when) => bridge.openRecord?.(countdownPanelItem(x, out, when));
   const playItem = async (it, opts = {}) => {
     try {
       const rows = await loadCollection(it);
       if (rows?.length) bridge.playRows(rows, 0, { ...opts, context: it });
-    } catch { openPanel(it); }
+    } catch { bridge.openRecord?.(it); }
   };
   const today = data?.mixes?.find((x) => x.id === 'today');
 
@@ -1303,8 +1217,8 @@ export function SpotifyHome({ bridge }) {
               <button type="button" className="msp-act is-primary" disabled={!today}
                 onClick={() => today && playItem(today)}>{Icon.play(12)} Today’s Mix</button>
               <button type="button" className="msp-act" disabled={!bridge.likedCount} onClick={() => bridge.shuffleLiked?.()}
-                title={bridge.likedCount ? 'The songs you’ve hearted in Studio' : 'Heart songs in Studio to shuffle them here'}>
-                {Icon.shuffle(14)} <span className="msp-act-label">Shuffle Liked Songs</span>
+                title={bridge.likedCount ? 'Your Favorites, the songs you’ve hearted in Studio' : 'Heart songs in Studio to shuffle them here'}>
+                {Icon.shuffle(14)} <span className="msp-act-label">Shuffle Favorites</span>
               </button>
               <span className="msp-sep" />
               <button type="button" className={cx('msp-act', customizing && 'is-on')} aria-expanded={customizing} onClick={() => setCustomizing((v) => !v)}>
@@ -1355,7 +1269,7 @@ export function SpotifyHome({ bridge }) {
                 <section className="msp-sec">
                   <SectionHead title="Made in Studio" meta="From what you play here · new every day" />
                   <div className="msp-grid is-clip">
-                    {data.mixes.map((x) => <MixTile key={x.id} item={x} onOpen={openItem} onPlay={playItem} />)}
+                    {data.mixes.map((x) => <MixTile key={x.id} item={x} onOpen={openItem} onPlay={playItem} onMenu={bridge.openItemMenu} />)}
                   </div>
                 </section>
               ) : null}
@@ -1384,14 +1298,15 @@ export function SpotifyHome({ bridge }) {
                     meta={sh.fresh ? 'From Spotify · new music from everyone, not just who you follow' : sh.mixes ? 'From Spotify · Daily Mixes, Discover Weekly, Release Radar' : 'From Spotify'} />
                   <div className="msp-grid is-clip">
                     {sh.items.map((it) => (it.kind === 'artist' ? (
-                      <button key={`${it.kind}:${it.id}`} type="button" className="msp-tile is-artist" onClick={() => openItem(it)}>
+                      <button key={`${it.kind}:${it.id}`} type="button" className="msp-tile is-artist" onClick={() => openItem(it)}
+                        onContextMenu={bridge.openItemMenu ? (e) => bridge.openItemMenu(e, it) : undefined}>
                         <Art src={it.image} round />
                         <span style={{ minWidth: 0, width: '100%' }}>
                           <span className="nm" style={{ display: 'block' }}>{it.name}</span>
                           <span className="sb" style={{ display: 'block' }}>Artist</span>
                         </span>
                       </button>
-                    ) : <CoverTile key={`${it.kind}:${it.id}`} item={it} onOpen={openItem} onPlay={playItem} liked={it.kind === 'liked'} onOpenArtist={bridge.onOpenArtist} />))}
+                    ) : <CoverTile key={`${it.kind}:${it.id}`} item={it} onOpen={openItem} onPlay={playItem} liked={it.kind === 'liked'} onOpenArtist={bridge.onOpenArtist} onMenu={bridge.openItemMenu} />))}
                   </div>
                 </section>
               ))}
@@ -1401,8 +1316,8 @@ export function SpotifyHome({ bridge }) {
                 <section className="msp-sec">
                   <SectionHead title="Your Playlists" meta={data.likedCount ? `${data.likedCount.toLocaleString()} liked songs` : null} />
                   <div className="msp-grid is-clip" style={{ '--rows': 3 }}>
-                    {data.liked ? <CoverTile item={{ ...data.liked, image: null }} onOpen={openItem} onPlay={playItem} liked /> : null}
-                    {data.playlists.map((p) => <CoverTile key={p.id} item={p} onOpen={openItem} onPlay={playItem} />)}
+                    {data.liked ? <CoverTile item={{ ...data.liked, image: null }} onOpen={openItem} onPlay={playItem} liked onMenu={bridge.openItemMenu} /> : null}
+                    {data.playlists.map((p) => <CoverTile key={p.id} item={p} onOpen={openItem} onPlay={playItem} onMenu={bridge.openItemMenu} />)}
                   </div>
                 </section>
               ) : null}
@@ -1412,7 +1327,7 @@ export function SpotifyHome({ bridge }) {
                 <section className="msp-sec">
                   <SectionHead title="Albums in Your Library" meta="Most recently played first" />
                   <div className="msp-grid is-clip" style={{ '--rows': 2 }}>
-                    {data.savedAlbums.map((a) => <CoverTile key={a.id} item={a} onOpen={openItem} onPlay={playItem} onOpenArtist={bridge.onOpenArtist} />)}
+                    {data.savedAlbums.map((a) => <CoverTile key={a.id} item={a} onOpen={openItem} onPlay={playItem} onOpenArtist={bridge.onOpenArtist} onMenu={bridge.openItemMenu} />)}
                   </div>
                 </section>
               ) : null}
@@ -1448,7 +1363,6 @@ export function SpotifyHome({ bridge }) {
           ) : null}
         </div>
       </div>
-      {panel ? <CollectionPanel item={panel} bridge={bridge} onClose={closePanel} /> : null}
     </div>
   );
 }
@@ -1465,9 +1379,10 @@ function LikedArt({ size = 44, children }) {
   );
 }
 
-function CoverTile({ item, onOpen, onPlay, liked = false, onOpenArtist }) {
+function CoverTile({ item, onOpen, onPlay, liked = false, onOpenArtist, onMenu = null }) {
   return (
-    <div className="msp-tile" role="button" tabIndex={0} onClick={() => onOpen(item)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}>
+    <div className="msp-tile" role="button" tabIndex={0} onClick={() => onOpen(item)} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item); }}
+      onContextMenu={onMenu ? (e) => onMenu(e, item) : undefined}>
       <Art src={item.image} style={liked ? { background: 'linear-gradient(135deg, rgb(var(--accent-rgb)), rgba(var(--accent-rgb),0.25))' } : null}>
         {liked ? (
           <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-ink)' }}>
@@ -1522,6 +1437,27 @@ function ReleasesSkeleton() {
 const tracksCache = new BoundedMap(80);
 
 /** A release's songs, opened under its row. */
+/* Save for a one-song release, right on its row. Until its song has been
+   fetched, whether you have it is judged by its name (the song is named for
+   the single); the song itself is fetched when you save. */
+function SingleSave({ release, item, bridge }) {
+  const [rows, setRows] = useState(() => tracksCache.get(release.albumId) || null);
+  const [fetching, setFetching] = useState(false);
+  const row = rows?.[0] || { title: release.name, artists: release.artists, album: release.name };
+  const state = fetching ? 'busy' : bridge.saveState(row);
+  const save = () => {
+    if (rows?.[0]) { bridge.saveRow(rows[0]); return; }
+    setFetching(true);
+    loadCollection(item).then((r) => {
+      tracksCache.set(release.albumId, r || []);
+      setRows(r || []);
+      setFetching(false);
+      if (r?.[0]) bridge.saveRow(r[0]);
+    }, () => setFetching(false));
+  };
+  return <span className="msp-rsave"><SaveButton state={state} onSave={save} /></span>;
+}
+
 function ReleaseTracks({ release, bridge, context }) {
   const [rows, setRows] = useState(() => tracksCache.get(release.albumId) || null);
   const [err, setErr] = useState(null);
@@ -1545,7 +1481,7 @@ function ReleaseTracks({ release, bridge, context }) {
         <button type="button" className="msp-act is-sm" disabled={!rows?.length}
           onClick={() => bridge.playRows(rows, 0, { shuffle: true, context })}>{Icon.shuffle(13)} Shuffle</button>
         {unsaved.length > 1 ? (
-          <button type="button" className="msp-act is-sm" onClick={() => unsaved.forEach((r) => bridge.saveRow(r))}>{Icon.plus(12)} Save all</button>
+          <button type="button" className="msp-act is-sm" onClick={() => unsaved.forEach((r) => bridge.saveRow(r))}>{Icon.plus(12)} Save All</button>
         ) : null}
         <span className="msp-grow" />
         {rows?.length ? <span className="msp-lhead-m">{rows.length} song{rows.length === 1 ? '' : 's'} · {Math.max(1, Math.round(total / 60000))} min</span> : null}
@@ -1678,7 +1614,7 @@ function FollowingManager({ bridge, follows, spotifyArtists, hidden, onClose }) 
             {onSpotify.map((a) => {
               const off = hiddenIds.has(a.id);
               return (
-                <FollowChip key={a.id} a={a} hidden={off} onOpen={() => open(a)} tag={off ? 'Hidden here' : null}
+                <FollowChip key={a.id} a={a} hidden={off} onOpen={() => open(a)} tag={off ? 'Hidden Here' : null}
                   action={(
                     <button type="button" className={cx('msp-chip-btn', off && 'is-on')}
                       title={off ? 'Show their releases again' : 'Leave their releases out of this page (Spotify isn’t changed)'}
@@ -1698,7 +1634,6 @@ function FollowingManager({ bridge, follows, spotifyArtists, hidden, onClose }) 
 
 export function SpotifyReleases({ bridge, countdowns = false }) {
   const { data, error, loading, refresh, limitedUntil } = useFeed('releases');
-  const [panel, openPanel, closePanel] = usePanel();
   const follows = useStudioFollows();
   const hidden = useHiddenArtists();
   const [manage, setManage] = useState(false);
@@ -1766,6 +1701,18 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
       if (rows?.length) bridge.playRows(rows, 0, { context: it });
     } catch { setOpenId(r.albumId); }
   };
+  /* A one-song release is a song, so right-click gives the song menu, once
+     its song is fetched. Opened where you clicked. */
+  const songMenu = async (e, r) => {
+    e.preventDefault();
+    const at = { clientX: e.clientX, clientY: e.clientY, preventDefault() {}, stopPropagation() {} };
+    try {
+      const rows = tracksCache.get(r.albumId) || await loadCollection(asItem(r));
+      tracksCache.set(r.albumId, rows || []);
+      const row = rows?.[0];
+      if (row) bridge.openMenu?.(at, { ...row, album: row.album || r.name, albumId: row.albumId || r.albumId });
+    } catch { /* nothing to show */ }
+  };
   const openArtist = (r, i) => {
     const names = String(r.artists || '').split(', ');
     bridge.onOpenArtist?.({ name: names[i] || names[0], spotifyId: r.artistIds?.[i] || r.artistIds?.[0] });
@@ -1804,7 +1751,7 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
             <FollowingManager bridge={bridge} follows={follows} spotifyArtists={spotifyArtists} hidden={hidden} onClose={() => setManage(false)} />
           ) : null}
 
-          {countdowns ? <MiniCountdowns onOpen={openPanel} /> : null}
+          {countdowns ? <MiniCountdowns onOpen={(it) => bridge.openRecord?.(it)} /> : null}
 
           {data && limitedUntil ? <LimitBanner until={limitedUntil} /> : null}
           {data?.partial && !(limitedUntil > Date.now()) ? <div className="msp-banner">Spotify slowed Studio down part way, so {data.artistsTotal - data.artistsChecked} artists weren’t checked this time. Refresh to fill them in.</div> : null}
@@ -1817,7 +1764,7 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
               body={filter === 'all'
                 ? `None of the artists you follow has released anything in the last ${data.windowDays} days. Follow more and their new music shows up here.`
                 : 'Try another filter.'}
-              action={filter === 'all' && !manage ? <button type="button" className="st-btn st-btn-primary" onClick={() => setManage(true)}>Follow artists</button> : null} />
+              action={filter === 'all' && !manage ? <button type="button" className="st-btn st-btn-primary" onClick={() => setManage(true)}>Follow Artists</button> : null} />
           ) : null}
 
           {groups.length ? (
@@ -1834,11 +1781,16 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
                     const isOpen = openId === r.albumId;
                     const current = (tracksCache.get(r.albumId) || []).some((x) => bridge.isCurrent(x));
                     const artists = String(r.artists || '').split(', ');
+                    /* A one-song release has nothing to open: the row plays
+                       it and saves it from where the arrow would be. */
+                    const one = r.totalTracks === 1;
+                    const activate = one ? () => play(r) : () => setOpenId(isOpen ? null : r.albumId);
                     return (
                       <React.Fragment key={r.albumId}>
-                        <div className={cx('msp-rrow', isOpen && 'is-open')} role="button" tabIndex={0} aria-expanded={isOpen}
-                          onClick={() => setOpenId(isOpen ? null : r.albumId)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') setOpenId(isOpen ? null : r.albumId); }}>
+                        <div className={cx('msp-rrow', isOpen && 'is-open')} role="button" tabIndex={0} aria-expanded={one ? undefined : isOpen}
+                          onClick={activate}
+                          onContextMenu={one ? (e) => songMenu(e, r) : (e) => bridge.openItemMenu?.(e, it)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') activate(); }}>
                           <span className="msp-rn">
                             <span className="num">{current ? <PlayingBars playing={bridge.isPlaying} /> : n}</span>
                             <button type="button" className="pl" aria-label={`Play ${r.name}`} onClick={(e) => { e.stopPropagation(); play(r); }}>{Icon.play(13)}</button>
@@ -1861,11 +1813,11 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
                             </span>
                           </span>
                           <span className="msp-dim c-type">{typeLabel(r)}</span>
-                          <span className="msp-dim c-tracks">{r.totalTracks || '—'}</span>
+                          <span className="msp-dim c-tracks">{r.totalTracks || ''}</span>
                           <span className="msp-dim c-date" title={r.releaseDate}>{releaseDay(r.releaseDate)}</span>
-                          <span className="msp-rchev" aria-hidden>{Icon.chevron(14)}</span>
+                          {one ? <SingleSave release={r} item={it} bridge={bridge} /> : <span className="msp-rchev" aria-hidden>{Icon.chevron(14)}</span>}
                         </div>
-                        {isOpen ? <ReleaseTracks release={r} bridge={bridge} context={it} /> : null}
+                        {isOpen && !one ? <ReleaseTracks release={r} bridge={bridge} context={it} /> : null}
                       </React.Fragment>
                     );
                   })}
@@ -1875,7 +1827,6 @@ export function SpotifyReleases({ bridge, countdowns = false }) {
           ) : null}
         </div>
       </div>
-      {panel ? <CollectionPanel item={panel} bridge={bridge} onClose={closePanel} /> : null}
     </div>
   );
 }

@@ -479,7 +479,7 @@ export function slskQuality(ext, bitrate) {
   if (br >= 256) return { label: '256', tier: 3 };
   if (br >= 192) return { label: '192', tier: 2 };
   if (br > 0) return { label: String(br), tier: 1 };
-  return { label: e ? e.toUpperCase() : '—', tier: 0 };
+  return { label: e ? e.toUpperCase() : '', tier: 0 };
 }
 
 function parseSlskName(filename) {
@@ -726,14 +726,14 @@ export function describeCoverage(coverage, folderCount = 0) {
   if (!total) return '';
   if (!have) return 'No files found for this release yet.';
   const from = folderCount ? ` from ${folderCount} ${folderCount === 1 ? 'folder' : 'folders'}` : '';
-  if (have === total && lossless === total) return `All ${total} tracks available in lossless${from}.`;
+  if (have === total && lossless === total) return `All ${total} songs available in lossless${from}.`;
   if (have === total) {
     const rest = total - lossless;
     return lossless
-      ? `All ${total} tracks found${from} — ${lossless} lossless, ${rest} lossy.`
-      : `All ${total} tracks found${from}, none in lossless.`;
+      ? `All ${total} songs found${from}: ${lossless} lossless, ${rest} lossy.`
+      : `All ${total} songs found${from}, none in lossless.`;
   }
-  return `${have} of ${total} tracks found${from}${lossless ? ` — ${lossless} in lossless` : ''}. ${total - have} missing from the network.`;
+  return `${have} of ${total} songs found${from}${lossless ? `, ${lossless} in lossless` : ''}. ${total - have} missing from the network.`;
 }
 
 /* ---------------------------------------------------------------------------

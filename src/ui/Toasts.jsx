@@ -400,7 +400,7 @@ const CSS = `
 `;
 
 /* A card toast: a cover, a title and artist, and buttons. Four looks
-   (Settings → Library → Link card): slim, one row over a blur of the cover;
+   (Settings → Connections → Link Card): slim, one row over a blur of the cover;
    strip, the cover flush on the left; capsule, a rounded pill; large, the
    cover across the top with labelled buttons.
    card: { style, image, round, title, explicit, sub, meta,

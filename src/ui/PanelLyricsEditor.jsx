@@ -278,8 +278,10 @@ export default function PanelLyricsEditor({
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA)$/.test(t.tagName))) return;
       if (e.code === 'Space') { e.preventDefault(); tapWithKey(); } else if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); } else if (e.key === 'ArrowLeft') { e.preventDefault(); rewind(); }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // Capture, so Space taps here before the app's shortcuts see it (they
+    // skip a key already handled) and doesn't also pause the song.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [mode, persist, realCount, rewind, saving, tapWithKey, undo]);
 
   /* Keep the line to tap in view, without yanking the list while it's on

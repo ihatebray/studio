@@ -242,6 +242,11 @@ export default function App() {
   const [spotifyImportOpen, setSpotifyImportOpen] = useState(false);
   const [queue, setQueue] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
+  /* The playlist, album or mix the queue was started from, when it was one
+     from My Spotify or search ({ item, ids }), so the bar can link back to
+     it. Only the songs that came with it count (ids): one added later, or
+     a request, isn't from there. */
+  const [playSource, setPlaySource] = useState(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   /* The playback position lives in playbackClock.js, not in this
@@ -488,7 +493,7 @@ export default function App() {
     lastNowPlayingToastId.current = track.id;
     const who = track.artist ? ` — ${track.artist}` : '';
     pushToast({
-      message: `▶  ${track.title || 'Unknown track'}${who}`,
+      message: `▶  ${track.title || 'Unknown song'}${who}`,
       kind: 'info',
       dedupeKey: 'now-playing',
       durationMs: 4000,
@@ -1375,6 +1380,7 @@ export default function App() {
       if (library.length > 0) {
         const sorted = sortByTitle(library);
         const q = shuffleOn ? shuffleArray(sorted) : sorted;
+        setPlaySource(null);
         setQueue(q);
         setCurrentIndex(0);
       }
@@ -1573,8 +1579,12 @@ export default function App() {
    * shuffled after it (matching the shuffle-toggle behavior) — so playing a new
    * track always starts a fresh queue from that track instead of dropping you
    * into the middle of the old shuffled order.
+   *
+   * `from` is where the list came from (a My Spotify playlist, album or mix),
+   * for the bar's link back to it. Picking a song in the queue itself passes
+   * the queue back and keeps it; any other list replaces it.
    */
-  const playTrack = (track, sortedList, context = 'list') => {
+  const playTrack = (track, sortedList, context = 'list', from = null) => {
     let q;
     let idx = 0;
     if (context === 'single') {
@@ -1589,6 +1599,8 @@ export default function App() {
       }
     }
     const kept = keepRequests(q, idx);
+    if (from) setPlaySource({ item: from, ids: new Set(q.map((t) => t.id)) });
+    else if (sortedList !== queue) setPlaySource(null);
     setQueue(kept.q);
     setCurrentIndex(kept.idx);
     if (!hasEverPlayed) setHasEverPlayed(true);
@@ -1680,15 +1692,33 @@ export default function App() {
   }, [currentIndex]);
 
   /** Take one song out of the queue. Never the one playing: the queue
-   *  menu only offers it for what's up next. */
+   *  menu only offers it for what's up next. Returns the song and how far
+   *  after the one playing it was, for Undo. */
   const removeFromQueue = useCallback((index) => {
-    if (index === currentIndex) return;
+    if (index === currentIndex) return null;
+    const track = queueRef.current[index];
+    if (!track) return null;
     setQueue((prev) => {
       if (index < 0 || index >= prev.length) return prev;
       return prev.filter((_, i) => i !== index);
     });
     if (index < currentIndex) setCurrentIndex((i) => i - 1);
+    return { track, after: index - currentIndex };
   }, [currentIndex]);
+
+  /** Undo for removeFromQueue: the song goes back the same distance after
+   *  whatever is playing now. */
+  const currentIndexRef = useRef(currentIndex);
+  currentIndexRef.current = currentIndex;
+  const restoreToQueue = useCallback((track, after) => {
+    if (!track) return;
+    const cur = currentIndexRef.current;
+    if (cur < 0) { addToQueue([track]); return; }
+    setQueue((prev) => {
+      const at = Math.min(prev.length, Math.max(cur + 1, cur + after));
+      return [...prev.slice(0, at), track, ...prev.slice(at)];
+    });
+  }, [addToQueue]);
 
   /** Empty what's up next. The song playing and the ones before it stay,
    *  so Previous still works. Returns what was taken out, for Undo. */
@@ -1849,7 +1879,7 @@ export default function App() {
     const cachedRemote = studioUrl ? '' : discordArtworkCacheRef.current.get(cacheKey);
     const coverArtUrl = localCoverUrl || cachedImgur || cachedRemote || '';
     const payload = {
-      title: track.title || 'Unknown track',
+      title: track.title || 'Unknown song',
       artist: track.artist || '',
       album: track.album || '',
       showAlbum: discordPresenceDetail === 'full',
@@ -2015,6 +2045,7 @@ export default function App() {
       handoffArmedRef.current = false;
       preloadedKeyRef.current = null;
       resetCrossfadeGains();
+      setPlaySource(null);
       setQueue([]);
       setCurrentIndex(-1);
       /* The in-memory mirror has to go too, or Stats keeps rendering the
@@ -2090,8 +2121,8 @@ export default function App() {
     // offered when we actually captured the rows and the add API exists.
     const canUndo = removedTracks.length > 0 && typeof api?.addLibraryTracks === 'function';
     const label = removedTracks.length === 1
-      ? `Removed “${removedTracks[0].title || 'track'}” from library`
-      : `Removed ${ids.size} tracks from library`;
+      ? `Removed “${removedTracks[0].title || 'song'}” from your library.`
+      : `Removed ${ids.size} songs from your library.`;
     pushToast({
       message: label,
       kind: 'info',
@@ -2102,7 +2133,7 @@ export default function App() {
           try {
             await api.addLibraryTracks(removedTracks);
             await reloadLibrary();
-            pushToast({ message: removedTracks.length === 1 ? 'Track restored' : `${removedTracks.length} tracks restored`, kind: 'success' });
+            pushToast({ message: removedTracks.length === 1 ? 'Song restored.' : `${removedTracks.length} songs restored.`, kind: 'success' });
           } catch (e) {
             pushToast({ message: `Couldn’t undo: ${e?.message || e}`, kind: 'error' });
           }
@@ -2158,7 +2189,7 @@ export default function App() {
     const api = window.electronAPI;
     if (!api) return { ok: false, error: 'Not running in Electron' };
     const ids = (trackIds || []).map(String).filter(Boolean);
-    if (ids.length === 0) return { ok: false, error: 'No tracks to update' };
+    if (ids.length === 0) return { ok: false, error: 'No songs to update.' };
     let r;
     try {
       if (typeof api.updateLibraryAlbum === 'function') {
@@ -2762,7 +2793,7 @@ export default function App() {
           {' '}
           Close this tab and use the
           {' '}
-          <strong style={{ color: '#fff' }}>studio desktop window</strong>
+          <strong style={{ color: '#fff' }}>Studio desktop window</strong>
           {' '}
           that appears when you run
           {' '}
@@ -2837,10 +2868,12 @@ export default function App() {
         onSetDiscordHideWhenPaused={setDiscordHideWhenPaused}
         queue={queue}
         queueIndex={currentIndex}
+        playSource={playSource}
         /* Already existed and was never wired to anything — the queue panel
            had no way to ask for a move until now. */
         onReorderQueue={reorderQueue}
         onRemoveFromQueue={removeFromQueue}
+        onRestoreToQueue={restoreToQueue}
         onClearQueue={clearQueue}
         imgbbApiKey={imgbbApiKey}
         onSetImgbbApiKey={setImgbbApiKey}
@@ -2868,7 +2901,7 @@ export default function App() {
       {/* What's new: shown once after each update. */}
       {whatsNewOpen && whatsNewData ? (
         <Changelog
-          title="What's new"
+          title="What’s new"
           current={whatsNewData.version}
           versions={whatsNewData.versions}
           onClose={dismissWhatsNew}

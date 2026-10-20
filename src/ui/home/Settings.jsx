@@ -295,7 +295,7 @@ export function SpotifyAccountPanel() {
   const signIn = async () => {
     setErr(''); setSteps(null); setBusy(true);
     const r = await a.spotifyPartnerSignIn().catch((e) => ({ ok: false, error: String(e) }));
-    if (!r?.ok) { setBusy(false); setErr(r?.error || 'Could not start sign-in.'); }
+    if (!r?.ok) { setBusy(false); setErr(r?.error || 'Couldn’t start sign-in.'); }
   };
   const signOut = async () => { await a.spotifyPartnerSignOut(); setSteps(null); };
   const test = async () => {
@@ -312,8 +312,8 @@ export function SpotifyAccountPanel() {
           <h2>Spotify Account</h2>
           <p>
             Plays Spotify songs in Studio with Premium and powers My Spotify, search and artist
-            pages on any account. Saving songs to Studio doesn&apos;t change your Spotify library.
-            This uses Spotify&apos;s unofficial web player connection, which can change without notice.
+            pages on any account. Saving songs to Studio doesn’t change your Spotify library.
+            This uses Spotify’s unofficial web player connection, which can change without notice.
           </p>
         </div>
         {st ? (
@@ -381,7 +381,7 @@ function SpotifyPlaybackCheck({ needsReauth, onReauth }) {
       if (ev.event === 'status') { setSnap(ev); return; }
       if (['loading', 'playing', 'paused', 'ended', 'stopped', 'unavailable'].includes(ev.event)) {
         setPb((p) => ({ ...p, id: ev.id, state: ev.event, positionMs: ev.positionMs ?? p.positionMs }));
-        if (ev.event === 'unavailable') setNote('Spotify says this track can’t be played on this account.');
+        if (ev.event === 'unavailable') setNote('Spotify says this song can’t be played on this account.');
       } else if (ev.event === 'position' || ev.event === 'seeked') {
         setPb((p) => ({ ...p, id: ev.id, positionMs: ev.positionMs }));
       } else if (ev.event === 'error') {
@@ -428,7 +428,7 @@ function SpotifyPlaybackCheck({ needsReauth, onReauth }) {
           <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-faint)' }}>
             Your sign-in is from before playback existed. Sign in once more to allow it.
           </span>
-          <button type="button" className="st-btn st-btn-primary" onClick={onReauth}>Sign in again</button>
+          <button type="button" className="st-btn st-btn-primary" onClick={onReauth}>Sign In Again</button>
         </div>
       ) : null}
 
@@ -445,8 +445,8 @@ function SpotifyPlaybackCheck({ needsReauth, onReauth }) {
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <input className="st-input" style={{ flex: 1, minWidth: 0 }} value={link}
               onChange={(e) => setLink(e.target.value)}
-              placeholder="Paste a Spotify track link to test playback"
-              aria-label="Spotify track link" spellCheck={false} />
+              placeholder="Paste a Spotify song link to test playback"
+              aria-label="Spotify song link" spellCheck={false} />
             <button type="button" className="st-btn st-btn-primary" disabled={!trackId}
               onClick={() => act(() => a.spotifyPlayerLoad(trackId, { play: true }))}>Play</button>
             <button type="button" className="st-btn st-btn-outline" disabled={pb.state !== 'playing' && pb.state !== 'paused'}

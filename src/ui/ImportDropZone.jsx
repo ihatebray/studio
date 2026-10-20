@@ -152,7 +152,7 @@ export function DropOverlay({ active, accent = '150, 150, 150', importing = fals
             {importing ? 'Importing…' : 'Drop to import'}
           </div>
           <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)', marginTop: 5 }}>
-            {importing ? 'Reading tags and artwork' : 'Audio files or whole folders'}
+            {importing ? 'Reading tags and cover art' : 'Audio files or whole folders'}
           </div>
         </div>
       </div>
