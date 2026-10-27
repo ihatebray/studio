@@ -659,6 +659,8 @@ function searchViaArgs(args, ytDlp, source = 'youtube') {
   });
 }
 
+const DOWNLOADED_AUDIO = new Set(['.opus', '.m4a', '.ogg', '.webm', '.aac', '.mp3', '.flac', '.wav']);
+
 /**
  * Download a specific YouTube video by ID, extract audio, save to disk.
  *
@@ -672,9 +674,9 @@ function downloadById(videoId, { ytDlp, ffmpeg, outDir, stamp, onLog, cookiesFro
     const outTemplate = path.join(outDir, `yt-import-${stamp}.%(ext)s`);
     const args = [
       '--no-playlist',
+      // Audio only, kept as YouTube sends it (Opus, sometimes AAC). Turning
+      // it into MP3 decoded and re-encoded it, losing quality for nothing.
       '-x',
-      '--audio-format', 'mp3',
-      '--audio-quality', '0',
       // Explicit audio-only selection — never falls back to muxed video.
       '-f', 'bestaudio/best',
       // YouTube serves audio as DASH fragments; pulling 8 at once is the
@@ -717,13 +719,13 @@ function downloadById(videoId, { ytDlp, ffmpeg, outDir, stamp, onLog, cookiesFro
         reject(err);
         return;
       }
-      const expected = path.join(outDir, `yt-import-${stamp}.mp3`);
-      if (fs.existsSync(expected)) { resolve(expected); return; }
+      // The extension is whatever the audio came as; leftovers (a thumbnail,
+      // a .part) are skipped.
       const candidates = fs.readdirSync(outDir)
-        .filter((f) => f.startsWith(`yt-import-${stamp}`) && f.endsWith('.mp3'))
+        .filter((f) => f.startsWith(`yt-import-${stamp}.`) && DOWNLOADED_AUDIO.has(path.extname(f).toLowerCase()))
         .map((f) => path.join(outDir, f));
       if (candidates.length === 0) {
-        reject(new Error('yt-dlp finished but no mp3 output was found.'));
+        reject(new Error('yt-dlp finished but no audio file was found.'));
         return;
       }
       candidates.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);

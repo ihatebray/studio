@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseLRC } from '../lib/mediaUtils.js';
+import { spotifyIdOf } from '../lib/spotifyMediaElement.js';
 
 /* =========================================================================
  *  PanelLyricsEditor — add, edit and time lyrics (side panel and fullscreen)
@@ -255,6 +256,7 @@ export default function PanelLyricsEditor({
       await api.saveLyrics({
         title: track.title || '',
         artist: track.artist || '',
+        spotifyId: spotifyIdOf(track) || null,
         syncedLyrics: lrcStr,
         plainLyrics: plainStr,
       });

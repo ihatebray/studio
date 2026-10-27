@@ -20,6 +20,10 @@
 //!   {"cmd":"seek","positionMs":12345}
 //!   {"cmd":"volume","value":0.8}              0.0 – 1.0
 //!   {"cmd":"boost","value":2.0}               1.0 – 16.0, gain past full volume (limited)
+//!   {"cmd":"leveling","on":true,"pregainDb":0}
+//!                                             Volume Normalization: loud songs turned down to
+//!                                             Spotify's level plus pregain (from the next load)
+//!   {"cmd":"eq","gains":[0,…],"headroomDb":-3}  the equalizer's ten bands; no gains: off
 //!   {"cmd":"search","req":1,"q":"…"}          catalogue search (search.rs)
 //!   {"cmd":"album","req":2,"id":"…"}          an album's tracklist
 //!   {"cmd":"artist","req":3,"id":"…"}         an artist's releases and top songs
@@ -30,6 +34,7 @@
 //!   {"cmd":"playlist","req":5,"id":"…","all":false}  a playlist's songs (all: every one)
 //!   {"cmd":"liked","req":6,"all":false}       Liked Songs (all: every one)
 //!   {"cmd":"tracks","req":7,"ids":["…"]}      song details
+//!   {"cmd":"lyrics","req":10,"id":"…"}        Spotify's lyrics for a song (lyrics.rs), null if none
 //!   {"cmd":"quit"}
 //!
 //! Events (stdout):
@@ -58,14 +63,17 @@ use librespot_core::cache::Cache;
 use librespot_core::spclient::RequestStrategy;
 use librespot_core::{Session, SessionConfig, SpotifyUri};
 use librespot_playback::audio_backend::Sink;
-use librespot_playback::config::{Bitrate, PlayerConfig};
+use librespot_playback::config::{Bitrate, NormalisationMethod, NormalisationType, PlayerConfig};
 use librespot_playback::mixer::NoOpVolume;
 use librespot_playback::player::{Player, PlayerEvent};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+mod eq;
 mod library;
+mod lyrics;
+mod mixer;
 mod pathfinder;
 mod output;
 mod search;
@@ -110,6 +118,17 @@ enum Command {
     Seek { #[serde(rename = "positionMs")] position_ms: u32 },
     Volume { value: f64 },
     Boost { value: f64 },
+    Leveling {
+        on: bool,
+        #[serde(default, rename = "pregainDb")]
+        pregain_db: f64,
+    },
+    Eq {
+        #[serde(default)]
+        gains: Vec<f64>,
+        #[serde(default, rename = "headroomDb")]
+        headroom_db: f64,
+    },
     /// Answered with a "search" event carrying the same `req`, from a task of
     /// its own so playback commands aren't held up behind it.
     Search { req: u64, q: String },
@@ -135,6 +154,7 @@ enum Command {
     Playlist { req: u64, id: String, #[serde(default)] all: bool },
     Liked { req: u64, #[serde(default)] all: bool },
     Tracks { req: u64, ids: Vec<String> },
+    Lyrics { req: u64, id: String },
     Quit,
 }
 
@@ -150,6 +170,8 @@ struct Engine {
     session: Session,
     player: Arc<Player>,
     cue: Cue,
+    /// The normalization pregain it was made with, or None for off.
+    leveling: Option<f64>,
 }
 
 /// librespot reports why a load failed only through `log`. This prints its
@@ -282,12 +304,16 @@ async fn main() {
     // stdout carries the protocol only; everything human goes to stderr.
     let cache_dir = std::env::args().nth(1).map(PathBuf::from);
     let send = emit;
+    // Windows: the helper's volume mixer entry follows Studio's (mixer.rs).
+    mixer::start();
     send(json!({ "event": "ready", "version": env!("CARGO_PKG_VERSION") }));
 
     let mut engine: Option<Engine> = None;
     // Kept across re-sign-ins, so a new engine starts at the current volume.
     let mut volume: f32 = 1.0;
     let mut boost: f32 = 1.0;
+    let mut leveling: Option<f64> = None;
+    let mut equalizer: Option<eq::Settings> = None;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let (stale_tx, mut stale_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let _ = STALE.set(stale_tx);
@@ -324,6 +350,17 @@ async fn main() {
             }
         };
 
+        // librespot fixes normalization when the player is made, so a change
+        // takes a new player. Made here, at the next song, rather than
+        // cutting off the one playing.
+        if matches!(cmd, Command::Load { .. }) && engine.as_ref().is_some_and(|e| e.leveling != leveling) {
+            if let Some(Engine { session, player, cue, .. }) = engine.take() {
+                cue.clear(None);
+                drop(player);
+                engine = Some(start_player(session, volume, boost, leveling, equalizer.clone()));
+            }
+        }
+
         match cmd {
             Command::Quit => break,
             Command::Auth { token, prefer_cached } => {
@@ -334,7 +371,7 @@ async fn main() {
                 }
                 match connect(cache_dir.clone(), token, prefer_cached).await {
                     Ok((session, account)) => {
-                        let e = start_player(session.clone(), volume, boost);
+                        let e = start_player(session.clone(), volume, boost, leveling, equalizer.clone());
                         send(json!({
                             "event": "connected",
                             "user": session.username(),
@@ -360,13 +397,23 @@ async fn main() {
                     e.cue.set_boost(boost);
                 }
             }
+            Command::Leveling { on, pregain_db } => {
+                leveling = on.then(|| if pregain_db.is_finite() { pregain_db.clamp(-20.0, 10.0) } else { 0.0 });
+            }
+            Command::Eq { gains, headroom_db } => {
+                equalizer = eq::Settings::new(&gains, headroom_db);
+                if let Some(e) = engine.as_ref() {
+                    e.cue.set_eq(equalizer.clone());
+                }
+            }
             other => {
                 let Some(e) = engine.as_ref() else {
                     // A request gets its own reply; the player's error event is for playback.
                     match &other {
                         Command::Search { req, .. } | Command::Album { req, .. } | Command::Artist { req, .. }
                         | Command::Releases { req, .. } | Command::Playlist { req, .. } | Command::Liked { req, .. } | Command::Tracks { req, .. }
-                        | Command::Like { req, .. } | Command::Artists { req, .. } | Command::Discography { req, .. } | Command::Pathfinder { req, .. } => {
+                        | Command::Like { req, .. } | Command::Artists { req, .. } | Command::Discography { req, .. } | Command::Pathfinder { req, .. }
+                        | Command::Lyrics { req, .. } => {
                             send(json!({ "event": "answer", "req": req, "ok": false, "error": "not signed in" }));
                         }
                         _ => send(json!({ "event": "error", "message": "not signed in" })),
@@ -402,6 +449,7 @@ async fn main() {
                     Command::Playlist { req, id, all } => answer(req, e.session.clone(), move |s| async move { library::playlist(&s, &id, all).await }),
                     Command::Liked { req, all } => answer(req, e.session.clone(), move |s| async move { library::liked(&s, all).await }),
                     Command::Tracks { req, ids } => answer(req, e.session.clone(), move |s| async move { library::tracks(&s, &ids).await }),
+                    Command::Lyrics { req, id } => answer(req, e.session.clone(), move |s| async move { lyrics::lyrics(&s, &id).await }),
                     Command::Play => e.player.play(),
                     Command::Pause => e.player.pause(),
                     Command::Stop => {
@@ -412,7 +460,9 @@ async fn main() {
                         e.cue.clear(None);
                         e.player.seek(position_ms);
                     }
-                    Command::Auth { .. } | Command::Volume { .. } | Command::Boost { .. } | Command::Quit => unreachable!(),
+                    Command::Auth { .. } | Command::Volume { .. } | Command::Boost { .. } | Command::Leveling { .. } | Command::Eq { .. } | Command::Quit => {
+                        unreachable!()
+                    }
                 }
             }
         }
@@ -538,11 +588,19 @@ async fn session_with(cache: Option<Cache>, credentials: Credentials) -> Result<
     Ok(session)
 }
 
-fn start_player(session: Session, volume: f32, boost: f32) -> Engine {
+fn start_player(session: Session, volume: f32, boost: f32, leveling: Option<f64>, equalizer: Option<eq::Settings>) -> Engine {
     let config = PlayerConfig {
         bitrate: Bitrate::Bitrate320,
         gapless: true,
-        normalisation: false,
+        // Volume Normalization: each song's own loudness, from Spotify's
+        // data in the file, brought down to Spotify's level for the chosen
+        // setting (Normal -14 LUFS is pregain 0, Loud +3, Quiet -9), never
+        // past its peak. Basic only ever turns a song down, so quiet songs
+        // stay as quiet as they were mastered.
+        normalisation: leveling.is_some(),
+        normalisation_type: NormalisationType::Track,
+        normalisation_method: NormalisationMethod::Basic,
+        normalisation_pregain_db: leveling.unwrap_or(0.0),
         position_update_interval: Some(Duration::from_millis(500)),
         ..Default::default()
     };
@@ -551,6 +609,7 @@ fn start_player(session: Session, volume: f32, boost: f32) -> Engine {
     // so librespot's own volume stage is a no-op.
     let cue = Cue::new(volume);
     cue.set_boost(boost);
+    cue.set_eq(equalizer);
     let sink_cue = cue.clone();
     // librespot asks the metadata service up to ten times, back to back, when
     // it fails. When the failure is Spotify's servers being overloaded (503),
@@ -606,7 +665,17 @@ fn start_player(session: Session, volume: f32, boost: f32) -> Engine {
                 PlayerEvent::PositionChanged { .. } | PlayerEvent::PositionCorrection { .. } => event_cue.position(),
                 _ => {}
             }
-            if let Some(v) = translate(ev) {
+            if let Some(mut v) = translate(ev) {
+                // librespot reports the decoder's position, which runs ahead of
+                // the speakers by what's queued for the device: report what's
+                // heard, so the progress bar and synced lyrics line up with it.
+                if let Some(p) = v.get("positionMs").and_then(Value::as_u64) {
+                    v["positionMs"] = json!(p.saturating_sub(event_cue.output_lag_ms()));
+                    // When it was true, on the wall clock Studio shares: a
+                    // report that waits behind other messages on its way to
+                    // the window is aged forward there instead of read as now.
+                    v["atMs"] = json!(unix_ms());
+                }
                 // A metadata server that keeps failing may be the bad one:
                 // the next request resolves a fresh one.
                 if v["transient"] == true {
@@ -617,7 +686,15 @@ fn start_player(session: Session, volume: f32, boost: f32) -> Engine {
         }
     });
 
-    Engine { session, player, cue }
+    Engine { session, player, cue, leveling }
+}
+
+/// Milliseconds since the Unix epoch, for stamping position reports.
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn translate(ev: PlayerEvent) -> Option<Value> {

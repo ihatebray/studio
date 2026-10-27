@@ -8,6 +8,74 @@
 
 export const CHANGELOG = [
   {
+    version: '0.1.1',
+    date: '2026-10-23',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Volume Normalization', text: 'Songs mastered much louder than the rest are turned down to match, for Spotify songs and your own files.', sub: [
+            'Quiet songs are left as they are.',
+            'Choose Quiet, Normal or Loud. Normal matches Spotify and is on by default.',
+            'Find it in Settings → Audio.',
+          ] },
+          { lead: 'Equalizer', text: 'Ten bands with presets, for local files and Spotify songs alike.', sub: [
+            'Raising a band lowers everything else a little, so nothing distorts.',
+            'Find it in Settings → Audio.',
+          ] },
+          { lead: 'Spotify Lyrics', text: 'Lyrics now come from Spotify first when you’re signed in.', sub: [
+            'Synced to the exact version playing, so clean and explicit songs each get the right words.',
+            'The next song’s lyrics are fetched ahead, so they show as it starts.',
+          ] },
+          { lead: 'Playlist View', text: 'Your playlists open in the same pop-out as albums, with a design of their own.', sub: [
+            'See how long a playlist runs, who’s mostly on it and the album each song is from.',
+            'The song playing sits along the bottom with its controls and volume.',
+            'Edit Playlist works right there: rename it, change its cover, drag songs into a new order, remove songs or delete the playlist.',
+            'Playlists from Spotify, Liked Songs and mixes get the same look.',
+            'Choose Dark or Immerse at the top, and whether Immerse takes its colors from the song playing or the playlist’s cover.',
+          ] },
+          { lead: 'Scroll for Volume', text: 'Scroll over the volume slider to change it. Steps get smaller near the bottom.' },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Volume', text: 'The middle of the volume slider is a little quieter. Full volume is the same.' },
+          { lead: 'Spotify Sound', text: 'Spotify songs are converted to your sound card’s rate with a higher quality resampler, so the highs come through cleaner.' },
+          { lead: 'Lyrics Browser', text: 'Redesigned to make picking the right lyrics easier.', sub: [
+            'Versions with the same words are one row, each marked Synced or Plain and Explicit or Clean.',
+            'Other songs are kept apart under Other Results.',
+            'The preview shows which lines differ from the lyrics showing now.',
+          ] },
+          { lead: 'Settings', text: 'A new Audio page holds Gapless Playback, Volume Normalization and the Equalizer.' },
+          { lead: 'Playing From', text: 'Now works wherever you play from, including your own albums and playlists.', sub: [
+            'Anywhere else it shows the album the song is on.',
+            'Show it beside the artist or on its own line, or turn it off, in Settings → Layout.',
+            'A playlist always gets its own line.',
+          ] },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed songs sometimes playing quieter than the volume slider until you moved it.',
+          'Fixed volume disappearing from the Now Playing bar when the window was narrow. It now folds into a speaker button that opens it, and scrolling over the button changes it too.',
+          'Fixed the Windows volume mixer doing nothing to Spotify songs. Studio’s entry now controls everything it plays.',
+          'Fixed WMA and Apple Lossless files importing but never playing. They’re now converted to FLAC as you import them, with nothing lost.',
+          'Fixed search showing only one artist, or none, for a word that’s also a song title.',
+          'Fixed search listing the same artist more than once, and searching an artist’s name showing only some of their albums.',
+          'Fixed search closing when you opened the album of a song you have from it.',
+          'Fixed Genius lyrics showing instead of synced lyrics that were available.',
+          'Fixed synced lyrics and the progress bar running ahead of what you hear on Spotify songs.',
+          'Fixed synced lyrics on Spotify songs sometimes falling behind or stopping, then skipping lines to catch up.',
+          'Fixed a lyrics version you picked not sticking when the song played from Spotify one time and from your file another.',
+          'Fixed the lyrics browser listing other songs among a song’s versions, and finding more when you searched than when it opened.',
+          'Fixed rows in search and in the album and playlist pop-out staying highlighted after the pointer left them, along with a few cards and buttons elsewhere that could stay lit the same way.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.0',
     date: '2026-10-20',
     sections: [

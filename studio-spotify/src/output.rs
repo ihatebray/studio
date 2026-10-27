@@ -14,11 +14,15 @@
 //!   of after the queue;
 //! * boost (gain past full volume, for quietly mastered tracks) is applied
 //!   to each packet as it is queued, through a peak limiter so the extra
-//!   gain never clips.
+//!   gain never clips;
+//! * the equalizer (eq.rs) runs on each packet as it is queued, so a
+//!   change is heard from the next packet;
+//! * Spotify's 44.1 kHz is converted to the device's own rate here, with a
+//!   proper band-limited resampler, so rodio's linear one never runs.
 //!
 //! Like the stock backend, audio goes to the sound card and nowhere else.
 
-use std::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -28,7 +32,9 @@ use librespot_playback::decoder::AudioPacket;
 use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
 use rodio::buffer::SamplesBuffer;
 use rodio::Source;
+use rubato::{FftFixedIn, Resampler};
 
+use crate::eq::{self, Equalizer};
 use crate::spectrum::{Analyser, Levels, BANDS};
 
 /// Packets queued before a write waits. This paces librespot's decoder to
@@ -68,6 +74,13 @@ pub struct Cue {
     /// Track the player is being moved to; only its announcement arms.
     expect: Arc<Mutex<Option<String>>>,
     stale: Arc<AtomicU8>,
+    /// Equalizer settings (None: off), and a count bumped on each change.
+    eq: Arc<Mutex<Option<eq::Settings>>>,
+    eq_changes: Arc<AtomicU32>,
+    /// Samples queued for the device that haven't started playing, and the
+    /// rate they play at: how far behind the decoder what you hear is.
+    queued: Arc<AtomicI64>,
+    out_rate: Arc<AtomicU32>,
     /// Band levels of the packet playing now (spectrum.rs).
     pub levels: Arc<Levels>,
 }
@@ -130,6 +143,25 @@ impl Cue {
         f32::from_bits(self.boost.load(Ordering::Relaxed))
     }
 
+    /// How far what's coming out of the speakers is behind the decoder, ms:
+    /// the audio queued for the device plus the device's own buffer. librespot
+    /// reports the decoder's position; Studio subtracts this so the position
+    /// (and the lyrics following it) is what you hear.
+    pub fn output_lag_ms(&self) -> u64 {
+        let rate = self.out_rate.load(Ordering::Relaxed);
+        if rate == 0 {
+            return 0; // no output open yet: nothing queued
+        }
+        let rate = rate as f64;
+        let queued = self.queued.load(Ordering::Relaxed).max(0) as f64 / NUM_CHANNELS as f64;
+        ((queued + DEVICE_FRAMES as f64) / rate * 1000.0) as u64
+    }
+
+    pub fn set_eq(&self, settings: Option<eq::Settings>) {
+        *self.eq.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+        self.eq_changes.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn admit(&self) -> bool {
         self.state.load(Ordering::Relaxed) == OPEN
     }
@@ -169,6 +201,73 @@ impl Limiter {
     }
 }
 
+/// 44.1 kHz to the device rate (usually 48 kHz on Windows). rodio would
+/// otherwise do it by linear interpolation, which smears the top end and
+/// folds some of it back down as distortion.
+struct Resample {
+    fft: FftFixedIn<f32>,
+    channels: usize,
+    /// Input not yet resampled, per channel.
+    pending: Vec<Vec<f32>>,
+    out: Vec<Vec<f32>>,
+    /// Lead-in frames still to drop after a reset, so audio isn't late.
+    skip: usize,
+}
+
+impl Resample {
+    /// Input frames per pass: about 23 ms at 44.1 kHz.
+    const CHUNK: usize = 1024;
+
+    fn new(from: u32, to: u32, channels: usize) -> Option<Self> {
+        if from == to || channels == 0 {
+            return None;
+        }
+        let fft = FftFixedIn::<f32>::new(from as usize, to as usize, Self::CHUNK, 2, channels).ok()?;
+        let out = fft.output_buffer_allocate(true);
+        let skip = fft.output_delay();
+        Some(Self { fft, channels, pending: vec![Vec::new(); channels], out, skip })
+    }
+
+    /// Takes interleaved input, returns whatever interleaved output is ready
+    /// (empty until a full pass of input has gathered).
+    fn push(&mut self, samples: &[f32]) -> Vec<f32> {
+        for frame in samples.chunks_exact(self.channels) {
+            for (ch, s) in self.pending.iter_mut().zip(frame) {
+                ch.push(*s);
+            }
+        }
+        let mut result = Vec::new();
+        while self.pending[0].len() >= self.fft.input_frames_next() {
+            let Ok((used, made)) = self.fft.process_into_buffer(&self.pending, &mut self.out, None) else {
+                // Can't happen with these buffer sizes; drop the input rather than stall.
+                self.reset();
+                break;
+            };
+            for ch in &mut self.pending {
+                ch.drain(..used);
+            }
+            let start = self.skip.min(made);
+            self.skip -= start;
+            result.reserve((made - start) * self.channels);
+            for i in start..made {
+                for ch in &self.out {
+                    result.push(ch[i]);
+                }
+            }
+        }
+        result
+    }
+
+    /// After a skip, seek or stop: forget the old audio.
+    fn reset(&mut self) {
+        self.fft.reset();
+        for ch in &mut self.pending {
+            ch.clear();
+        }
+        self.skip = self.fft.output_delay();
+    }
+}
+
 /// One packet in rodio's queue. It ends early when the cue moves on, and
 /// counts itself out when dropped either way.
 struct Chunk {
@@ -181,6 +280,11 @@ struct Chunk {
     /// The limiter's deepest reduction in this packet, dB.
     reduction: f32,
     levels: Arc<Levels>,
+    /// Counted in the cue's `queued` until its first sample plays (or it's
+    /// dropped unplayed).
+    queued: Arc<AtomicI64>,
+    len: i64,
+    started: bool,
 }
 
 impl Iterator for Chunk {
@@ -188,6 +292,10 @@ impl Iterator for Chunk {
     fn next(&mut self) -> Option<f32> {
         if self.generation.load(Ordering::Relaxed) != self.born {
             return None;
+        }
+        if !self.started {
+            self.started = true;
+            self.queued.fetch_sub(self.len, Ordering::Relaxed);
         }
         if let Some(b) = self.bands.take() {
             self.levels.publish_reduction(self.reduction);
@@ -215,6 +323,9 @@ impl Source for Chunk {
 impl Drop for Chunk {
     fn drop(&mut self) {
         self.live.fetch_sub(1, Ordering::Relaxed);
+        if !self.started {
+            self.queued.fetch_sub(self.len, Ordering::Relaxed);
+        }
     }
 }
 
@@ -227,6 +338,16 @@ pub struct CuedSink {
     volume: f32,
     analyser: Analyser,
     limiter: Limiter,
+    /// The device's rate, and the converter to it (None when it's 44.1 kHz).
+    rate: u32,
+    resample: Option<Resample>,
+    /// Generation the resampler's buffered audio belongs to.
+    born: u32,
+    /// Levels of input the resampler is still holding, for the next chunk.
+    held: Option<([u8; BANDS], f32)>,
+    equalizer: Equalizer,
+    /// The cue's eq_changes when the equalizer was last set.
+    eq_seen: u32,
 }
 
 impl CuedSink {
@@ -242,6 +363,11 @@ impl CuedSink {
         sink.pause();
         let volume = cue.volume();
         sink.set_volume(volume);
+        let rate = stream.config().sample_rate();
+        let resample = Resample::new(SAMPLE_RATE, rate, NUM_CHANNELS as usize);
+        let rate = if resample.is_some() { rate } else { SAMPLE_RATE };
+        let born = cue.generation.load(Ordering::Relaxed);
+        cue.out_rate.store(rate, Ordering::Relaxed);
         Ok(Self {
             sink,
             _stream: stream,
@@ -250,6 +376,13 @@ impl CuedSink {
             volume,
             analyser: Analyser::new(SAMPLE_RATE),
             limiter: Limiter::new(SAMPLE_RATE),
+            rate,
+            resample,
+            born,
+            held: None,
+            equalizer: Equalizer::new(SAMPLE_RATE, NUM_CHANNELS as usize),
+            // Never matches, so the first packet picks up the settings.
+            eq_seen: u32::MAX,
         })
     }
 
@@ -283,19 +416,48 @@ impl Sink for CuedSink {
         }
         let samples = packet.samples().map_err(|e| SinkError::OnWrite(e.to_string()))?;
         let mut samples = converter.f64_to_f32(samples);
+        let changes = self.cue.eq_changes.load(Ordering::Relaxed);
+        if changes != self.eq_seen {
+            self.eq_seen = changes;
+            self.equalizer.set(self.cue.eq.lock().unwrap_or_else(|e| e.into_inner()).as_ref());
+        }
+        self.equalizer.process(&mut samples);
         // The analyser sees the music before boost, so the visualizer
         // doesn't jump when boost changes.
         let bands = self.analyser.feed(&samples, NUM_CHANNELS as usize);
         let reduction = self.limiter.process(&mut samples, NUM_CHANNELS as usize, self.cue.boost());
+        let born = self.cue.generation.load(Ordering::Relaxed);
+        if let Some(r) = self.resample.as_mut() {
+            if born != self.born {
+                r.reset(); // what it holds is from before the skip/seek
+                self.held = None;
+            }
+            samples = r.push(&samples);
+        }
+        self.born = born;
+        let (bands, reduction) = match self.held.take() {
+            // Keep the deepest reduction of everything that goes into this chunk.
+            Some((_, held)) => (bands, reduction.min(held)),
+            None => (bands, reduction),
+        };
+        if samples.is_empty() {
+            self.held = Some((bands, reduction));
+            return Ok(());
+        }
         self.live.fetch_add(1, Ordering::Relaxed);
+        let len = samples.len() as i64;
+        self.cue.queued.fetch_add(len, Ordering::Relaxed);
         self.sink.append(Chunk {
-            samples: SamplesBuffer::new(NUM_CHANNELS as rodio::ChannelCount, SAMPLE_RATE, samples),
-            born: self.cue.generation.load(Ordering::Relaxed),
+            samples: SamplesBuffer::new(NUM_CHANNELS as rodio::ChannelCount, self.rate, samples),
+            born,
             generation: self.cue.generation.clone(),
             live: self.live.clone(),
             bands: Some(bands),
             reduction,
             levels: self.cue.levels.clone(),
+            queued: self.cue.queued.clone(),
+            len,
+            started: false,
         });
         // Pace the decoder. A paused device doesn't drain, but librespot
         // doesn't write while paused, so this can't hold a command up for
@@ -360,6 +522,7 @@ mod tests {
     fn queued_chunk_stops_at_the_next_sample_after_a_clear() {
         let cue = Cue::new(1.0);
         let live = Arc::new(AtomicUsize::new(1));
+        cue.queued.fetch_add(8, Ordering::Relaxed);
         let mut chunk = Chunk {
             samples: SamplesBuffer::new(2, 44100, vec![0.5f32; 8]),
             born: cue.generation.load(Ordering::Relaxed),
@@ -368,15 +531,76 @@ mod tests {
             bands: Some([7; BANDS]),
             reduction: -3.0,
             levels: cue.levels.clone(),
+            queued: cue.queued.clone(),
+            len: 8,
+            started: false,
         };
         assert!(cue.levels.take().is_none(), "nothing published before it plays");
         assert_eq!(chunk.next(), Some(0.5));
+        assert_eq!(cue.queued.load(Ordering::Relaxed), 0, "playing, so no longer queued");
         assert_eq!(cue.levels.take(), Some([7; BANDS]), "published as it starts playing");
         assert_eq!(cue.levels.reduction(), -3.0);
         cue.clear(None);
         assert_eq!(chunk.next(), None);
         drop(chunk);
         assert_eq!(live.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn resampling_keeps_a_tone_clean_and_on_time() {
+        assert!(Resample::new(44100, 44100, 2).is_none(), "nothing to do at the same rate");
+        let mut r = Resample::new(44100, 48000, 2).unwrap();
+        // 2 s of a 1 kHz tone, fed in odd-sized packets like the decoder's.
+        let input: Vec<f32> = (0..88200)
+            .flat_map(|i| {
+                let s = 0.5 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 44100.0).sin();
+                [s, s]
+            })
+            .collect();
+        let mut out = Vec::new();
+        for packet in input.chunks(2 * 937) {
+            out.extend(r.push(packet));
+        }
+        let frames = out.len() / 2;
+        // All but the last pass's worth comes out, at the new rate.
+        assert!(frames > 96000 - 1400 && frames <= 96000, "{frames}");
+        // No lead-in delay: the tone starts at the start (sin(0) = 0, then rising).
+        assert!(out[0].abs() < 0.02 && out[2] > 0.0, "{:?}", &out[..6]);
+        // Clean: every sample matches a 1 kHz sine at 48 kHz.
+        let worst = (1000..frames - 1000)
+            .map(|i| (out[2 * i] - 0.5 * (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / 48000.0).sin()).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-3, "{worst}");
+        assert_eq!(out[100], out[101], "channels stay together");
+        // After a reset the old audio is gone.
+        r.reset();
+        assert!(r.push(&[0.0; 20]).is_empty());
+    }
+
+    #[test]
+    fn output_lag_counts_audio_not_yet_playing() {
+        let cue = Cue::new(1.0);
+        cue.out_rate.store(48000, Ordering::Relaxed);
+        let base = cue.output_lag_ms(); // the device buffer alone
+        assert_eq!(base, (DEVICE_FRAMES as f64 / 48.0) as u64);
+        let live = Arc::new(AtomicUsize::new(1));
+        // Half a second queued (48000 frames x 2 channels / 2).
+        cue.queued.fetch_add(48000, Ordering::Relaxed);
+        let chunk = Chunk {
+            samples: SamplesBuffer::new(2, 48000, vec![0.0f32; 48000]),
+            born: cue.generation.load(Ordering::Relaxed),
+            generation: cue.generation.clone(),
+            live: live.clone(),
+            bands: None,
+            reduction: 0.0,
+            levels: cue.levels.clone(),
+            queued: cue.queued.clone(),
+            len: 48000,
+            started: false,
+        };
+        assert_eq!(cue.output_lag_ms(), base + 500);
+        drop(chunk); // cut before it played
+        assert_eq!(cue.output_lag_ms(), base);
     }
 
     #[test]

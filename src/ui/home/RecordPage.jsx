@@ -325,7 +325,7 @@ export default function RecordPage({
   immerse = false, // Immerse: the field is drawn behind the page (LibraryPage)
   libDetailKey,
   currentTrack, isPlaying,
-  onPlayTrack, onTogglePlay, onToggleFavorite, onRemoveFromPlaylist,
+  onPlayTrack, playFrom = null, onTogglePlay, onToggleFavorite, onRemoveFromPlaylist,
   onMovePlaylistSong = null,   // (trackId, toIndex): a playlist's songs, by drag
   canManage, openRowMenu,
   coverFor, playCountFor, showPlayCounts,
@@ -411,8 +411,8 @@ export default function RecordPage({
   const playList = queue || data.tracks;
   const order = queue || tracks;
   const playAt = (i, shuffled = false) => {
-    if (shuffled) { const sh = [...playList].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); return; }
-    onPlayTrack?.(order[i], order);
+    if (shuffled) { const sh = [...playList].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh, 'list', playFrom); return; }
+    onPlayTrack?.(order[i], order, 'list', playFrom);
   };
   /* Playing from here: Play turns into Pause (and pauses rather than
      starting over), on the page and in the sticking bar. */

@@ -910,7 +910,10 @@ export const HOME_CSS = `
           /* Color, Cover Art, Immerse and Dark mode fade into each other, at the
              same pace as the panel and the library pages beside it. */
           transition: background-color 0.6s ease; }
-        .sth-npbar-grid { position: relative; z-index: 1; height: 100%; display: grid; grid-template-columns: 282px minmax(0, 1fr) 282px; align-items: center; padding: 0 16px; gap: 16px; }
+        /* The sides are 30% of the bar each (never under 282px) and the
+           controls take the middle, as Spotify's bar does, so the song's side
+           has room for its artists and where it's playing from. */
+        .sth-npbar-grid { position: relative; z-index: 1; height: 100%; display: grid; grid-template-columns: minmax(282px, 30%) minmax(0, 1fr) minmax(282px, 30%); align-items: center; padding: 0 16px; gap: 16px; }
         .sth-npbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; transition: opacity 0.24s ease, transform 0.36s cubic-bezier(0.22,1,0.36,1); }
         /* A notification docked in the bar sits over the song info. */
         :root[data-st-toast-in-bar] .sth-npbar-left { opacity: 0; transform: translateX(-10px); pointer-events: none; }
@@ -1011,6 +1014,28 @@ export const HOME_CSS = `
         .sth-topbar.is-compact { transform: translateY(-100%); visibility: hidden; pointer-events: none; transition: transform 0.18s ease, visibility 0s linear 0.18s; }
         .sth-topbar.is-compact.is-peek { transform: none; visibility: visible; pointer-events: auto; box-shadow: 0 12px 36px rgba(0,0,0,0.45); transition: transform 0.22s cubic-bezier(0.22,1,0.36,1); }
         .sth-npbar-artist { font-size: 12.5px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* The credit line (BarCredit): whole names, "& 2 more", and the
+           source beside them when both fit. Never cut with "…": BarCredit
+           decides what goes on the line; only a single name longer than the
+           whole line wraps. */
+        .sth-credit { position: relative; text-overflow: clip; overflow: visible; }
+        .sth-credit.is-wrap { white-space: normal; overflow-wrap: anywhere; }
+        .sth-credit-link { cursor: pointer; }
+        .sth-credit-link:hover, .sth-credit-link:focus-visible { outline: none; color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+        .sth-credit-measure { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; white-space: pre; display: flex; }
+        .sth-credit-measure > * { flex: none; }
+        .sth-credit-list button { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--r-ctl, 6px); background: none; color: var(--st-text, #fff);
+          font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; white-space: nowrap; }
+        .sth-credit-list button:hover, .sth-credit-list button:focus-visible { outline: none; background: rgba(var(--st-fg-rgb, 255,255,255), 0.08); }
+        /* Or on its own line under the artist: a glyph for the kind (album,
+           playlist, artist, Songs) and the name, all one link. */
+        .sth-npbar-from { display: flex; align-items: center; gap: 5px; max-width: 100%; margin-top: 2px; padding: 0; border: 0; background: none;
+          font: inherit; font-size: 11.5px; font-weight: 500; color: var(--text-faint, rgba(255,255,255,0.45)); cursor: pointer; text-align: left; }
+        .sth-npbar-from svg { flex: none; opacity: 0.85; }
+        .sth-npbar-from span { min-width: 0; overflow-wrap: anywhere; }
+        .sth-npbar-from:hover { color: var(--text); }
+        .sth-npbar-from:hover span, .sth-npbar-from:focus-visible span { text-decoration: underline; text-underline-offset: 2px; }
+        .sth-npbar-from:focus-visible { outline: none; color: var(--text); }
         /* The line clips to its own box, so the usual focus ring (drawn
            outside the link) showed as a stray bar on its left edge. Focus
            here is the underline the link gets on hover, in full white. */
@@ -1021,7 +1046,8 @@ export const HOME_CSS = `
            it. Same size as the rest of the transport, just brighter. */
         .sth-npbar-play { width: 40px; height: 40px; border-radius: var(--r-ctl-m); background: transparent; color: #fff; }
         .sth-npbar-play:hover { background: transparent; filter: none; }
-        .sth-npbar-scrub { display: grid; grid-template-columns: 36px 420px 36px; align-items: center; gap: 10px; max-width: 100%; }
+        /* Up to 420px, shorter when the middle is narrower. */
+        .sth-npbar-scrub { display: grid; grid-template-columns: 36px minmax(160px, 420px) 36px; align-items: center; gap: 10px; width: 100%; max-width: 512px; justify-content: center; }
         @media (max-width: 1180px) { .sth-npbar-scrub { grid-template-columns: 36px minmax(120px, 1fr) 36px; width: 100%; } }
         .sth-npbar-t { font-size: 11px; color: var(--text-faint); }
         .sth-npbar-seek::before { border-radius: 2px; background: rgba(255,255,255,0.14); }
@@ -1042,17 +1068,23 @@ export const HOME_CSS = `
         .sth-npbtn.is-toggle.is-on { color: #fff; background: rgba(255,255,255,0.14); }
         .sth-npbar-title { color: #fff; }
         .sth-npbar-artist { color: rgba(255,255,255,0.6); }
+        .sth-npbar-from { color: rgba(255,255,255,0.45); }
+        .sth-npbar-from:hover, .sth-npbar-from:focus-visible { color: #fff; }
         .sth-npbar-t { color: rgba(255,255,255,0.55); }
         .sth-npbar-seek-fill { background: #fff; }
         .sth-npbtn-rule { background: rgba(255,255,255,0.16); }
         .sth-npbtn-rule { height: 20px; margin: 0 6px; background: rgba(255,255,255,0.1); }
         /* The bar's room depends on the sidebar and the window, so it reads
            its own width: past these points the song info narrows, then the
-           volume slider goes, so the play controls never slide under the
-           buttons on the right. */
+           volume folds into one speaker button that opens it in a popover,
+           so the play controls never slide under the buttons on the right
+           and volume is always in reach. */
         .sth-npbar { container: npbar / inline-size; }
         @container npbar (max-width: 1080px) { .sth-npbar-grid { grid-template-columns: minmax(150px, 220px) minmax(260px, 1fr) auto; } }
-        @container npbar (max-width: 880px) { .sth-npbar-vol { display: none !important; } }
+        @container npbar (max-width: 880px) {
+          .sth-npbar-vol .stv-inline { display: none; }
+          .sth-npbar-vol .sth-npbtn.stv-fold { display: flex; }
+        }
 
         /* Sidebar */
         .sth-side-eyebrow { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; height: 28px; margin-top: 4px; }

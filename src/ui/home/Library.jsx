@@ -4,6 +4,7 @@ import { CompactVizSlot } from '../CompactVisualizer.jsx';
 import { ExplicitBadge, PlayIcon } from '../sharedUI.jsx';
 import { MENU_SURFACE, MI, MenuItem, PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
 import { SORT_LABELS } from './constants.js';
+import { hoverStyle } from '../hover.js';
 
 /* =========================================================================
  *  Pieces
@@ -450,8 +451,7 @@ export function DetailAction({ title, onClick, children }) {
         background: 'transparent', color: 'rgba(var(--st-sub-rgb), 0.62)',
         transition: 'color 0.15s ease, background 0.15s ease',
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(var(--st-fg-rgb), 0.09)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(var(--st-fg-rgb), 0.62)'; e.currentTarget.style.background = 'transparent'; }}
+      {...hoverStyle((el) => { el.style.color = '#fff'; el.style.background = 'rgba(var(--st-fg-rgb), 0.09)'; }, (el) => { el.style.color = 'rgba(var(--st-fg-rgb), 0.62)'; el.style.background = 'transparent'; })}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
         {children}

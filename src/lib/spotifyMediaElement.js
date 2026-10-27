@@ -71,6 +71,8 @@ export function preloadStreamed(track) {
 }
 
 const TICK_MS = 250;
+/** Seconds the clock takes to ease onto a position report. */
+const EASE_S = 1;
 /* Retries after a throttled refusal, as Sonora: 2, 4, 8, 16, 30, 30 s, then
    wait for the user to press play. */
 const THROTTLE_RETRIES = 6;
@@ -86,7 +88,7 @@ export class SpotifyMediaElement extends EventTarget {
     this._duration = NaN;
     this._pos = 0;           // seconds, as of _at
     this._at = 0;            // performance.now() when _pos was sampled
-    this._floor = 0;         // never report less than this while running (see 'position')
+    this._rate = 1;          // how fast the clock runs while it eases onto a report (see 'position')
     this._running = false;   // helper says audio is actually coming out
     this._paused = true;     // what the app asked for
     this._pending = null;    // { positionMs } — load not yet sent to the helper
@@ -113,7 +115,10 @@ export class SpotifyMediaElement extends EventTarget {
 
   get currentTime() {
     if (!this._running) return this._pos;
-    const t = Math.max(this._pos + (performance.now() - this._at) / 1000, this._floor);
+    /* The easing lasts a second at most: if reports stop coming, the clock
+       goes back to running at the true rate rather than drifting. */
+    const el = (performance.now() - this._at) / 1000;
+    const t = this._pos + Math.min(el, EASE_S) * this._rate + Math.max(0, el - EASE_S);
     return Number.isFinite(this._duration) && this._duration > 0 ? Math.min(t, this._duration) : t;
   }
 
@@ -197,7 +202,7 @@ export class SpotifyMediaElement extends EventTarget {
     this._pending = null;
     this._seamless = false;
     lastLoadAt = Date.now();
-    // The helper's mixer starts at 50% and forgets on restart, so every
+    // The helper starts at full volume and forgets on restart, so every
     // fresh load carries the current volume ahead of it.
     this.api?.spotifyPlayerVolume?.(this._volume)?.catch?.(() => {});
     loadInFlight = true;
@@ -281,6 +286,10 @@ export class SpotifyMediaElement extends EventTarget {
     }
     if (!this.id || ev.id !== this.id || this._pending) return;
     const pos = typeof ev.positionMs === 'number' ? ev.positionMs / 1000 : null;
+    /* How old the report is. The helper stamps when it was true; it can sit
+       behind other messages on its way here (the main process busy with a
+       scan, say), and read as current it set the clock back by that much. */
+    const age = typeof ev.atMs === 'number' ? Math.min(2, Math.max(0, (Date.now() - ev.atMs) / 1000)) : 0;
     switch (ev.event) {
       case 'track':
         if (ev.durationMs > 0 && !(Math.abs(ev.durationMs / 1000 - this._duration) < 1)) {
@@ -296,7 +305,7 @@ export class SpotifyMediaElement extends EventTarget {
       case 'playing':
         loadInFlight = false;
         this._throttles = 0;
-        if (pos != null) this._setPos(pos);
+        if (pos != null) this._setPos(pos + age);
         this._running = true;
         this._startTick();
         if (this._paused) { this._paused = false; this._emit('play'); }
@@ -311,17 +320,26 @@ export class SpotifyMediaElement extends EventTarget {
         this._emit('timeupdate');
         return;
       case 'position':
-        /* The helper's report usually lands a little behind our running
-           estimate (it was measured before it crossed the IPC). Snapping to
-           it stepped the clock BACK a fraction of a second every half
-           second, and whenever that crossed the start of a lyric line the
-           line before lit up again for a moment: the lyrics bounced back
-           and forth. A small lag now holds the clock still until the report
-           catches up; a real jump (over a second) still goes straight in. */
+        /* Small differences between the report and the running clock are
+           eased out: the clock runs a little faster or slower (up to 30%)
+           until they meet, so the lyrics never stop or step back for one,
+           and never jump ahead either. It used to hold still whenever a
+           report came in behind, then snap forward when the next one didn't,
+           which skipped lines. A real jump (a second or more) goes straight
+           in. */
         if (pos != null) {
-          const est = this.currentTime;
-          this._setPos(pos);
-          if (this._running && pos < est && est - pos < 1) this._floor = est;
+          const heard = pos + age;
+          if (!this._running) this._setPos(heard);
+          else {
+            const est = this.currentTime;
+            const err = heard - est;
+            if (Math.abs(err) >= 1) this._setPos(heard);
+            else {
+              this._pos = est;
+              this._at = performance.now();
+              this._rate = Math.abs(err) < 0.03 ? 1 : 1 + Math.max(-0.3, Math.min(0.3, err / EASE_S));
+            }
+          }
         }
         this._emit('timeupdate');
         return;
@@ -450,7 +468,7 @@ export class SpotifyMediaElement extends EventTarget {
     }
   }
 
-  _setPos(sec) { this._pos = sec; this._at = performance.now(); this._floor = 0; }
+  _setPos(sec) { this._pos = sec; this._at = performance.now(); this._rate = 1; }
   _freeze() { this._setPos(this.currentTime); }
 
   _startTick() {

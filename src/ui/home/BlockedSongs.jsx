@@ -230,7 +230,7 @@ export function BlockedSongsManager({ list, onChange, onClose, pushToast }) {
                 else if (e.key === 'Escape' && q) { e.preventDefault(); setQ(''); }
               }} />
             {open ? (
-              <div className="stbl-pop" role="listbox">
+              <div className="stbl-pop" role="listbox" onMouseLeave={() => setSel(-1)}>
                 {results.length ? <div className="stbl-pop-h">Block</div> : null}
                 {results.map(({ entry, sub }, i) => {
                   const on = has(entry);

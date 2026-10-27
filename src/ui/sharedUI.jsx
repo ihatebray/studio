@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { hiResCover } from '../lib/coverUrl.js';
+import { hoverStyle } from './hover.js';
 
 
 
@@ -399,8 +400,7 @@ function VideoPicker({ open, meta, seed = null, accent = '150,150,150', onClose,
                 disabled={!!busyId}
                 onClick={() => pick(c)}
                 style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: 8, borderRadius: 11, border: '1px solid transparent', background: 'transparent', cursor: busyId ? 'default' : 'pointer', opacity: dim ? 0.4 : 1, transition: 'background 0.15s ease' }}
-                onMouseEnter={(e) => { if (!busyId) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                {...hoverStyle((el) => { if (!busyId) el.style.background = 'rgba(255,255,255,0.05)'; }, (el) => { el.style.background = 'transparent'; })}
               >
                 <div style={{ position: 'relative', width: 104, height: 58, borderRadius: 8, flexShrink: 0, background: c.thumbnailUrl ? `url("${c.thumbnailUrl}") center/cover` : 'rgba(255,255,255,0.08)', boxShadow: '0 0 0 1px rgba(255,255,255,0.08)' }}>
                   {dsec ? <span style={{ position: 'absolute', right: 4, bottom: 4, padding: '1px 5px', borderRadius: 4, background: 'rgba(0,0,0,0.82)', color: '#fff', fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{mmss(dsec)}</span> : null}

@@ -158,6 +158,8 @@ export default function LibraryPage({
      so the second layout is gone rather than maintained. */
   // playFromLibRows reads this so the queue matches what's on screen.
   libRowsRef.current = rows;
+  // A playlist's list names the playlist in the bar; in Songs the bar shows each song's album.
+  const rowsSource = libView?.startsWith?.('pl:') ? { kind: 'playlist', lib: true, id: libView.slice(3), name: libTitle } : null;
   const totalMs = rows.reduce((n, t) => n + (Number(t.duration) || 0) * 1000, 0);
   const acc = readableAccent(accent);
   return (
@@ -322,6 +324,10 @@ export default function LibraryPage({
              page painted in the wrong colour. */
           const deep = darkPage ? DARK.page : fixedPage ? (theme.detailColor || '70, 84, 190') : dt ? recordDeep(dt) : '10, 10, 14';
           const isPl = detailData.kind === 'playlist';
+          // Where its songs play from, for the bar's link back here.
+          const playFrom = isPl
+            ? { kind: 'playlist', lib: true, id: libDetail.key, name: detailData.title }
+            : { kind: 'album', lib: true, key: libDetail.key, name: detailData.title };
           /* The color that marks the playing song is your accent, as it is
              everywhere else: white when Accent is White, the playing song's
              color when it follows the artwork, your pick when Fixed. The
@@ -344,6 +350,7 @@ export default function LibraryPage({
               currentTrack={currentTrack}
               isPlaying={isPlaying}
               onPlayTrack={onPlayTrack}
+              playFrom={playFrom}
               onTogglePlay={onTogglePlay}
               onToggleFavorite={onToggleFavorite}
               onRemoveFromPlaylist={onRemoveFromPlaylist}
@@ -401,7 +408,7 @@ export default function LibraryPage({
               accent={acc}
               playEvents={playEvents}
               onOpen={(k) => setLibDetail({ kind: 'artist', key: k })}
-              onPlay={(a) => { if (a.tracks?.length) onPlayTrack?.(a.tracks[0], a.tracks); }}
+              onPlay={(a) => { if (a.tracks?.length) onPlayTrack?.(a.tracks[0], a.tracks, 'list', { kind: 'artist', lib: true, name: a.name }); }}
               onMenu={openArtistMenu}
               emptyNote={libFilter.trim() ? `No artists match \u201C${libFilter.trim()}\u201D.` : undefined}
             />
@@ -440,7 +447,7 @@ export default function LibraryPage({
                     {a.art ? <div className="sth-albimg" style={{ backgroundImage: coverLayers(a.art, '', 640) }} /> : null}
                     {/* Fades in over the artwork's lower right. */}
                     <span className="sth-alb-play" title={`Play ${a.name}`} aria-hidden
-                      onClick={(e) => { e.stopPropagation(); if (a.tracks?.length) onPlayTrack?.(a.tracks[0], a.tracks); }}>
+                      onClick={(e) => { e.stopPropagation(); if (a.tracks?.length) onPlayTrack?.(a.tracks[0], a.tracks, 'list', { kind: 'album', lib: true, key: a.key, name: a.name }); }}>
                       <PlayIcon size={16} />
                     </span>
                   </div>
@@ -471,8 +478,8 @@ export default function LibraryPage({
           sortValue={libRowSort}
           sortField={libSortField}
           onPickSort={pickLibRowSort}
-          onPlayAll={rows.length ? () => onPlayTrack?.(rows[0], rows) : null}
-          onShuffle={rows.length ? () => { const sh = [...rows].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); } : null}
+          onPlayAll={rows.length ? () => onPlayTrack?.(rows[0], rows, 'list', rowsSource) : null}
+          onShuffle={rows.length ? () => { const sh = [...rows].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh, 'list', rowsSource); } : null}
           onImportFiles={onImportFiles}
           onImportFolder={onImportFolder}
           importing={importing}

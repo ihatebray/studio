@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Icons from './Icons.jsx';
+import { hoverStyle, useHot } from './hover.js';
 import { formatTime, getFileFormatLabel, parseGenres, formatGenres, hasGenre } from '../lib/mediaUtils.js';
 
 /**
@@ -94,7 +95,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
   const [coverMode, setCoverMode] = useState('preview'); // 'preview' | 'url'
   const [urlInput, setUrlInput] = useState('');
   const [dragOver, setDragOver] = useState(false);
-  const [coverHover, setCoverHover] = useState(false);
+  const [coverHover, coverHoverProps] = useHot();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   // Online refetch — busy flag plus a note about what the lookup found.
@@ -370,8 +371,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
               padding: 0, flexShrink: 0,
               transition: 'background 0.15s, color 0.15s',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#fff'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; }}>
+            {...hoverStyle((el) => { el.style.background = 'rgba(255,255,255,0.08)'; el.style.color = '#fff'; }, (el) => { el.style.background = 'rgba(255,255,255,0.04)'; el.style.color = 'rgba(255,255,255,0.55)'; })}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -385,8 +385,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
           <div style={{ flexShrink: 0 }}>
             <div
               onClick={() => fileInputRef.current?.click()}
-              onMouseEnter={() => setCoverHover(true)}
-              onMouseLeave={() => setCoverHover(false)}
+              {...coverHoverProps}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
@@ -463,8 +462,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
                     fontSize: 10, fontWeight: 700, cursor: 'pointer',
                     transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16,1,0.3,1)',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#f37272'; e.currentTarget.style.borderColor = 'rgba(243,114,114,0.4)'; e.currentTarget.style.background = 'rgba(243,114,114,0.1)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}>
+                  {...hoverStyle((el) => { el.style.color = '#f37272'; el.style.borderColor = 'rgba(243,114,114,0.4)'; el.style.background = 'rgba(243,114,114,0.1)'; }, (el) => { el.style.color = 'rgba(255,255,255,0.55)'; el.style.borderColor = 'rgba(255,255,255,0.12)'; el.style.background = 'rgba(255,255,255,0.03)'; })}>
                   Remove
                 </button>
               ) : null}
@@ -726,8 +724,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
               whiteSpace: 'nowrap',
               transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
             }}
-            onMouseEnter={(e) => { if (!refetching && !saving) { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = '#fff'; } }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = refetching ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.75)'; }}>
+            {...hoverStyle((el) => { if (!refetching && !saving) { el.style.background = 'rgba(255,255,255,0.04)'; el.style.color = '#fff'; } }, (el) => { el.style.background = 'transparent'; el.style.color = refetching ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.75)'; })}>
             {refetching ? 'Looking up…' : 'Refetch'}
           </button>
           <button type="button" onClick={onClose}
@@ -738,8 +735,7 @@ function MetadataEditor({ track, onSave, onClose, accent }) {
               fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
               transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16,1,0.3,1)',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = '#fff'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}>
+            {...hoverStyle((el) => { el.style.background = 'rgba(255,255,255,0.04)'; el.style.color = '#fff'; }, (el) => { el.style.background = 'transparent'; el.style.color = 'rgba(255,255,255,0.75)'; })}>
             Cancel
           </button>
           <button type="submit" disabled={!hasChanges || saving}
@@ -792,7 +788,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
   const [coverMode, setCoverMode] = useState('preview'); // 'preview' | 'url'
   const [urlInput, setUrlInput] = useState('');
   const [dragOver, setDragOver] = useState(false);
-  const [coverHover, setCoverHover] = useState(false);
+  const [coverHover, coverHoverProps] = useHot();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -975,8 +971,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
               padding: 0, flexShrink: 0,
               transition: 'background 0.15s, color 0.15s',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#fff'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; }}>
+            {...hoverStyle((el) => { el.style.background = 'rgba(255,255,255,0.08)'; el.style.color = '#fff'; }, (el) => { el.style.background = 'rgba(255,255,255,0.04)'; el.style.color = 'rgba(255,255,255,0.55)'; })}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -989,8 +984,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
           <div style={{ flexShrink: 0 }}>
             <div
               onClick={() => fileInputRef.current?.click()}
-              onMouseEnter={() => setCoverHover(true)}
-              onMouseLeave={() => setCoverHover(false)}
+              {...coverHoverProps}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
@@ -1051,8 +1045,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
                     fontSize: 9.5, fontWeight: 600, cursor: 'pointer',
                     transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16,1,0.3,1)',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#f37272'; e.currentTarget.style.background = 'rgba(243,114,114,0.1)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; e.currentTarget.style.background = 'transparent'; }}>
+                  {...hoverStyle((el) => { el.style.color = '#f37272'; el.style.background = 'rgba(243,114,114,0.1)'; }, (el) => { el.style.color = 'rgba(255,255,255,0.5)'; el.style.background = 'transparent'; })}>
                   Remove
                 </button>
               ) : null}
@@ -1197,8 +1190,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
                       cursor: 'pointer',
                       transition: 'background 0.15s, color 0.15s',
                     }}
-                    onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
-                    onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+                    {...hoverStyle((el) => { if (!active) el.style.background = 'rgba(255,255,255,0.04)'; }, (el) => { if (!active) el.style.background = 'transparent'; })}
                   >
                     {opt.label}
                   </button>
@@ -1239,8 +1231,7 @@ function AlbumMetadataEditor({ scope, onSave, onClose, accent }) {
               fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
               transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.16,1,0.3,1)',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = '#fff'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}>
+            {...hoverStyle((el) => { el.style.background = 'rgba(255,255,255,0.04)'; el.style.color = '#fff'; }, (el) => { el.style.background = 'transparent'; el.style.color = 'rgba(255,255,255,0.75)'; })}>
             Cancel
           </button>
           <button type="submit" disabled={!hasChanges || saving}

@@ -17,6 +17,7 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore,
 } from 'react';
+import { useHot } from './hover.js';
 
 const DEFAULT_DURATION_MS = 5000;
 const MAX_VISIBLE_TOASTS = 4;
@@ -498,7 +499,7 @@ function ToastCard({ card, onButton, onDismiss }) {
 }
 
 export function ToastStack({ toasts, onDismiss }) {
-  const [hovered, setHovered] = useState(false);
+  const [hovered, hoverProps, setHovered] = useHot();
   const [heights, setHeights] = useState({});
   const { position, layout } = useToastPlacement();
   const list = toasts || [];
@@ -549,8 +550,7 @@ export function ToastStack({ toasts, onDismiss }) {
         <div
           className="st-toast-deck"
           style={{ height, pointerEvents: ordered.length ? 'auto' : 'none' }}
-          onMouseEnter={() => setHovered(true)}
-          onMouseLeave={() => setHovered(false)}
+          {...hoverProps}
         >
           {ordered.map((t, i) => (
             <ToastRow

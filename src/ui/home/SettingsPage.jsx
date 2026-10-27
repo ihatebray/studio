@@ -7,6 +7,7 @@ import { hexToRgb, PlayingBars, rgbToHex } from './common.jsx';
 import { INDICATOR_STYLES, setIndicatorStyle, useIndicatorStyle } from '../../lib/playingIndicator.js';
 import { NP_BAR_DEFAULT, THEME_DEFAULTS } from './constants.js';
 import FontSettings from './FontSettings.jsx';
+import Equalizer from './Equalizer.jsx';
 import { SetHowTo, SetLit, SetRow, SetSeg, SetToggle, SpotifyAccountPanel, StudioColorPicker } from './Settings.jsx';
 import { checkForUpdate, installUpdate, useUpdate } from '../updates.js';
 import Changelog from '../Changelog.jsx';
@@ -50,6 +51,11 @@ export default function SettingsPage({
   onSetDiscordPresenceEnabled,
   onSetImgbbApiKey,
   onSetTransitionMode,
+  normalization,
+  onSetNormalization,
+  eq,
+  eqHeadroom,
+  onSetEq,
   onSpotifyCredsSaved,
   pickAccentFixed,
   pickAccentMode,
@@ -78,13 +84,14 @@ export default function SettingsPage({
   /* Brief, Settings: Playback and Discord merged into one System page
      (a navigation change — flagged in the brief for confirmation).
      Old stored categories map onto it. */
-  const cat = setCat === 'playback' ? 'system' : setCat === 'discord' ? 'connections' : setCat;
+  const cat = setCat === 'playback' ? 'audio' : setCat === 'discord' ? 'connections' : setCat;
   const CATS = {
     colour: ['Color', 'Dark Mode, Immerse, your accent and the colors behind each part of the app.'],
     font: ['Font', 'The font used across the app. Add your own under My Fonts.'],
     layout: ['Layout', 'How pages, lists and the window are arranged.'],
     library: ['Library', 'Following artists and managing your library.'],
-    system: ['System', 'Updates and playback.'],
+    audio: ['Audio', 'Playback, volume and the equalizer.'],
+    system: ['System', 'Updates, the changelog and shortcuts.'],
     connections: ['Connections', 'The accounts and services Studio connects to, and Spotify links.'],
   };
   const indicator = useIndicatorStyle();
@@ -120,6 +127,7 @@ export default function SettingsPage({
         {navBtn('layout', 'Layout', <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>)}
         {navBtn('library', 'Library', <path d="M4 6h16M4 12h16M4 18h10" />)}
         <div className="lbl st-eyebrow">System</div>
+        {navBtn('audio', 'Audio', <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /><path d="M15.5 9a4 4 0 0 1 0 6" /><path d="M18.5 6.5a8 8 0 0 1 0 11" /></>)}
         {navBtn('system', 'System', <><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></>)}
         {navBtn('connections', 'Connections', <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>)}
       </nav>
@@ -253,6 +261,18 @@ export default function SettingsPage({
                 <ToastPositionPicker />
               </SetRow>
             </div>
+            <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Now Playing Bar</div>
+            <div className="sth-set-list">
+              <SetRow title="Playing From" note="Shows the playlist or album the song is playing from, or else the album it’s on. Click it to go there." wide={false}>
+                <SetToggle label="Playing From" on={theme.npSource !== false} onToggle={() => setThemeKey('npSource', theme.npSource === false)} />
+              </SetRow>
+              <SetRow title="Playing From Layout" note={theme.npSource === false ? 'Turn on Playing From to use this.' : 'Beside the artists when both fit, moving under them when they don’t. Or always on its own line. A playlist is always on its own line.'}>
+                <span style={{ display: 'contents', ...(theme.npSource === false ? off : null) }}>
+                  <SetSeg label="Playing From Layout" value={theme.npSourceLayout === 'line' ? 'line' : 'artist'} onPick={(v) => setThemeKey('npSourceLayout', v)}
+                    options={[['artist', 'Beside Artist'], ['line', 'Own Line']]} />
+                </span>
+              </SetRow>
+            </div>
             <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Compact mode</div>
             <div className="sth-set-list">
               <SetRow title="Compact bar visualizer" note="Fills the middle of the bar in compact mode. Holds still while paused.">
@@ -306,7 +326,12 @@ export default function SettingsPage({
           <>
             <div className="st-eyebrow sth-set-subhead">Updates</div>
             <div className="sth-set-list"><UpdatesRow /><ChangelogRow /><ShortcutsRow /></div>
-            <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Playback</div>
+          </>
+        ) : null}
+
+        {cat === 'audio' ? (
+          <>
+            <div className="st-eyebrow sth-set-subhead">Playback</div>
             <div className="sth-set-list">
               {onSetTransitionMode ? (
                 <SetRow title="Gapless playback" note="Removes the silence between songs. Great for live albums and mixes." wide={false}>
@@ -315,6 +340,35 @@ export default function SettingsPage({
                 </SetRow>
               ) : null}
             </div>
+            {onSetNormalization ? (
+              <>
+                <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Volume</div>
+                <div className="sth-set-list">
+                  <SetRow title="Volume Normalization" note="Turns down songs mastered louder than the rest, so one song isn’t much louder than the next. Quiet songs are left as they are." wide={false}>
+                    <SetToggle label="Volume Normalization" on={normalization !== 'off'}
+                      onToggle={() => onSetNormalization(normalization === 'off' ? 'normal' : 'off')} />
+                  </SetRow>
+                  <SetRow title="Volume Level" note={normalization === 'off' ? 'Turn on Volume Normalization to use this.' : 'How loud songs are brought down to. Normal matches Spotify. Quiet suits a quiet room.'}>
+                    <span style={{ display: 'contents', ...(normalization === 'off' ? off : null) }}>
+                      <SetSeg label="Volume Level" value={normalization === 'off' ? 'normal' : normalization} onPick={onSetNormalization}
+                        options={[['quiet', 'Quiet'], ['normal', 'Normal'], ['loud', 'Loud']]} />
+                    </span>
+                  </SetRow>
+                </div>
+              </>
+            ) : null}
+            {onSetEq && eq ? (
+              <>
+                <div className="st-eyebrow sth-set-subhead" style={{ marginTop: 32 }}>Equalizer</div>
+                <div className="sth-set-list">
+                  <SetRow title="Equalizer" note="Shapes the sound of local files and Spotify songs alike. Raising a band lowers everything else a little, so nothing distorts." wide={false}>
+                    <SetToggle label="Equalizer" on={eq.on} onToggle={() => onSetEq({ ...eq, on: !eq.on })} />
+                  </SetRow>
+                  <Equalizer gains={eq.gains} headroomDb={eqHeadroom} disabled={!eq.on}
+                    onChange={(gains) => onSetEq({ ...eq, gains })} />
+                </div>
+              </>
+            ) : null}
           </>
         ) : null}
 
@@ -584,7 +638,12 @@ const TOUR = [
   { cat: 'system', mark: true, title: 'System',
     points: [
       ['Updates', 'your version, update checks and the changelog'],
+    ] },
+  { cat: 'audio', mark: true, title: 'Audio',
+    points: [
       ['Gapless Playback', 'no silence between songs'],
+      ['Volume Normalization', 'loud songs turned down to match the rest'],
+      ['Equalizer', 'shape the sound of everything you play'],
     ] },
   { cat: 'connections', mark: true, title: 'Connections',
     points: [

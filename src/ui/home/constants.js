@@ -122,6 +122,8 @@ export const THEME_DEFAULTS = {
   panelColour: '32, 36, 47',
   barSurface: 'colour',     // 'colour' | 'cover'
   colourStripHover: true,   // hovering the song in the Now Playing bar opens the color strip
+  npSource: true,           // the Now Playing bar shows where the song is playing from
+  npSourceLayout: 'artist', // 'artist' (beside the artist) | 'line' (its own line under it)
 };
 
 /* Dark mode's surfaces. `page` is the app's own card colour (accentTokens

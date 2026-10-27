@@ -59,19 +59,53 @@ export function snapshot() {
 
 /** Gain past full volume (1–16), kept here so a restarted helper gets it. */
 let boost = 1;
+/** The volume last set (0–1), likewise: a new helper starts at full volume
+ *  and would play at that until the slider moved. */
+let volume = null;
+/** Volume Normalization (Settings → Audio): on at Normal (pregain 0) unless
+ *  changed there. The helper starts with it off, so it's always sent on
+ *  'ready'. */
+let leveling = { on: true, pregainDb: 0 };
+/** The equalizer ({ gains, headroomDb }), or null for off. */
+let eq = null;
 
 function write(cmd) {
   if (!proc?.stdin?.writable) return false;
   try { proc.stdin.write(`${JSON.stringify(cmd)}\n`); return true; } catch { return false; }
 }
 
+/* The helper's version, from its 'ready'. A build older than the app
+   doesn't know the newer commands (lyrics), so they aren't sent to it:
+   asking anyway only got "bad command" back, shown as a playback error, and
+   a lyrics wait that ran to its timeout. */
+const HELPER_WANTED = '0.1.1';
+let helperVersion = null;
+const versionAtLeast = (v, want) => {
+  const a = String(v || '0').split('.').map(Number); const b = want.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) { if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); }
+  return true;
+};
+export const helperIsCurrent = () => versionAtLeast(helperVersion, HELPER_WANTED);
+
 function onLine(line) {
   let ev;
   try { ev = JSON.parse(line); } catch { return; }
   switch (ev.event) {
     case 'ready':
-      // The helper starts at no boost; carry the setting into a restart.
+      helperVersion = ev.version || null;
+      if (!helperIsCurrent()) {
+        notice({
+          key: 'helper-outdated', kind: 'info', source: 'Playback',
+          title: 'The Spotify helper is out of date',
+          detail: 'Playback works, but Spotify lyrics need the newer helper. Run npm run setup:spotify in the Studio folder, then restart Studio.',
+          repeatAfterMs: 24 * 60 * 60 * 1000,
+        });
+      }
+      // The helper starts at full volume and no boost; carry both into a restart.
+      if (volume != null) write({ cmd: 'volume', value: volume });
       if (boost !== 1) write({ cmd: 'boost', value: boost });
+      write({ cmd: 'leveling', ...leveling });
+      if (eq) write({ cmd: 'eq', ...eq });
       signIn();
       return;
     case 'connected':
@@ -154,6 +188,11 @@ function onLine(line) {
       last = { id: ev.id, state: ev.event, positionMs: last.positionMs };
       broadcast(ev);
       return;
+    case 'error':
+      // A command this helper doesn't know is the app's business, not a playback error.
+      if (/^bad command/i.test(String(ev.message || ''))) { console.warn('[spotify-player]', ev.message); return; }
+      broadcast(ev);
+      return;
     default:
       broadcast(ev);
   }
@@ -203,7 +242,12 @@ function start() {
   setStatus('starting');
   const cacheDir = path.join(app.getPath('userData'), 'spotify-player');
   spawnedFrom = helperMtime();
-  proc = spawn(getSpotifyHelperPath(), [cacheDir], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  proc = spawn(getSpotifyHelperPath(), [cacheDir], {
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    // Lets the helper find Studio's entry in the Windows volume mixer and follow it.
+    env: { ...process.env, STUDIO_EXE: process.execPath },
+  });
 
   let buf = '';
   proc.stdout.on('data', (d) => {
@@ -336,6 +380,12 @@ export function helperSearch(q) {
 }
 /** `{ album, artists, albumArtUrl, tracks }`, as spotify:albumTracks returns. */
 export const helperAlbum = (id) => helperRequest({ cmd: 'album', id: String(id) });
+/** Spotify's lyrics for a song: `{ synced, lines: [{ t, words }], language,
+ *  provider }`, or null when it has none. Short timeout: a song's lyrics
+ *  shouldn't wait on it. */
+export const helperLyrics = (id) => (helperIsCurrent()
+  ? helperRequest({ cmd: 'lyrics', id: String(id) }, 6000)
+  : Promise.reject(new Error('the Spotify helper needs rebuilding for lyrics')));
 /** `{ albums, topTracks }` for an artist. */
 export const helperArtist = (id) => helperRequest({ cmd: 'artist', id: String(id) });
 /** `{ releases, artistsChecked, artistsTotal }`: the followed artists' last `days`. */
@@ -388,7 +438,22 @@ export function registerSpotifyPlayerIpc(ipcMain) {
     write({ cmd: 'boost', value: boost }); // any time; a helper not up yet gets it on 'ready'
     return { ok: true };
   });
-  ipcMain.handle('spotifyPlayer:volume', (_e, v) => command({ cmd: 'volume', value: Math.min(1, Math.max(0, Number(v) || 0)) }));
+  ipcMain.handle('spotifyPlayer:leveling', (_e, on, pregainDb = 0) => {
+    leveling = { on: !!on, pregainDb: Number.isFinite(Number(pregainDb)) ? Number(pregainDb) : 0 };
+    write({ cmd: 'leveling', ...leveling }); // from the next song; a helper not up yet gets it on 'ready'
+    return { ok: true };
+  });
+  ipcMain.handle('spotifyPlayer:eq', (_e, settings) => {
+    const gains = Array.isArray(settings?.gains) ? settings.gains.map(Number) : null;
+    eq = gains && gains.length === 10 && gains.every(Number.isFinite)
+      ? { gains, headroomDb: Number(settings.headroomDb) || 0 } : null;
+    write({ cmd: 'eq', ...(eq || { gains: [] }) }); // at once; a helper not up yet gets it on 'ready'
+    return { ok: true };
+  });
+  ipcMain.handle('spotifyPlayer:volume', (_e, v) => {
+    volume = Math.min(1, Math.max(0, Number(v) || 0));
+    return command({ cmd: 'volume', value: volume });
+  });
 
   app.on('before-quit', stopHelper);
 

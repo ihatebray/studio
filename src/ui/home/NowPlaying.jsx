@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { readableAccent } from '../../lib/coverTheme.js';
 import { HeartBurst, heartAnim, useFavBurst } from './HeartBurst.jsx';
 import { keysText } from './Shortcuts.jsx';
@@ -6,10 +7,10 @@ import { formatTime, getFileFormatLabel, parseGenres } from '../../lib/mediaUtil
 import PanelLyricsEditor from '../PanelLyricsEditor.jsx';
 import VolumeControl from '../VolumeControl.jsx';
 import { AnimatedGradientBg, FadeLayer, FadeSwap, LAYER_FADE_MS } from '../VisualEffects.jsx';
-import { ArtistLinks, PauseIcon, PlayIcon } from '../sharedUI.jsx';
+import { PauseIcon, PlayIcon } from '../sharedUI.jsx';
 import { PlainLyrics, SyncedLyrics } from '../Lyrics.jsx';
 import { NP_FULL_TABS, NP_PANEL_TABS, NP_PANEL_W } from './constants.js';
-import { EmptyState, MI, PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
+import { EmptyState, MENU_SURFACE, MI, PauseGlyph, PlayGlyph, PlayingBars } from './common.jsx';
 import { coverLayers } from '../../lib/coverUrl.js';
 import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from '../../lib/studioFollows.js';
 import { playContextFor } from '../../lib/playContext.js';
@@ -1163,11 +1164,173 @@ function Marquee({ text }) {
   );
 }
 
+/* =========================================================================
+ *  The bar's credit line: the artists, and where the song is playing from.
+ *
+ *  Nothing is cut with "…" and nothing scrolls. Instead:
+ *    - Artists are whole names. When they don't all fit, the first ones show
+ *      and "& 2 more" after them, which lists every artist (hover or click).
+ *    - The source sits beside the artists when both fit (Beside Artist, the
+ *      default) and moves to its own line under them when they don't. With
+ *      Own Line it's always under them.
+ *    - Only a single name longer than the whole line wraps.
+ *
+ *  Each name is a link drawn as text, so it lines up with the commas. The
+ *  room is the bar's song side minus the cover and the heart and +, not this
+ *  line's own width: the text column sizes to what it shows, so measuring it
+ *  would shrink it a little more each time.
+ * ========================================================================= */
+function creditNames(track) {
+  const text = String(track?.artist || '');
+  const ids = artistIdsOf(track);
+  let list = text ? text.split(', ') : [];
+  // Same rule as ArtistLinks: ids that don't line up keep the credit whole.
+  if (Array.isArray(ids) && ids.length && ids.length !== list.length) list = [text];
+  return { list, ids: Array.isArray(ids) && ids.length === list.length ? ids : [] };
+}
+
+/** Enter and Space work like a click, as on a button. */
+const linkKeys = (fn) => (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+};
+
+function BarCredit({ track, onOpenArtist, from = null, onOpenFrom = null, layout = 'artist' }) {
+  const { list, ids } = useMemo(() => creditNames(track), [track]);
+  const lineRef = useRef(null);
+  const measureRef = useRef(null);
+  const moreRef = useRef(null);
+  const fromName = from?.name && onOpenFrom ? from.name : '';
+  const [fit, setFit] = useState({ shown: list.length, beside: layout !== 'line', wrap: false });
+  const [listOpen, setListOpen] = useState(false);
+
+  useLayoutEffect(() => {
+    const line = lineRef.current; const m = measureRef.current;
+    const side = line?.closest('.sth-npbar-left');
+    if (!line || !m || !side) return undefined;
+    const compute = () => {
+      // The room: the song side, less its other parts (laid out in the row,
+      // not floating over it) and the gaps between them.
+      const kids = [...side.children].filter((k) => !/absolute|fixed/.test(getComputedStyle(k).position));
+      const mine = kids.find((k) => k.contains(line));
+      const gap = parseFloat(getComputedStyle(side).columnGap) || 0;
+      const room = side.clientWidth - kids.filter((k) => k !== mine).reduce((t, k) => t + k.offsetWidth, 0) - gap * (kids.length - 1);
+      const w = (sel) => [...m.querySelectorAll(sel)].map((x) => x.getBoundingClientRect().width);
+      const names = w('.n'); const [comma = 0] = w('.c'); const [more = 0] = w('.m'); const [dot = 0] = w('.d'); const [src = 0] = w('.s');
+      const widthOf = (k) => names.slice(0, k).reduce((t, x) => t + x, 0) + comma * Math.max(0, k - 1) + (k < names.length ? more : 0);
+      let shown = 0;
+      for (let k = names.length; k >= 1; k -= 1) { if (widthOf(k) <= room + 0.5) { shown = k; break; } }
+      const wrap = shown === 0;               // one name longer than the line: it wraps
+      if (wrap) shown = 1;
+      const beside = layout !== 'line' && !!fromName && !wrap && widthOf(shown) + dot + src <= room + 0.5;
+      setFit((f) => (f.shown === shown && f.beside === beside && f.wrap === wrap ? f : { shown, beside, wrap }));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(side);
+    return () => ro.disconnect();
+  }, [list, fromName, layout]);
+
+  const shown = Math.min(Math.max(1, fit.shown), list.length);
+  const hidden = list.slice(shown);
+  const open = (i) => onOpenArtist?.({ name: list[i], spotifyId: ids[i] || null });
+  const goFrom = (e) => { e?.stopPropagation?.(); e?.currentTarget?.blur?.(); onOpenFrom?.(); };
+
+  return (
+    <>
+      <div ref={lineRef} className={`sth-npbar-artist sth-credit${fit.wrap ? ' is-wrap' : ''}`}>
+        {list.slice(0, shown).map((nm, i) => (
+          <React.Fragment key={`${nm}:${i}`}>
+            {i ? ', ' : ''}
+            {onOpenArtist ? (
+              <span role="link" tabIndex={0} className="sth-credit-link" title={`Go to ${nm}`}
+                onClick={(e) => { e.stopPropagation(); e.currentTarget.blur(); open(i); }} onKeyDown={linkKeys(() => open(i))}>{nm}</span>
+            ) : nm}
+          </React.Fragment>
+        ))}
+        {hidden.length ? (
+          <>
+            {' & '}
+            <span ref={moreRef} role="button" tabIndex={0} className="sth-credit-link" title={hidden.join(', ')}
+              aria-haspopup="menu" aria-expanded={listOpen} aria-label={`${hidden.length} more: ${hidden.join(', ')}`}
+              onClick={(e) => { e.stopPropagation(); setListOpen((o) => !o); }} onKeyDown={linkKeys(() => setListOpen((o) => !o))}>
+              {hidden.length} more
+            </span>
+          </>
+        ) : null}
+        {fromName && fit.beside ? (
+          <>
+            {' · '}
+            <span role="link" tabIndex={0} className="sth-credit-link" title={`Go to ${fromName}`}
+              aria-label={`Playing from ${fromName}. Go to it`} onClick={goFrom} onKeyDown={linkKeys(() => onOpenFrom?.())}>{fromName}</span>
+          </>
+        ) : null}
+        {/* Measured, never seen: each name, a comma, "& 9 more", the dot and the source. */}
+        <span ref={measureRef} className="sth-credit-measure" aria-hidden>
+          {list.map((nm, i) => <span key={i} className="n">{nm}</span>)}
+          <span className="c">, </span><span className="m"> &amp; 9 more</span><span className="d"> · </span><span className="s">{fromName}</span>
+        </span>
+      </div>
+      {fromName && !fit.beside ? (
+        <button type="button" className="sth-npbar-from" title={`Go to ${fromName}`}
+          aria-label={`Playing from ${fromName}. Go to it`} onClick={goFrom} onKeyDown={(e) => e.stopPropagation()}>
+          <SourceGlyph kind={from.kind} />
+          <span>{fromName}</span>
+        </button>
+      ) : null}
+      {listOpen ? (
+        <CreditList anchor={moreRef.current} names={list} onPick={(i) => { setListOpen(false); open(i); }} onClose={() => setListOpen(false)} />
+      ) : null}
+    </>
+  );
+}
+
+/** Every artist on the song, opened from "& 2 more": a small menu above it
+ *  (the bar sits on the bottom edge). */
+function CreditList({ anchor, names, onPick, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const away = (e) => { if (!ref.current?.contains(e.target) && !anchor?.contains(e.target)) onClose(); };
+    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    document.addEventListener('pointerdown', away, true);
+    document.addEventListener('keydown', key, true);
+    window.addEventListener('resize', onClose);
+    return () => {
+      document.removeEventListener('pointerdown', away, true);
+      document.removeEventListener('keydown', key, true);
+      window.removeEventListener('resize', onClose);
+    };
+  }, [anchor, onClose]);
+  if (!anchor) return null;
+  const r = anchor.getBoundingClientRect();
+  return createPortal(
+    <div ref={ref} role="menu" aria-label="Artists" className="sth-credit-list"
+      style={{ ...MENU_SURFACE, position: 'fixed', zIndex: 9000, left: Math.max(8, r.left - 10), bottom: window.innerHeight - r.top + 8, minWidth: 180, maxWidth: 300 }}>
+      {names.map((nm, i) => (
+        <button key={`${nm}:${i}`} type="button" role="menuitem" onClick={() => onPick(i)}>{nm}</button>
+      ))}
+    </div>,
+    document.body,
+  );
+}
+
+/** The kind of place a song plays from, as an 11px glyph: an album's
+ *  record, a playlist's lines, an artist's head and shoulders. */
+function SourceGlyph({ kind }) {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {kind === 'album' ? <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="2.5" /></>
+        : kind === 'artist' ? <><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a7 7 0 0 1 16 0v1" /></>
+          : <path d="M4 6h16M4 12h16M4 18h10" />}
+    </svg>
+  );
+}
+
 export function NowPlayingBar(props) {
   return props.track ? <NowPlayingBarBody {...props} /> : null;
 }
 
-function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, onOpenArtist, from = null, onOpenFrom = null, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat, onHoverChange = null, splash = null }) {
+function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = null, onZoomCover, onCopyLink, copyBusy = false, onTogglePlay, onPrev, onNext, volume = 1, onSetVolume, gainBoost = 1, onSetGainBoost, getGainReduction = null, animatedBg = false, solidWash = null, onSeek, onFullscreen, onToggleQueue, queueOpen = false, onToggleLyrics, lyricsOpen = false, onToggleFavorite, onAddToPlaylist, onMore, onOpenArtist, from = null, fromLayout = 'artist', onOpenFrom = null, savedTrack = null, onSaveToLibrary = null, saveBusy = false, saveFailed = false, compact = false, shuffleOn = false, repeat = 'off', onToggleShuffle, onToggleRepeat, onHoverChange = null, splash = null }) {
   const currentTime = usePlaybackTime();
   /* 0.82 / 0.45, not 0.55 / 0.22. These feed AnimatedGradientBg's mid and
      wash stops; at the old values the gradient started dark before anything
@@ -1274,21 +1437,9 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
             ) : (
               <div className="sth-npbar-title" title={track.title}><Marquee text={track.title} /></div>
             )}
-            {/* The playlist, album or mix it's playing from, after the artist
-                so a long name is what gets cut off, never the artist. */}
-            {/* A mouse click doesn't leave a link here focused: nothing else
-                takes focus when the page or album view opens, so the next key
-                (Esc to close it) showed the focus style on it until you
-                clicked elsewhere. Enter and Tab still focus as usual. */}
-            <div className="sth-npbar-artist" title={from?.name ? `${track.artist} · ${from.name}` : track.artist}
-              onClickCapture={(e) => { if (e.detail) e.target.closest?.('button')?.blur(); }}>
-              <ArtistLinks names={track.artist} ids={artistIdsOf(track)} onOpen={onOpenArtist} />
-              {from?.name && onOpenFrom ? (
-                <>{' · '}<button type="button" className="st-artist-link" title={`Go to ${from.name}`}
-                  onClick={(e) => { e.stopPropagation(); onOpenFrom(); }}
-                  onKeyDown={(e) => e.stopPropagation()}>{from.name}</button></>
-              ) : null}
-            </div>
+            {/* Who it's by, and where it's playing from (Settings → Layout):
+                beside the artists when both fit, else on its own line. */}
+            <BarCredit track={track} onOpenArtist={onOpenArtist} from={from} onOpenFrom={onOpenFrom} layout={fromLayout} />
           </div>
           {/* Beside the title rather than in the right-hand cluster, which
               they crowded at full size: the heart and add-to-playlist are
@@ -1419,7 +1570,7 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
             <>
               <span aria-hidden className="sth-npbtn-rule sth-npbar-vol" />
               <div className="sth-npbar-cluster sth-npbar-vol">
-                <VolumeControl volume={volume} onSetVolume={onSetVolume} width={72}
+                <VolumeControl volume={volume} onSetVolume={onSetVolume} width={72} fold
                   boost={gainBoost} onSetBoost={onSetGainBoost} getGainReduction={getGainReduction} />
               </div>
             </>

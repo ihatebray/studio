@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   discordLookupArtwork: (query) => ipcRenderer.invoke('discord:lookupArtwork', query),
   discordResolveCoverUrl: (args) => ipcRenderer.invoke('discord:resolveCoverUrl', args),
   getMetadata: (filePath) => ipcRenderer.invoke('file:getMetadata', filePath),
+  importTrack: (filePath) => ipcRenderer.invoke('file:importTrack', filePath),
   getPlaybackUrl: (filePath) =>
     `studio-media://studio/play?path=${encodeURIComponent(filePath)}`,
   loadLibrary: () => ipcRenderer.invoke('library:load'),
@@ -159,6 +160,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   spotifyPlayerSeek: (ms) => ipcRenderer.invoke('spotifyPlayer:seek', ms),
   spotifyPlayerVolume: (v) => ipcRenderer.invoke('spotifyPlayer:volume', v),
   spotifyPlayerBoost: (v) => ipcRenderer.invoke('spotifyPlayer:boost', v),
+  spotifyPlayerLeveling: (on, pregainDb) => ipcRenderer.invoke('spotifyPlayer:leveling', on, pregainDb),
+  spotifyPlayerEq: (settings) => ipcRenderer.invoke('spotifyPlayer:eq', settings),
+  loudnessOf: (filePath) => ipcRenderer.invoke('loudness:get', filePath),
+  loudnessQueue: (paths) => ipcRenderer.invoke('loudness:queue', paths),
   onSpotifyPlayerEvent: (cb) => {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('spotifyPlayer:event', listener);

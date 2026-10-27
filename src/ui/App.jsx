@@ -21,6 +21,7 @@ import { useFileDrop, DropOverlay } from './ImportDropZone.jsx';
 import WindowControls from './WindowControls.jsx';
 import Changelog from './Changelog.jsx';
 import { changelogSince } from '../changelog.js';
+import { EQ_BANDS, EQ_Q, EQ_DEFAULT, readEq, eqHeadroomDb } from '../lib/eq.js';
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -78,22 +79,32 @@ function sortByTitle(arr) {
  * slider feel even across its whole range — genuinely quiet at the
  * bottom, ramping up gradually, and unchanged at the very top.
  *
- * We use gain = value^EXPONENT. At EXPONENT = 2.5:
+ * We use gain = value^EXPONENT. At EXPONENT = 2.8:
  *   slider 1.0  → gain 1.000  (full, unchanged — keeps the "extremely loud" top)
- *   slider 0.75 → gain 0.487
- *   slider 0.5  → gain 0.177  (much quieter than the old linear 0.5)
- *   slider 0.25 → gain 0.031
- *   slider 0.1  → gain 0.003  (a real, quiet low end)
+ *   slider 0.75 → gain 0.447  (-7 dB)
+ *   slider 0.5  → gain 0.144  (-17 dB; 2.5 gave -15 dB, which was a bit loud)
+ *   slider 0.25 → gain 0.021
+ *   slider 0.1  → gain 0.002  (a real, quiet low end)
  *   slider 0.0  → gain 0.000
  *
  * The top of the slider is intentionally untouched (1^2.5 = 1) so the
  * loud ceiling everyone likes is preserved; only the lows and mids get
  * pulled down so there's room to ramp.
  */
-const VOLUME_CURVE_EXPONENT = 2.5;
+const VOLUME_CURVE_EXPONENT = 2.8;
 function perceptualVolume(linear) {
   const v = Math.max(0, Math.min(1, Number(linear) || 0));
   return Math.pow(v, VOLUME_CURVE_EXPONENT);
+}
+
+/** Volume Normalization's levels: the loudness each brings songs down to,
+ *  in LUFS. The same three Spotify has. */
+const NORMALIZATION_LUFS = { quiet: -23, normal: -14, loud: -11 };
+/** The gain that brings a file measured at `lufs` down to `target`. Never
+ *  above 1: quiet songs are left as quiet as they were made. */
+function levelGain(lufs, target) {
+  if (!Number.isFinite(lufs) || !Number.isFinite(target)) return 1;
+  return Math.min(1, Math.pow(10, (target - lufs) / 20));
 }
 
 function mergeCoverArt(fromDb, batch) {
@@ -306,6 +317,23 @@ export default function App() {
     catch { /* ignore */ }
   }, [volume]);
 
+  /* Volume Normalization (Settings → Audio): 'off', 'quiet', 'normal' (the
+     default) or 'loud'. Spotify songs are leveled by the helper from
+     Spotify's own data (pregain 0 is Normal), local files here from their
+     measured loudness (main/loudness.js). */
+  const [normalization, setNormalization] = useState(() => {
+    try {
+      const v = window.localStorage.getItem('immerse:normalization');
+      if (v === 'off' || Object.hasOwn(NORMALIZATION_LUFS, v || '')) return v;
+      return window.localStorage.getItem('immerse:leveling') === '0' ? 'off' : 'normal';
+    } catch { return 'normal'; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem('immerse:normalization', normalization); } catch { /* ignore */ }
+    const target = NORMALIZATION_LUFS[normalization];
+    window.electronAPI?.spotifyPlayerLeveling?.(target != null, (target ?? -14) + 14)?.catch?.(() => {});
+  }, [normalization]);
+
 
   /**
    * gainBoost — multiplier applied to the audio graph's GainNode, on top
@@ -325,6 +353,18 @@ export default function App() {
    * A DynamicsCompressorNode sits after the gain stage as a safety net
    * for clipping when boost is high; see ensureAnalyser in this file.
    */
+  /* The equalizer (Settings → Audio): { on, gains } (lib/eq.js). Local
+     files run through Web Audio filters (ensureAnalyser), Spotify songs
+     through the helper's copy of them. Both get the same headroom. */
+  const [eq, setEq] = useState(() => {
+    try { return readEq(JSON.parse(window.localStorage.getItem('immerse:eq') || 'null')); } catch { return EQ_DEFAULT; }
+  });
+  const eqHeadroom = useMemo(() => eqHeadroomDb(eq.gains), [eq.gains]);
+  useEffect(() => {
+    try { window.localStorage.setItem('immerse:eq', JSON.stringify(eq)); } catch { /* ignore */ }
+    window.electronAPI?.spotifyPlayerEq?.(eq.on ? { gains: eq.gains, headroomDb: eqHeadroom } : null)?.catch?.(() => {});
+  }, [eq, eqHeadroom]);
+
   const [gainBoost, setGainBoost] = useState(() => {
     try {
       const raw = localStorage.getItem('immerse:gainBoost');
@@ -504,12 +544,62 @@ export default function App() {
   const audioRef = useRef(null);            // ALWAYS points at the active element
   const inactiveAudioRef = useRef(null);    // the standby element (preloads the next track)
   const firstElementRef = useRef(null);     // stable handle to "element A" so we can tell which crossfade gain is which
+  const localElsRef = useRef([]);           // both local elements, whichever role each has right now
   /* Saved Spotify tracks play through the studio-spotify helper. While one is
      current, audioRef points at this stand-in element (spotifyMediaElement.js)
      instead of a real <audio>, and localAudioRef remembers which real element
      to go back to. inactiveAudioRef is always a real element. */
   const spotifyElRef = useRef(null);
   const localAudioRef = useRef(null);
+
+  /* Volume Normalization for local files: each element's volume is the
+     slider's times the gain of the file it holds. */
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
+  const levelTargetRef = useRef(NORMALIZATION_LUFS[normalization]);
+  levelTargetRef.current = NORMALIZATION_LUFS[normalization]; // undefined when off
+  const levelLufsRef = useRef(new Map());   // file path → measured loudness (null: couldn't be)
+  const elFileRef = useRef(new WeakMap());  // element → the file it holds
+  const elGainRef = useRef(new WeakMap());  // element → the gain it plays at now
+  const levelFadesRef = useRef(new WeakMap());
+  const gainFor = useCallback((filePath) => levelGain(levelLufsRef.current.get(filePath), levelTargetRef.current), []);
+  const elVolume = useCallback((el) => {
+    const pv = perceptualVolume(volumeRef.current);
+    return levelTargetRef.current != null ? pv * (elGainRef.current.get(el) ?? 1) : pv;
+  }, []);
+  /** Moves an element to a new gain over a second, so it never jumps. */
+  const fadeLevel = useCallback((el, to) => {
+    clearInterval(levelFadesRef.current.get(el));
+    const from = elGainRef.current.get(el) ?? 1;
+    let step = 0;
+    const id = setInterval(() => {
+      step += 1;
+      elGainRef.current.set(el, from * Math.pow(to / from, step / 20));
+      el.volume = elVolume(el);
+      if (step >= 20) clearInterval(id);
+    }, 50);
+    levelFadesRef.current.set(el, id);
+  }, [elVolume]);
+  /** Call when an element is given a file. The file's gain is usually known
+   *  already (the library is measured in the background). If not, it's
+   *  measured now: an element not playing yet takes it at once, the playing
+   *  one fades to it if the song has only just started, and otherwise it
+   *  waits for the song's next play rather than change mid-song. */
+  const holdFile = useCallback((el, filePath, now = false) => {
+    if (!el) return;
+    clearInterval(levelFadesRef.current.get(el));
+    elFileRef.current.set(el, filePath || null);
+    elGainRef.current.set(el, gainFor(filePath));
+    el.volume = elVolume(el);
+    if (!filePath || levelTargetRef.current == null || levelLufsRef.current.has(filePath) || !window.electronAPI?.loudnessOf) return;
+    window.electronAPI.loudnessOf(filePath).then((lufs) => {
+      levelLufsRef.current.set(filePath, Number.isFinite(lufs) ? lufs : null);
+      const g = gainFor(filePath);
+      if (elFileRef.current.get(el) !== filePath) return;
+      if (now || el !== audioRef.current) { elGainRef.current.set(el, g); el.volume = elVolume(el); }
+      else if (el.currentTime < 15) fadeLevel(el, g);
+    }).catch(() => {});
+  }, [elVolume, fadeLevel, gainFor]);
   const seekGenerationRef = useRef(0);
   /** When this matches the active queue slot + file, we must not set `audio.src` again or playback restarts from 0. */
   const lastAudioLoadKeyRef = useRef(null);
@@ -663,6 +753,7 @@ export default function App() {
     audioRef.current = a;
     inactiveAudioRef.current = b;
     firstElementRef.current = a;
+    localElsRef.current = [a, b];
     localAudioRef.current = a;
     const sp = window.electronAPI?.spotifyPlayerLoad ? new SpotifyMediaElement(window.electronAPI) : null;
     spotifyElRef.current = sp;
@@ -711,6 +802,18 @@ export default function App() {
    *  compressor's threshold now tracks the boost rather than sitting still. */
   const compressorRef = useRef(null);
   const limiterRef = useRef(null);
+  /** Whether the boost stage feeds the compressor and limiter (boost on) or
+   *  goes straight to the analyser (boost off, so nothing is compressed). */
+  const dynamicsOnRef = useRef(false);
+  const gainBoostRef = useRef(gainBoost);
+  gainBoostRef.current = gainBoost;
+  /** The equalizer's nodes: where both elements feed in, the ten filters,
+   *  and the headroom trim after them. Bypassed (input straight to the
+   *  boost stage) while it's off. */
+  const eqNodesRef = useRef(null);
+  const eqOnRef = useRef(false);
+  const eqLiveRef = useRef({ eq, eqHeadroom });
+  eqLiveRef.current = { eq, eqHeadroom };
   /** Per-element crossfade gains. During a crossfade one ramps to 0 while the
    *  other ramps to 1; otherwise both sit at 1. gainARef belongs to element A
    *  (firstElementRef), gainBRef to element B. */
@@ -769,9 +872,9 @@ export default function App() {
       //     threshold just below 0 dBFS — this is the "do not pass go"
       //     line that prevents speaker-killing clicks.
       //
-      // At 1× boost both stages are essentially transparent (the signal
-      // never reaches their thresholds). They only really start working
-      // around 3× and become the dominant character at 8-16×.
+      // At 1× boost both stages are left out of the path entirely (see
+      // routeDynamics). They only really start working around 3× and become
+      // the dominant character at 8-16×.
       const compressor = ctx.createDynamicsCompressor();
       // Set for real from gainBoost in the effect below. -3 is the passthrough
       // value; the old -24 with a 20 dB knee meant this stage began working at
@@ -793,12 +896,38 @@ export default function App() {
 
       // Graph:
       //   A.source → A.xfadeGain ┐
-      //                          ├→ boost gain → compressor → limiter → analyser → destination
+      //                          ├→ equalizer → boost gain → compressor → limiter → analyser → destination
       //   B.source → B.xfadeGain ┘
       // (analyser before destination so visualizers see the boosted signal)
-      aNodes.gain.connect(gainNode);
-      if (bNodes) bNodes.gain.connect(gainNode);
-      gainNode.connect(compressor);
+      // With no boost, boost gain → analyser directly: a compressor always
+      // colors the sound a little (and adds its own makeup gain), and with
+      // nothing boosted there is nothing for it to catch.
+      // The equalizer sits before the boost stage:
+      //   xfade gains → eq input → 10 filters → headroom trim → boost gain
+      // or, while it's off, eq input → boost gain.
+      const eqInput = ctx.createGain();
+      const filters = EQ_BANDS.map((f) => {
+        const bq = ctx.createBiquadFilter();
+        bq.type = 'peaking';
+        bq.frequency.value = f;
+        bq.Q.value = EQ_Q;
+        bq.gain.value = 0;
+        return bq;
+      });
+      const eqTrim = ctx.createGain();
+      filters.reduce((prev, bq) => { prev.connect(bq); return bq; }, eqInput);
+      filters[filters.length - 1].connect(eqTrim);
+      eqTrim.connect(gainNode);
+      const { eq: eqNow, eqHeadroom: trimNow } = eqLiveRef.current;
+      filters.forEach((bq, i) => { bq.gain.value = eqNow.gains[i] || 0; });
+      eqTrim.gain.value = 10 ** (trimNow / 20);
+      eqOnRef.current = eqNow.on;
+      if (!eqNow.on) { eqInput.disconnect(); eqInput.connect(gainNode); }
+      eqNodesRef.current = { input: eqInput, filters, trim: eqTrim };
+      aNodes.gain.connect(eqInput);
+      if (bNodes) bNodes.gain.connect(eqInput);
+      dynamicsOnRef.current = gainBoostRef.current > 1;
+      gainNode.connect(dynamicsOnRef.current ? compressor : analyser);
       compressor.connect(limiter);
       limiter.connect(analyser);
       // CRITICAL: also connect to destination, otherwise the audio becomes
@@ -823,6 +952,39 @@ export default function App() {
       return null;
     }
   }, []);
+
+  /** Puts the compressor and limiter in the path, or takes them out. */
+  const routeDynamics = useCallback((on) => {
+    const gainNode = gainNodeRef.current;
+    const next = on ? compressorRef.current : analyserRef.current;
+    if (!gainNode || !next || dynamicsOnRef.current === on) return;
+    try {
+      gainNode.disconnect();
+      gainNode.connect(next);
+      dynamicsOnRef.current = on;
+    } catch { /* leave it as it was */ }
+  }, []);
+
+  /* The equalizer follows its setting: bands glide to new gains (no
+     clicks while dragging), and off takes the filters out of the path. */
+  useEffect(() => {
+    const nodes = eqNodesRef.current;
+    const ctx = audioCtxRef.current;
+    if (!nodes || !ctx) return;
+    const t = ctx.currentTime;
+    nodes.filters.forEach((bq, i) => {
+      try { bq.gain.setTargetAtTime(eq.gains[i] || 0, t, 0.03); } catch { bq.gain.value = eq.gains[i] || 0; }
+    });
+    const trim = 10 ** (eqHeadroom / 20);
+    try { nodes.trim.gain.setTargetAtTime(trim, t, 0.03); } catch { nodes.trim.gain.value = trim; }
+    if (eqOnRef.current !== eq.on) {
+      try {
+        nodes.input.disconnect();
+        nodes.input.connect(eq.on ? nodes.filters[0] : gainNodeRef.current);
+        eqOnRef.current = eq.on;
+      } catch { /* leave it as it was */ }
+    }
+  }, [eq, eqHeadroom]);
 
   /** Returns the crossfade GainNode belonging to the currently-active element. */
   const activeGainNode = useCallback(() => (
@@ -865,7 +1027,13 @@ export default function App() {
       try { comp.threshold.setTargetAtTime(threshold, ctx.currentTime, 0.05); }
       catch { comp.threshold.value = threshold; }
     }
-  }, [gainBoost]);
+
+    /* In at once when boost goes on. Out only once the gain has ramped back
+       to 1, so the tail of the old boost is still limited. */
+    if (gainBoost > 1) { routeDynamics(true); return undefined; }
+    const id = setTimeout(() => { if (gainBoostRef.current <= 1) routeDynamics(false); }, 250);
+    return () => clearTimeout(id);
+  }, [gainBoost, routeDynamics]);
 
   /** Total gain reduction across both dynamics stages, in dB (<= 0).
    *  Summed rather than maxed: what a listener wants to know is how much is
@@ -920,7 +1088,7 @@ export default function App() {
   // exist before the gainBoost effect can apply its value.
   useEffect(() => {
     if (!isPlaying) return;
-    if (!analyserRef.current && (beatReactive || gainBoost > 1 || transitionMode !== 'off')) {
+    if (!analyserRef.current && (beatReactive || gainBoost > 1 || transitionMode !== 'off' || eq.on)) {
       ensureAnalyser();
       // ensureAnalyser created the gain node with value 1; sync to the
       // user's saved boost immediately so they don't hear a quiet first
@@ -937,7 +1105,7 @@ export default function App() {
     if (ctx && analyserRef.current && ctx.state === 'suspended') {
       ctx.resume().catch(() => { /* ignore */ });
     }
-  }, [isPlaying, beatReactive, gainBoost, transitionMode, ensureAnalyser]);
+  }, [isPlaying, beatReactive, gainBoost, transitionMode, eq.on, ensureAnalyser]);
 
   /* The compact-bar visualizer asks for the analyser when a local file plays
      and nothing else has built it. Built mid-song, the context can start
@@ -1005,11 +1173,12 @@ export default function App() {
     if (preloadedKeyRef.current === key) return; // already staged
     const src = srcForTrack(nxt.track);
     if (!src) return;
+    holdFile(standby, nxt.track.filePath);
     standby.src = src;
     try { standby.currentTime = 0; } catch { /* ignore */ }
     try { standby.load(); } catch { /* ignore */ }
     preloadedKeyRef.current = key;
-  }, [peekNext, trackLoadKey, srcForTrack]);
+  }, [peekNext, trackLoadKey, srcForTrack, holdFile]);
 
   // Reset both crossfade gains to unity and clear any scheduled ramps.
   const resetCrossfadeGains = useCallback(() => {
@@ -1035,7 +1204,7 @@ export default function App() {
 
     handoffArmedRef.current = true;
 
-    incoming.volume = outgoing.volume; // keep perceptual volume consistent
+    incoming.volume = elVolume(incoming); // the slider's volume, with this file's leveling
 
     // Push the incoming track's progress into the UI. Called at the moment
     // the incoming element actually becomes the audible one, so the progress
@@ -1104,7 +1273,7 @@ export default function App() {
     lastAudioLoadKeyRef.current = trackLoadKey(nxt.track);
 
     setCurrentIndex(nxt.index);
-  }, [peekNext, activeGainNode, trackLoadKey]);
+  }, [peekNext, activeGainNode, trackLoadKey, elVolume]);
 
   // Driven by the active element's timeupdate. Decides when to preload and
   // when to fire the handoff.
@@ -1358,9 +1527,11 @@ export default function App() {
     const audio = audioRef.current;
     async function load() {
       if (window.electronAPI?.getPlaybackUrl) {
+        holdFile(audio, currentTrack.filePath);
         audio.src = window.electronAPI.getPlaybackUrl(currentTrack.filePath);
         audio.play().catch(() => {});
       } else if (currentTrack.objectUrl) {
+        holdFile(audio, null);
         audio.src = currentTrack.objectUrl;
         audio.play().catch(() => {});
       }
@@ -1369,11 +1540,43 @@ export default function App() {
     // Intentionally omit `currentTrack.duration`: metadata hydration updates it and must not reload `src` (that restarts playback).
   }, [currentIndex, currentTrack?.id, currentTrack?.filePath, currentTrack?.objectUrl]);
 
+  /* Both local elements always follow the slider, whatever they're doing.
+     While a Spotify song plays one of them is parked (localAudioRef) and is
+     neither the active nor the standby element; it used to keep the old
+     volume, so the next local file played at that until the slider moved.
+     The Spotify element only takes it while it's the one playing: setting
+     it otherwise would start the helper. Its next song carries the volume.
+     Local elements also carry their file's leveling (holdFile). */
   useEffect(() => {
-    const pv = perceptualVolume(volume);
-    if (audioRef.current) audioRef.current.volume = pv;
-    if (inactiveAudioRef.current) inactiveAudioRef.current.volume = pv;
-  }, [volume]);
+    for (const el of localElsRef.current) el.volume = elVolume(el);
+    const active = audioRef.current;
+    if (active && !localElsRef.current.includes(active)) active.volume = perceptualVolume(volume);
+  }, [volume, normalization, elVolume]);
+
+  /* Turned on or to another level: what's loaded now changes at once too
+     (it's your change), measured first if it hasn't been. */
+  useEffect(() => {
+    if (NORMALIZATION_LUFS[normalization] == null) return;
+    for (const el of localElsRef.current) {
+      const fp = elFileRef.current.get(el);
+      if (!fp) continue;
+      if (!levelLufsRef.current.has(fp)) { holdFile(el, fp, true); continue; }
+      clearInterval(levelFadesRef.current.get(el));
+      elGainRef.current.set(el, gainFor(fp));
+      el.volume = elVolume(el);
+    }
+  }, [normalization, holdFile, gainFor, elVolume]);
+
+  /* Measure the library in the background (main/loudness.js skips files it
+     already knows), so songs are leveled from their first second. */
+  useEffect(() => {
+    if (normalization === 'off' || !libraryBootstrapped || !window.electronAPI?.loudnessQueue) return undefined;
+    const id = setTimeout(() => {
+      const paths = [...new Set(libraryRef.current.filter((t) => t?.filePath && !spotifyIdOf(t)).map((t) => t.filePath))];
+      window.electronAPI.loudnessQueue(paths).catch(() => {});
+    }, 5000);
+    return () => clearTimeout(id);
+  }, [normalization, libraryBootstrapped, library.length]);
 
   const togglePlay = () => {
     if (!currentTrack) {
@@ -1472,7 +1675,8 @@ export default function App() {
     const tracks = [];
     for (const fp of paths) {
       try {
-        const meta = await window.electronAPI.getMetadata(fp);
+        // importTrack converts what Studio can't play (WMA, Apple Lossless).
+        const meta = await (window.electronAPI.importTrack || window.electronAPI.getMetadata)(fp);
         tracks.push({ id: uid(), ...meta });
       } catch (e) {
         // One unreadable file shouldn't abort a 400-track folder import.
@@ -2850,6 +3054,11 @@ export default function App() {
         onSpotifyImportDone={handleSpotifyImportDone}
         transitionMode={transitionMode}
         onSetTransitionMode={setTransitionMode}
+        normalization={normalization}
+        onSetNormalization={setNormalization}
+        eq={eq}
+        eqHeadroom={eqHeadroom}
+        onSetEq={setEq}
         onUpdateTrackMetadata={updateTrackMetadata}
         onRemoveFromLibrary={removeTracksFromLibrary}
         onToggleFavorite={toggleFavorite}

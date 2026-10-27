@@ -1,6 +1,6 @@
 [package]
 name = "studio-spotify"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Studio's Spotify playback helper: librespot, driven over stdin/stdout, playing straight to the sound card."
 publish = false
@@ -10,6 +10,9 @@ librespot-core = { version = "0.8.0", default-features = false, features = ["rus
 librespot-playback = { version = "0.8.0", default-features = false, features = ["rustls-tls-webpki-roots"] }
 # The output (src/output.rs). Same rodio librespot's backend uses.
 rodio = { version = "0.21", default-features = false, features = ["playback"] }
+# 44.1 kHz to the device rate, band-limited (src/output.rs). rodio's own
+# converter is linear interpolation.
+rubato = { version = "0.16", default-features = false, features = ["fft_resampler"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "io-std", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,6 +28,18 @@ http = "1"
 # Pathfinder requests (src/pathfinder.rs) through the session's HTTP client.
 bytes = "1"
 http-body-util = "0.1"
+
+# Windows: the volume mixer link (src/mixer.rs). Same windows crate the
+# build already has.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+] }
 
 # The same librespot Sonora ships: upstream 0.8 plus a CDN fallback and a
 # fix for audio keys Spotify refuses. Pinned so a rebuild is reproducible.

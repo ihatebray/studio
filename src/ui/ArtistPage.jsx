@@ -8,6 +8,7 @@ import { api, fmtMs } from '../lib/format.js';
 import { coverLayers } from '../lib/coverUrl.js';
 import { BoundedMap } from '../lib/boundedMap.js';
 import { DARK } from './home/constants.js';
+import { hoverStyle, useHot } from './hover.js';
 
 /** The artist page's back button: in the hero, then in the sticking bar. */
 function BackBtn({ onClick, style }) {
@@ -122,11 +123,11 @@ function Note({ children }) {
 /* ---- Small shared pieces ------------------------------------------------ */
 
 function PillBtn({ onClick, on = false, children }) {
-  const [hot, setHot] = useState(false);
+  const [hot, hotProps] = useHot();
   return (
     <button
       type="button" onClick={onClick}
-      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      {...hotProps}
       style={{
         height: 36, padding: '0 17px', borderRadius: 999, cursor: 'pointer',
         font: 'inherit', fontSize: 12.5, fontWeight: 750, whiteSpace: 'nowrap',
@@ -153,8 +154,7 @@ function SectionHead({ title, sub, action, onAction, first = false }) {
             fontSize: 11.5, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase',
             color: 'rgba(var(--st-sub-rgb), 0.42)', transition: 'color 0.15s ease',
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--st-text)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(var(--st-sub-rgb), 0.42)'; }}>
+          {...hoverStyle((el) => { el.style.color = 'var(--st-text)'; }, (el) => { el.style.color = 'rgba(var(--st-sub-rgb), 0.42)'; })}>
           {action}
         </button>
       ) : null}
@@ -165,11 +165,11 @@ function SectionHead({ title, sub, action, onAction, first = false }) {
 /** Release card. `missing` drains the art and swaps the play affordance for a
  *  download one — same shape as an owned record, visibly not one. */
 function ReleaseCard({ art, name, meta, missing = false, accent, onClick }) {
-  const [hot, setHot] = useState(false);
+  const [hot, hotProps] = useHot();
   return (
     <button
       type="button" onClick={onClick} title={name}
-      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      {...hotProps}
       style={{
         border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit',
         textAlign: 'left', padding: 0, display: 'flex', flexDirection: 'column', minWidth: 0,
@@ -364,14 +364,14 @@ function releaseText(d, precision = '') {
 function PopularRow({ n, t, rel = null, info = null, owned, canPlay = owned, playing, isPlaying, accent, dl, progress, onPlay, onGet, onMenu = null }) {
   const albumName = t.album || rel?.name || info?.album || '';
   const released = rel?.releaseDate ? releaseText(rel.releaseDate, rel.datePrecision) : releaseText(info?.releaseDate || t.releaseDate);
-  const [hot, setHot] = useState(false);
+  const [hot, hotProps] = useHot();
   // Saved or not, a song plays when Spotify can stream it; saving is the +.
   const act = () => (canPlay ? onPlay() : onGet?.());
   return (
     <div role="button" tabIndex={0} onClick={act}
       onContextMenu={onMenu || undefined}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } }}
-      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      {...hotProps}
       className="app-pop-row"
       style={{
         cursor: 'pointer',
@@ -426,7 +426,7 @@ function PopularRow({ n, t, rel = null, info = null, owned, canPlay = owned, pla
  *  the page is the artist's catalogue, not a list of gaps — and the ones you
  *  already have carry a small tick. */
 function DiscCard({ r, owned, accent, onClick, onMenu = null, opensTracklist = false, open = false }) {
-  const [hot, setHot] = useState(false);
+  const [hot, hotProps] = useHot();
   const kind = r.group === 'appears_on' ? (r.artists || 'Appears on')
     : r.type === 'compilation' || r.group === 'compilation' ? 'Compilation'
       : r.group === 'single' ? (r.totalTracks > 1 ? 'EP' : 'Single') : 'Album';
@@ -435,7 +435,7 @@ function DiscCard({ r, owned, accent, onClick, onMenu = null, opensTracklist = f
   return (
     <button type="button" onClick={onClick} onContextMenu={onMenu ? (e) => onMenu(e, r) : undefined}
       title={opensTracklist ? `Open ${r.name} to see the tracklist and get what you’re missing` : owned ? `Open ${r.name}` : `Find ${r.name}`}
-      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      {...hotProps}
       style={{
         border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit', textAlign: 'left',
         padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', minWidth: 0,
@@ -583,10 +583,10 @@ function AboutCard({ data, image, accent }) {
 }
 
 function RelatedArtist({ a, inLibrary, onClick }) {
-  const [hot, setHot] = useState(false);
+  const [hot, hotProps] = useHot();
   return (
     <button type="button" onClick={onClick} title={a.name}
-      onMouseEnter={() => setHot(true)} onMouseLeave={() => setHot(false)}
+      {...hotProps}
       style={{
         border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit', padding: 0,
         display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0,
@@ -1476,7 +1476,7 @@ export default function ArtistPage({
     if (streamList.length) { spotifyBridge.playRows(streamList, 0, { shuffle, context: artistContext }); return; }
     if (!playable.length) return;
     const list = shuffle ? [...playable].sort(() => Math.random() - 0.5) : playable;
-    onPlayTrack?.(list[0], list);
+    onPlayTrack?.(list[0], list, 'list', { kind: 'artist', lib: true, name });
   };
   const getTrack = onGetTrack || null;
 
@@ -1960,7 +1960,7 @@ export default function ArtistPage({
                         /* The whole list, saved or not: your copies play from the
                            library, the rest stream from Spotify. */
                         else if (spotifyBridge) spotifyBridge.playRows(popular.map((p) => p.t), i, { context: artistContext });
-                        else onPlayTrack?.(lib, popularOwned);
+                        else onPlayTrack?.(lib, popularOwned, 'list', { kind: 'artist', lib: true, name });
                       }}
                       onGet={getTrack ? () => getTrack(t) : () => onJumpToFind?.(`${name} ${t.title}`, 'spotify')}
                       onMenu={spotifyBridge?.openMenu && t.spotifyId ? (e) => spotifyBridge.openMenu(e, {

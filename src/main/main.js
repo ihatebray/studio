@@ -68,12 +68,14 @@ import { resolveCoverFilePath, colorFilePath, mimeForCoverPath, storeCoverFromDa
 import * as discordPresence from './discordPresence.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
 import { fetchGeniusCredits } from './geniusCredits.js';
-import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist, helperDiscography, helperPathfinder } from './spotifyPlayer.js';
+import { registerSpotifyPlayerIpc, prepareForReload, helperSearch, helperAlbum, helperArtist, helperDiscography, helperPathfinder, helperLyrics, helperIsCurrent } from './spotifyPlayer.js';
 import { registerSpotifyFeedIpc } from './spotifyFeed.js';
 import { registerSpotifyLinkIpc } from './spotifyLinks.js';
 import { registerFollowsIpc } from './follows.js';
 import { registerCountdownsIpc } from './countdowns.js';
 import { registerListeningIpc } from './listening.js';
+import { registerLoudnessIpc } from './loudness.js';
+import { playablePath } from './convertAudio.js';
 import { notice } from './notices.js';
 import { initUpdater } from './updater.js';
 import { saveSpotifyTrack, saveSpotifyRows, isStreamedPath, repairStreamedRows, refetchMetadata } from './spotifyLibrary.js';
@@ -187,6 +189,7 @@ registerSpotifyLinkIpc(ipcMain);
 registerFollowsIpc(ipcMain);
 registerCountdownsIpc(ipcMain);
 registerListeningIpc(ipcMain);
+registerLoudnessIpc(ipcMain);
 
 /* Save: Get's replacement. Adds the track to the library as a streamed row
    (spotify:track:<id>, played by the helper) and hearts it on Spotify.
@@ -1021,7 +1024,22 @@ ipcMain.handle('discord:status', async () => {
    This path was left out when the Deezer fallback landed, so a rate-limited
    or unconfigured Spotify returned [] here and instant search silently lost
    its entire Artists section while songs and albums kept working. */
+/* Typed an artist's name outright: the search panel will want their whole
+   discography next (it IS Albums & EPs then), so it starts now rather than
+   after the panel has the artist and asks. Same match the panel uses, an
+   exact name. */
+const normArtistName = (n) => String(n || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+function headStartDiscography(query, rows) {
+  const want = normArtistName(query);
+  const hit = want && Array.isArray(rows) ? rows.find((a) => a?.id && normArtistName(a.name) === want) : null;
+  if (hit) artistAlbumsFor(hit.id).catch(() => {});
+}
 ipcMain.handle('spotify:searchArtists', async (_event, q) => {
+  const rows = await searchArtistsFor(q);
+  headStartDiscography(String(q || '').trim(), rows);
+  return rows;
+});
+async function searchArtistsFor(q) {
   const query = String(q || '').trim();
   if (!query) return [];
   const cached = getSearchCache('artists', query);
@@ -1037,10 +1055,30 @@ ipcMain.handle('spotify:searchArtists', async (_event, q) => {
     return Array.isArray(rows) ? rows : [];
   };
 
-  const hs = await viaHelper('artists', query);
-  if (hs) return remember(hs);
-  const pf = await viaPathfinder('artists', query);
-  if (pf) return remember(pf);
+  /* Spotify's own artist search (the web player's query) first: it finds
+     artists by name. The helper's list is only the artists of the songs it
+     found, so for a word that's also a popular song title ("juno") it held
+     the singers of those songs, which then fell out of the Artists section
+     for not matching, leaving one artist or none. Its artists still follow
+     (an artist only reachable through a song), and stand in whenever the
+     web player's query isn't available. Both are asked at once: the helper
+     search is the one songs and albums use, so it's shared, not extra. */
+  /* One row per name. Spotify has fan and impostor profiles under a big
+     artist's exact name ("Metro Boomin" three times, each showing the real
+     one's photo, since portraits are found by name). The first is the one
+     Spotify ranks highest, the real artist; the rest are dropped. */
+  const [pf, hs] = await Promise.all([viaPathfinder('artists', query), viaHelper('artists', query)]);
+  if (pf || hs) {
+    const seen = new Set();
+    const named = new Set();
+    return remember([...(pf || []), ...(hs || [])].filter((a) => {
+      const name = String(a?.name || '').trim().toLowerCase();
+      if (!a?.id || seen.has(a.id) || named.has(name)) return false;
+      seen.add(a.id);
+      named.add(name);
+      return true;
+    }));
+  }
 
   if (spotifyCredentialsConfigured()) {
     try {
@@ -1062,7 +1100,7 @@ ipcMain.handle('spotify:searchArtists', async (_event, q) => {
   if (acct) return remember(acct);
   emitFallbackNotice('itunes', 'nocreds');
   return remember(await itunesSearchArtists(query));
-});
+}
 
 ipcMain.handle('spotify:artistTopTracks', async (_event, id, name) => {
   /* Fallback-provider artists carry a prefixed ID from the artist-search
@@ -1173,7 +1211,31 @@ try {
   if (parsed?.v === PROVIDER_CACHE_VERSION) searchCache = parsed;
 } catch { /* fresh */ }
 for (const type of ['tracks', 'albums', 'artists']) searchCache[type] = pruneCacheMap(searchCache[type] || {}, SEARCH_CACHE_TTL_MS, 2000);
+/* Saved artist searches are dropped when how they're made changes, so an
+   old answer doesn't stay for 30 days: 2, Spotify's own artist search
+   (they held only the artists of the songs found, often one); 3, one row
+   per name (namesake profiles showed the same artist several times). Songs
+   and albums are kept. */
+const ARTIST_SEARCH_VERSION = 3;
+if (searchCache.artistsV !== ARTIST_SEARCH_VERSION) {
+  searchCache.artists = {};
+  searchCache.artistsV = ARTIST_SEARCH_VERSION;
+}
 const searchCacheWriter = cacheWriter(searchCachePath, () => searchCache);
+/* Discographies are kept on disk too, so an artist searched before has the
+   whole answer at once after a restart. A day, not the week they're kept
+   in memory: a release out since then shows by the next day. */
+const ARTIST_ALBUMS_DISK_TTL_MS = 24 * 60 * 60 * 1000;
+const artistAlbumsPath = path.join(app.getPath('userData'), 'artist-albums-cache.json');
+try {
+  const saved = JSON.parse(fs.readFileSync(artistAlbumsPath, 'utf8'));
+  if (saved?.v === PROVIDER_CACHE_VERSION && saved.entries && typeof saved.entries === 'object') {
+    for (const [id, e] of Object.entries(saved.entries)) {
+      if (e && Array.isArray(e.data) && Date.now() - e.at < ARTIST_ALBUMS_DISK_TTL_MS) artistAlbumsCache.set(id, e);
+    }
+  }
+} catch { /* fresh */ }
+const artistAlbumsWriter = cacheWriter(artistAlbumsPath, () => ({ v: PROVIDER_CACHE_VERSION, entries: Object.fromEntries(artistAlbumsCache.entries()) }));
 function persistSearchCache() { searchCacheWriter.schedule(); }
 function getSearchCache(type, key) {
   const entry = searchCache[type]?.[key.toLowerCase()];
@@ -1296,34 +1358,48 @@ function setArtistInfoCache(name, data) {
   persistArtistInfoCache();
 }
 
-ipcMain.handle('spotify:artistAlbums', async (_event, id) => {
-  if (!id) return [];
+/* An artist's discography. One request at a time per artist: the search's
+   head start (spotify:searchArtists) and the panel asking a moment later
+   share it. */
+const artistAlbumsInflight = new Map();
+function rememberArtistAlbums(id, data) {
+  artistAlbumsCache.set(id, { at: Date.now(), data });
+  artistAlbumsWriter.schedule();
+}
+function artistAlbumsFor(id) {
+  if (!id) return Promise.resolve([]);
   /* iTunes-sourced artist (from the searchArtists fallback): fetch the
      discography from iTunes instead of handing Spotify an ID it rejects. */
   if (String(id).startsWith(ITUNES_ID_PREFIX)) {
     return itunesGetArtistAlbums(id.slice(ITUNES_ID_PREFIX.length));
   }
   const hit = artistAlbumsCache.get(id);
-  if (hit && Date.now() - hit.at < ARTIST_ALBUMS_TTL_MS) return hit.data;
-  if (partnerState().connected) {
+  if (hit && Date.now() - hit.at < ARTIST_ALBUMS_TTL_MS) return Promise.resolve(hit.data);
+  if (artistAlbumsInflight.has(id)) return artistAlbumsInflight.get(id);
+  const run = (async () => {
+    if (partnerState().connected) {
+      try {
+        const rows = (await helperArtistCached(id)).albums || [];
+        if (rows.length) { rememberArtistAlbums(id, rows); return rows; }
+      } catch (e) { console.warn('[spotify:artistAlbums] helper route failed:', e?.message || e); }
+      try {
+        const rows = await artistAlbumsFast(id);
+        if (rows.length) { rememberArtistAlbums(id, rows); return rows; }
+      } catch (e) { console.warn('[spotify:artistAlbums] account route failed:', e?.message || e); }
+    }
     try {
-      const rows = (await helperArtistCached(id)).albums || [];
-      if (rows.length) { artistAlbumsCache.set(id, { at: Date.now(), data: rows }); return rows; }
-    } catch (e) { console.warn('[spotify:artistAlbums] helper route failed:', e?.message || e); }
-    try {
-      const rows = await artistAlbumsFast(id);
-      if (rows.length) { artistAlbumsCache.set(id, { at: Date.now(), data: rows }); return rows; }
-    } catch (e) { console.warn('[spotify:artistAlbums] account route failed:', e?.message || e); }
-  }
-  try {
-    const data = await spotifyArtistAlbums(id);
-    /* Only a non-empty result is cached. An empty list here usually means the
-       run was rate-limited rather than that the artist has no records, and
-       caching that would hide the section for a week. */
-    if (Array.isArray(data) && data.length) artistAlbumsCache.set(id, { at: Date.now(), data });
-    return data;
-  } catch (e) { console.error('[spotify:artistAlbums]', e); return []; }
-});
+      const data = await spotifyArtistAlbums(id);
+      /* Only a non-empty result is cached. An empty list here usually means the
+         run was rate-limited rather than that the artist has no records, and
+         caching that would hide the section for a week. */
+      if (Array.isArray(data) && data.length) rememberArtistAlbums(id, data);
+      return data;
+    } catch (e) { console.error('[spotify:artistAlbums]', e); return []; }
+  })().finally(() => artistAlbumsInflight.delete(id));
+  artistAlbumsInflight.set(id, run);
+  return run;
+}
+ipcMain.handle('spotify:artistAlbums', (_event, id) => artistAlbumsFor(id));
 
 ipcMain.handle('spotify:artistInfo', async (_event, name) => {
   const cached = getArtistInfoCache(name);
@@ -2275,6 +2351,14 @@ ipcMain.handle('dialog:openFolder', async () => {
 // Streamed (Saved) rows have no file to read.
 ipcMain.handle('file:getMetadata', async (event, filePath) => (isStreamedPath(filePath) ? null : parseAudioFileToTrack(filePath)));
 
+/* Importing a file: its details, with a FLAC copy in its place when it's
+   WMA or Apple Lossless, which Studio can't play (convertAudio.js). */
+ipcMain.handle('file:importTrack', async (event, filePath) => {
+  const track = await parseAudioFileToTrack(filePath);
+  const playable = await playablePath(filePath);
+  return playable === filePath ? track : { ...track, filePath: playable };
+});
+
 
 ipcMain.handle('spotify:credsState', () => ({ configured: spotifyCredentialsConfigured() }));
 
@@ -3116,6 +3200,7 @@ async function spotifyCrossCheck({ title, artist, album }) {
  */
 async function ingestSoulseekFile({ downloadedPath, originalFilename }) {
   const parsed = await parseAudioFileToTrack(downloadedPath);
+  parsed.filePath = await playablePath(downloadedPath, { replace: true });
   const duration = typeof parsed.duration === 'number' && parsed.duration > 0
     ? parsed.duration : 0;
 
@@ -3649,6 +3734,7 @@ ipcMain.handle('playlist:importBatch', async (event, params = {}) => {
           user: best.user, filePath: best.filePath, size: best.size, outDir,
         });
         const parsed = await parseAudioFileToTrack(downloadedPath);
+        parsed.filePath = await playablePath(downloadedPath, { replace: true });
         const duration = typeof parsed.duration === 'number' && parsed.duration > 0 ? parsed.duration : 0;
         let coverStored = null;
         if (t.albumArtUrl) {
@@ -3777,13 +3863,57 @@ ipcMain.on('window:maximize', (e) => {
 ipcMain.handle('window:isMaximized', (e) => !!windowFromEvent(e)?.isMaximized());
 ipcMain.on('window:close', (e) => windowFromEvent(e)?.close());
 
+/** The key a song's lyrics are saved under: the song, plus its Spotify
+ *  version when it has one (clean and explicit share the rest). */
+function lyricsKeyFor(artist, title, spotifyId = null) {
+  const base = `${String(artist || '').toLowerCase().trim()}|${String(title || '').toLowerCase().trim()}`;
+  return /^[0-9A-Za-z]{22}$/.test(String(spotifyId || '')) ? `${base}|sp:${spotifyId}` : base;
+}
+/** [mm:ss.xx] for a time in ms. */
+function lrcStamp(ms) {
+  const t = Math.max(0, Number(ms) || 0) / 1000;
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}`;
+}
+
+/* A local file's Spotify version, for Spotify's lyrics: found by searching
+   the title and artist, and taken only when the title and lead artist match
+   and the length is within 3 seconds. Where Spotify has a clean and an
+   explicit version, the file's own explicit flag picks (explicit when the
+   file doesn't say: what's downloaded mostly is). Remembered per song. */
+const spotifyVersionCache = new BoundedMap(500);
+const versionNorm = (x) => String(x || '').toLowerCase()
+  .replace(/\s*[([](?:feat|ft|with)\.?[^)\]]*[)\]]/g, '')
+  .replace(/\s+-\s+(?:remaster(?:ed)?|\d{4} remaster).*$/i, '')
+  .replace(/[^\p{L}\p{N}]+/gu, '');
+/** Every Spotify version of a song: same title and lead artist, length
+ *  within 3 seconds (a clean and an explicit one, usually). */
+async function spotifyVersionsOf({ title, artist, duration }) {
+  const t = versionNorm(title);
+  const lead = versionNorm(String(artist || '').split(/,|&|\bfeat\.?|\bft\.?|\bx\b/i)[0]);
+  if (!t || !lead) return [];
+  const key = `${t}|${lead}|${Math.round(Number(duration) || 0)}`;
+  if (spotifyVersionCache.has(key)) return spotifyVersionCache.get(key);
+  const r = await helperSearch(`${String(artist || '').split(',')[0]} ${title}`);
+  const dur = Number(duration) || 0;
+  const fits = (r?.tracks || []).filter((x) => x?.spotifyId && versionNorm(x.title) === t
+    && versionNorm(String(x.artists || '').split(', ')[0]) === lead
+    && (!dur || !x.durationMs || Math.abs(x.durationMs / 1000 - dur) <= 3));
+  spotifyVersionCache.set(key, fits);
+  return fits;
+}
+async function resolveSpotifyVersion({ title, artist, duration, explicit }) {
+  const fits = await spotifyVersionsOf({ title, artist, duration });
+  const wantExplicit = explicit !== false;
+  return (fits.find((x) => !!x.explicit === wantExplicit) || fits[0])?.spotifyId || null;
+}
+
 /** In-memory lyrics cache keyed by "artist|title" — hot layer over persistent DB. */
 const lyricsCache = new BoundedMap(300);
 
 /* The automatic lyrics fetch. `peek` looks without touching the cache in
    either direction (the lyrics browser uses it to try Genius without
    replacing what's saved for the song). */
-async function fetchLyrics({ title, artist, album, duration, provider, force, peek = false } = {}) {
+async function fetchLyrics({ title, artist, album, duration, provider, force, peek = false, spotifyId = null, explicit = null } = {}) {
   // Saved plain lyrics being re-checked: kept if nothing better turns up.
   let stalePlain = null;
   /* LRCLIB couldn't be asked properly (timed out, rate-limited, down,
@@ -3791,7 +3921,11 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
      found then aren't saved for good: the next launch asks LRCLIB again. */
   let lrclibTrouble = false;
   try {
-    const cacheKey = `${(artist || '').toLowerCase().trim()}|${(title || '').toLowerCase().trim()}`;
+    /* Keyed by the song, and by its Spotify version when it has one: a clean
+       and an explicit version share a title and artist but not their words. */
+    const legacyKey = `${(artist || '').toLowerCase().trim()}|${(title || '').toLowerCase().trim()}`;
+    const sid = /^[0-9A-Za-z]{22}$/.test(String(spotifyId || '')) ? String(spotifyId) : null;
+    const cacheKey = lyricsKeyFor(artist, title, sid);
     // Placeholder metadata must be treated as ABSENT, not matched literally.
     // The scanner writes 'Unknown Artist'/'Unknown Album' for any file with no
     // ID3 tags (very common for Soulseek + yt-dlp imports). Passing those
@@ -3832,6 +3966,13 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
         await deleteCachedLyrics(cacheKey);
       } catch { /* ignore — we'll just refetch anyway */ }
     } else {
+      /* Your own pick is for the song, however it plays (its Spotify version
+         or a local copy, saved before or after lyrics knew versions): it
+         wins over anything fetched. */
+      if (sid && lyricsCache.get(legacyKey)?.source === 'user') {
+        dbg('HIT memory cache → your pick for the song');
+        return lyricsCache.get(legacyKey);
+      }
       // 1) In-memory hot cache (survives within session)
       if (lyricsCache.has(cacheKey)) {
         const memHit = lyricsCache.get(cacheKey);
@@ -3842,7 +3983,11 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
 
       // 2) Persistent DB cache (survives across restarts)
       await ensureLibraryOpen();
-      const dbCached = await loadCachedLyrics(cacheKey);
+      let dbCached = await loadCachedLyrics(cacheKey);
+      if (sid && dbCached?.source !== 'user') {
+        const old = await loadCachedLyrics(legacyKey).catch(() => null);
+        if (old?.source === 'user') dbCached = old;
+      }
       // An all-null row is a NEGATIVE result written by an older build (or a
       // failed fetch). Treat it as a miss so it self-heals on the next play
       // instead of permanently pinning the track to "no lyrics".
@@ -3857,9 +4002,12 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
          look at LRCLIB, at most once a day: Genius's (used when LRCLIB was
          slow, down or missed the match), and older saves that don't say
          where they came from. A version you picked yourself is left alone. */
+      /* With a Spotify version and the account signed in, Spotify's lyrics
+         may have them synced: looked at again after an hour, not a day. */
+      const ageS = Date.now() / 1000 - (dbCached?.fetchedAt || 0);
       const recheck = dbCached && !isEmptyRow && !isGeniusBlurb
-        && !dbCached.syncedLyrics && !dbCached.instrumental && dbCached.source !== 'user'
-        && (!dbCached.source || Date.now() / 1000 - (dbCached.fetchedAt || 0) > 24 * 3600);
+        && !dbCached.syncedLyrics && !dbCached.instrumental && dbCached.source !== 'user' && dbCached.source !== 'spotify'
+        && (!dbCached.source || ageS > 24 * 3600 || (!!sid && partnerState().connected && ageS > 3600));
       if (dbCached && !isEmptyRow && !isGeniusBlurb && !recheck) {
         const hit = { ok: true, ...dbCached };
         dbg('HIT db cache →', hit.syncedLyrics ? 'synced' : hit.plainLyrics ? 'plain' : 'instrumental', `(${hit.source || 'unknown source'})`);
@@ -4270,84 +4418,127 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
     const tryLrclibFirst = selectedProvider !== 'genius';
     const tryGeniusAfter = selectedProvider.includes('genius');
 
-    let result = null;
+    /* LRCLIB: its exact match and a search at once, then (no timing yet) the
+       broad search the lyrics browser uses. */
+    const lrclibStage = async () => {
+      let result = null;
 
-    if (tryLrclibFirst) {
-      // Strategy: race LRClib exact AND search in parallel, returning
-      // the FIRST acceptable result rather than waiting for all to
-      // finish. The exact-match endpoint is usually fastest (~300ms)
-      // and most accurate when it hits — short-circuiting on its
-      // success means a typical successful fetch resolves in well
-      // under a second. The searches still run in the background
-      // (their results discarded) but no longer block the response.
-      //
-      // "Acceptable" is tiered: a synced result wins instantly,
-      // a plain result wins if no synced result has shown up by the
-      // time another stage resolves. If everything resolves with no
-      // hit, we fall through to Genius (when enabled).
-      const q1 = `${artist || ''} ${title || ''}`.trim();
-      // Note: we drop the secondary "title-only" search variant — in
-      // practice the artist+title query handles ~99% of cases and the
-      // extra call only adds latency without adding many real hits.
+      if (tryLrclibFirst) {
+        // Strategy: race LRClib exact AND search in parallel, returning
+        // the FIRST acceptable result rather than waiting for all to
+        // finish. The exact-match endpoint is usually fastest (~300ms)
+        // and most accurate when it hits — short-circuiting on its
+        // success means a typical successful fetch resolves in well
+        // under a second. The searches still run in the background
+        // (their results discarded) but no longer block the response.
+        //
+        // "Acceptable" is tiered: a synced result wins instantly,
+        // a plain result wins if no synced result has shown up by the
+        // time another stage resolves. If everything resolves with no
+        // hit, we fall through to Genius (when enabled).
+        const q1 = `${artist || ''} ${title || ''}`.trim();
+        // Note: we drop the secondary "title-only" search variant — in
+        // practice the artist+title query handles ~99% of cases and the
+        // extra call only adds latency without adding many real hits.
 
-      result = await new Promise((resolve) => {
-        let pending = 2; // exact + one search
-        let bestPlain = null; // remember any plain hit while waiting for synced
+        result = await new Promise((resolve) => {
+          let pending = 2; // exact + one search
+          let bestPlain = null; // remember any plain hit while waiting for synced
 
-        const tryResolve = (r) => {
-          if (r?.syncedLyrics) {
-            resolve(r);
-            return true;
-          }
-          if (r?.plainLyrics && !bestPlain) {
-            bestPlain = r;
-          }
-          return false;
-        };
+          const tryResolve = (r) => {
+            if (r?.syncedLyrics) {
+              resolve(r);
+              return true;
+            }
+            if (r?.plainLyrics && !bestPlain) {
+              bestPlain = r;
+            }
+            return false;
+          };
 
-        const onDone = () => {
-          pending -= 1;
-          if (pending === 0) resolve(bestPlain || null);
-        };
+          const onDone = () => {
+            pending -= 1;
+            if (pending === 0) resolve(bestPlain || null);
+          };
 
-        tryLrclibExact().then((r) => {
-          if (!tryResolve(r)) onDone();
-        }).catch(onDone);
-
-        if (q1.length > 0) {
-          tryLrclibSearch(q1).then((r) => {
+          tryLrclibExact().then((r) => {
             if (!tryResolve(r)) onDone();
           }).catch(onDone);
-        } else {
-          onDone();
-        }
-      });
-    }
 
-    /* No timing yet: search LRCLIB the way the lyrics browser does (the
-       title with "(feat. …)", "[…]" and "- Remastered" trimmed, three
-       searches at once) and take a synced version of this same song: same
-       title, same artist, length within 10 seconds. Synced lyrics come
-       before any plain ones, LRCLIB's or Genius's. */
-    if (tryLrclibFirst && !result?.syncedLyrics && (title || '').trim()) {
-      dbg('STAGE broad LRCLIB search (no synced lyrics yet)');
-      const broad = await lrclibCandidates({ title, artist, duration }).catch(() => null);
-      if (!broad || broad.anyFailed) lrclibTrouble = true;
-      /* A remix, live take or sped-up edit has other timing: only when the
-         song playing is one too. */
-      const VARIANT = /\b(remix|live|sped ?up|slowed|reverb|acoustic|instrumental|karaoke|cover|demo|edit|mix)\b/i;
-      const sameSong = (c) => c.titleExact && c.artistMatch && (c.durDiff == null || c.durDiff <= 10)
-        && (!VARIANT.test(c.trackName) || VARIANT.test(String(title || '')));
-      const synced = broad?.candidates.find((c) => c.hasSynced && sameSong(c));
-      const plain = !result ? broad?.candidates.find((c) => c.hasPlain && sameSong(c)) : null;
-      const pick = synced || plain;
-      dbg('  broad →', synced ? `synced: ${synced.trackName} — ${synced.artistName}` : plain ? 'plain only' : 'nothing new');
-      if (pick) {
-        result = {
-          trackName: pick.trackName, artistName: pick.artistName,
-          syncedLyrics: pick.syncedLyrics, plainLyrics: pick.plainLyrics, instrumental: false, __source: 'lrclib',
-        };
+          if (q1.length > 0) {
+            tryLrclibSearch(q1).then((r) => {
+              if (!tryResolve(r)) onDone();
+            }).catch(onDone);
+          } else {
+            onDone();
+          }
+        });
       }
+
+      /* No timing yet: search LRCLIB the way the lyrics browser does (the
+         title with "(feat. …)", "[…]" and "- Remastered" trimmed, three
+         searches at once) and take a synced version of this same song: same
+         title, same artist, length within 10 seconds. Synced lyrics come
+         before any plain ones, LRCLIB's or Genius's. */
+      if (tryLrclibFirst && !result?.syncedLyrics && (title || '').trim()) {
+        dbg('STAGE broad LRCLIB search (no synced lyrics yet)');
+        const broad = await lrclibCandidates({ title, artist, duration }).catch(() => null);
+        if (!broad || broad.anyFailed) lrclibTrouble = true;
+        /* A remix, live take or sped-up edit has other timing: only when the
+           song playing is one too. */
+        const VARIANT = /\b(remix|live|sped ?up|slowed|reverb|acoustic|instrumental|karaoke|cover|demo|edit|mix)\b/i;
+        const sameSong = (c) => c.titleExact && c.artistMatch && (c.durDiff == null || c.durDiff <= 10)
+          && (!VARIANT.test(c.trackName) || VARIANT.test(String(title || '')));
+        const synced = broad?.candidates.find((c) => c.hasSynced && sameSong(c));
+        const plain = !result ? broad?.candidates.find((c) => c.hasPlain && sameSong(c)) : null;
+        const pick = synced || plain;
+        dbg('  broad →', synced ? `synced: ${synced.trackName} — ${synced.artistName}` : plain ? 'plain only' : 'nothing new');
+        if (pick) {
+          result = {
+            trackName: pick.trackName, artistName: pick.artistName,
+            syncedLyrics: pick.syncedLyrics, plainLyrics: pick.plainLyrics, instrumental: false, __source: 'lrclib',
+          };
+        }
+      }
+      return result;
+    };
+
+    /* Spotify: its own lyrics for this exact version (the song's Spotify id,
+       or the one found for a local file by title, artist and length). */
+    const spotifyStage = async () => {
+      if (!tryLrclibFirst || !partnerState().connected || !helperIsCurrent()) return null;
+      const id = sid || await resolveSpotifyVersion({ title, artist, duration, explicit }).catch(() => null);
+      if (!id) { dbg('  spotify → no Spotify version found'); return null; }
+      const data = await helperLyrics(id).catch((e) => { dbg('  spotify lyrics failed:', e?.message || e); return null; });
+      if (!data?.lines?.length) { dbg('  spotify → none'); return null; }
+      const lines = data.lines.map((l) => ({ t: Number(l.t) || 0, words: String(l.words || '').trim() }));
+      dbg('  spotify →', data.synced ? `synced (${lines.length} lines)` : 'plain');
+      return {
+        syncedLyrics: data.synced ? lines.map((l) => `[${lrcStamp(l.t)}] ${l.words}`).join('\n') : null,
+        plainLyrics: lines.map((l) => l.words).join('\n'),
+        instrumental: false, __source: 'spotify',
+      };
+    };
+
+    /* Both at once, and the first synced answer that's good enough wins:
+       Spotify's (the exact version) straight away; LRCLIB's after Spotify
+       has had at most another second and a half to answer. Plain words only
+       when neither has timing, Spotify's first. */
+    let result = null;
+    {
+      const spP = spotifyStage().catch(() => null);
+      const lrP = tryLrclibFirst ? lrclibStage().catch(() => null) : Promise.resolve(null);
+      const first = await Promise.race([spP.then((r) => ({ who: 'spotify', r })), lrP.then((r) => ({ who: 'lrclib', r }))]);
+      let sp = null; let lr = null;
+      if (first.who === 'spotify') {
+        sp = first.r;
+        if (!sp?.syncedLyrics) lr = await lrP;
+      } else {
+        lr = first.r;
+        sp = lr?.syncedLyrics ? await Promise.race([spP, new Promise((r) => setTimeout(() => r(null), 1500))]) : await spP;
+      }
+      result = (sp?.syncedLyrics && sp) || (lr?.syncedLyrics && lr) || (sp?.plainLyrics && sp) || lr || null;
+      dbg('PICK', result ? `${result.__source} ${result.syncedLyrics ? 'synced' : 'plain'}` : 'nothing from Spotify or LRCLIB');
     }
 
     // Genius fallback — only if user opted in AND LRClib found nothing
@@ -4396,9 +4587,8 @@ async function fetchLyrics({ title, artist, album, duration, provider, force, pe
 }
 ipcMain.handle('lyrics:fetch', (event, params) => fetchLyrics(params || {}));
 
-ipcMain.handle('lyrics:save', async (event, { title, artist, syncedLyrics, plainLyrics }) => {
+ipcMain.handle('lyrics:save', async (event, { title, artist, syncedLyrics, plainLyrics, spotifyId = null }) => {
   try {
-    const cacheKey = `${(artist || '').toLowerCase().trim()}|${(title || '').toLowerCase().trim()}`;
     const data = {
       ok: true,
       syncedLyrics: syncedLyrics || null,
@@ -4407,11 +4597,14 @@ ipcMain.handle('lyrics:save', async (event, { title, artist, syncedLyrics, plain
       // Your pick: never swapped out by the daily check for synced lyrics.
       source: 'user',
     };
-    // Update in-memory hot cache
-    lyricsCache.set(cacheKey, data);
-    // Persist to DB
+    /* Saved for the song, and for this Spotify version too, so the pick
+       holds whether the song plays from Spotify or a local copy. */
+    const keys = [...new Set([lyricsKeyFor(artist, title, null), lyricsKeyFor(artist, title, spotifyId)])];
     await ensureLibraryOpen();
-    await saveCachedLyrics(cacheKey, data);
+    for (const key of keys) {
+      lyricsCache.set(key, data);
+      await saveCachedLyrics(key, data);
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e?.message || e) };
@@ -4539,39 +4732,130 @@ async function lrclibCandidates({ title, artist, duration, customQuery } = {}) {
   return { typed, candidates, anyFailed: failures.length > 0, allFailed: !!failures.length && failures.length === settled.length, error: failures[0] || '', query: typed || `${a} ${t}`.trim() };
 }
 
-ipcMain.handle('lyrics:searchAll', async (event, { title, artist, duration, customQuery } = {}) => {
+/* ---- The lyrics browser ---------------------------------------------- *
+ * Every version of a song's lyrics, as one row per set of words:
+ *   - Spotify's, for each Spotify version of the song (clean and explicit
+ *     are separate tracks with their own words), first;
+ *   - LRCLIB's, searched the same way whether or not anything was typed;
+ *   - Genius's plain words only when nothing else has this song.
+ * Rows are split into the song itself and other results (same words in the
+ * title, another song), so a different song never sits among its versions.
+ * Versions with the same words are one row, whatever their timing.
+ * Each row says whether it's explicit or clean when the words tell. */
+const LYRIC_STAMP = /\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g;
+const PROFANE = /\b(?:motherfuck\w*|fuck\w*|shit(?!ake)\w*|bitch\w*|nigga\w*|niggas?|pussy|dick(?:s|head)?|cunt\w*|asshole\w*)\b/i;
+const MASKED = /\b[a-z]{1,3}\*+[a-z]{0,4}\b|\*{3,}|[a-z]-{2,}[a-z]?\b/i;
+function lyricRating(text) {
+  const t = String(text || '').replace(LYRIC_STAMP, '');
+  if (MASKED.test(t)) return 'clean';
+  if (PROFANE.test(t)) return 'explicit';
+  return null;
+}
+/** The words, without timing, punctuation or case: what makes two versions the same. */
+function lyricWords(text) {
+  return String(text || '').replace(LYRIC_STAMP, '').split('\n')
+    .map((l) => l.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim())
+    .filter((l) => l && l !== '♪').join('\n');
+}
+
+async function spotifyLyricVersions({ title, artist, duration, spotifyId, explicit }) {
+  if (!partnerState().connected || !helperIsCurrent()) return [];
+  const sid = /^[0-9A-Za-z]{22}$/.test(String(spotifyId || '')) ? String(spotifyId) : null;
+  const fits = await spotifyVersionsOf({ title, artist, duration }).catch(() => []);
+  const list = [];
+  if (sid) list.push({ id: sid, explicit: fits.find((f) => f.spotifyId === sid)?.explicit ?? explicit ?? null, album: '', durationMs: 0 });
+  for (const f of fits) if (!list.some((x) => x.id === f.spotifyId)) list.push({ id: f.spotifyId, explicit: !!f.explicit, album: f.album || '', durationMs: f.durationMs || 0 });
+  const rows = await Promise.all(list.slice(0, 3).map(async (v) => {
+    const data = await helperLyrics(v.id).catch(() => null);
+    if (!data?.lines?.length) return null;
+    const lines = data.lines.map((l) => ({ t: Number(l.t) || 0, words: String(l.words || '').trim() }));
+    return {
+      id: `spotify:${v.id}`, spotifyId: v.id, source: 'spotify',
+      trackName: title || '', artistName: artist || '', albumName: v.album,
+      duration: v.durationMs ? v.durationMs / 1000 : Number(duration) || 0,
+      hasSynced: !!data.synced, hasPlain: true,
+      syncedLyrics: data.synced ? lines.map((l) => `[${lrcStamp(l.t)}] ${l.words}`).join('\n') : null,
+      plainLyrics: lines.map((l) => l.words).join('\n'),
+      rating: v.explicit === true ? 'explicit' : v.explicit === false ? 'clean' : null,
+      thisSong: true, current: v.id === sid,
+    };
+  }));
+  return rows.filter(Boolean);
+}
+
+ipcMain.handle('lyrics:searchAll', async (event, { title, artist, duration, customQuery, spotifyId = null, explicit = null } = {}) => {
   try {
-    const { typed, candidates, allFailed, error, query } = await lrclibCandidates({ title, artist, duration, customQuery });
+    const typedRaw = String(customQuery || '').trim();
+    const defaultQuery = `${lyricArtist(artist)} ${lyricTitle(title)}`.trim();
+    // The prefilled words searched again are the same search, not a typed one.
+    const typed = typedRaw && typedRaw.toLowerCase() !== defaultQuery.toLowerCase() ? typedRaw : '';
+    const [lr, sp] = await Promise.all([
+      lrclibCandidates({ title, artist, duration, customQuery: typed }),
+      typed ? Promise.resolve([]) : spotifyLyricVersions({ title, artist, duration, spotifyId, explicit }).catch(() => []),
+    ]);
     const norm = (x) => String(x || '').toLowerCase()
       .replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/feat\.?|featuring|ft\.?/gi, ' ')
       .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    const songTitle = norm(lyricTitle(title));
+    const songArtist = norm(lyricArtist(artist));
+    /* Everyone credited on the song ("A, B & C feat. D"), for Other Results:
+       without a typed search those are other versions by them (live, remix,
+       another title), never another artist's song with the same name. */
+    const songArtists = String(artist || '').split(/\s*(?:,|&|\bfeat\.?|\bft\.?|\bwith\b|\bx\b)\s*/i).map(norm).filter(Boolean);
+    const byTheseArtists = (c) => {
+      const credit = norm(c.artistName);
+      return !!credit && songArtists.some((a) => credit.includes(a) || a.includes(credit));
+    };
+    const isThisSong = (c) => !!songTitle && norm(c.trackName) === songTitle
+      && (!songArtist || (!!norm(c.artistName) && (norm(c.artistName).includes(songArtist) || songArtist.includes(norm(c.artistName)))));
 
-    /* Nothing on LRCLIB: Genius may have the words (plain, no timing). */
-    if (!candidates.length) {
-      /* The song's own title and artist first (the surest match), then
-         whatever was typed, which may name the artist too. */
-      let g = null;
-      if (title && (!typed || norm(typed).includes(norm(title)))) {
-        g = await fetchLyrics({ title, artist, duration, provider: 'genius', peek: true }).catch(() => null);
-      }
-      if (!g?.plainLyrics && typed) {
-        g = await fetchLyrics({ title: typed, artist: '', duration, provider: 'genius', peek: true }).catch(() => null);
-      }
+    const all = [...sp, ...lr.candidates.map((c) => ({ ...c, thisSong: isThisSong(c), rating: null }))];
+
+    /* Nothing for this song anywhere: Genius may have the words. */
+    if (!all.some((c) => c.thisSong) && title) {
+      const g = await fetchLyrics({ title, artist, duration, provider: 'genius', peek: true }).catch(() => null);
       if (g?.plainLyrics) {
-        candidates.push({
-          id: `genius:${norm(typed || `${artist} ${title}`)}`,
-          trackName: typed || title || '', artistName: typed ? '' : (artist || ''), albumName: '',
+        all.push({
+          id: `genius:${norm(`${artist} ${title}`)}`, source: 'genius',
+          trackName: title || '', artistName: artist || '', albumName: '',
           duration: 0, hasSynced: false, hasPlain: true, syncedLyrics: null, plainLyrics: g.plainLyrics,
-          source: 'genius', score: 0,
+          thisSong: true, rating: null,
         });
       }
     }
 
-    if (!candidates.length && allFailed) return { ok: false, error, candidates: [] };
-    return { ok: true, candidates, query };
+    /* One row per set of words: Spotify's first, then synced, then the
+       length nearest the song. */
+    const dur = Number(duration) || 0;
+    const rank = (c) => (c.source === 'spotify' ? 0 : 2) - (c.hasSynced ? 1 : 0);
+    const gap = (c) => (dur && c.duration ? Math.abs(c.duration - dur) : 999);
+    const groups = new Map();
+    for (const c of all) {
+      const words = lyricWords(c.syncedLyrics || c.plainLyrics);
+      if (!words) continue;
+      const key = `${c.thisSong ? 's' : 'o'}|${words}`;
+      const g = groups.get(key);
+      if (!g) { groups.set(key, { ...c, copies: 1, sources: [c.source] }); continue; }
+      g.copies += 1;
+      if (!g.sources.includes(c.source)) g.sources.push(c.source);
+      const better = rank(c) < rank(g) || (rank(c) === rank(g) && gap(c) < gap(g));
+      if (better) groups.set(key, { ...c, copies: g.copies, sources: g.sources, rating: c.rating || g.rating });
+    }
+    const rows = [...groups.values()].map((c) => ({ ...c, rating: c.rating || lyricRating(c.syncedLyrics || c.plainLyrics) }));
+    /* The song's versions: where one has the explicit words and another
+       doesn't, the other is the clean one. */
+    const song = rows.filter((c) => c.thisSong);
+    if (song.some((c) => c.rating === 'explicit')) for (const c of song) if (!c.rating) c.rating = 'clean';
+    const order = (a, b) => rank(a) - rank(b) || gap(a) - gap(b) || (b.score || 0) - (a.score || 0);
+    song.sort(order);
+    const other = rows.filter((c) => !c.thisSong && (typed || byTheseArtists(c)))
+      .sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 15);
+
+    if (!song.length && !other.length && lr.allFailed) return { ok: false, error: lr.error, song: [], other: [], candidates: [] };
+    return { ok: true, song, other, candidates: [...song, ...other], query: typed || defaultQuery };
   } catch (e) {
     console.error('[lyrics:searchAll] error:', e);
-    return { ok: false, error: String(e?.message || e), candidates: [] };
+    return { ok: false, error: String(e?.message || e), song: [], other: [], candidates: [] };
   }
 });
 

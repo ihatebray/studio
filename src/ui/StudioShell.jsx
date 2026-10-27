@@ -1,10 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { sampleCoverTheme, accentTextColor } from '../lib/coverTheme.js';
 import { parseLRC } from '../lib/mediaUtils.js';
+import { spotifyIdOf } from '../lib/spotifyMediaElement.js';
 import StudioOnboarding from './StudioOnboarding.jsx';
 /* Opened rarely, so loaded on first use instead of with the app. */
 const SpotifyImport = React.lazy(() => import('./SpotifyImport.jsx'));
 import StudioHome from './StudioHome.jsx';
+
+/** What the lyrics lookup needs about a song: its tags, and its Spotify
+ *  version (Spotify's own lyrics belong to it) and explicit flag. */
+const lyricsAsk = (t) => ({
+  title: t.title || '', artist: t.artist || '', album: t.album || '', duration: t.duration || 0,
+  spotifyId: spotifyIdOf(t) || null, explicit: typeof t.explicit === 'boolean' ? t.explicit : null,
+});
 
 /* =========================================================================
  *  StudioShell — the entire view layer of studio.
@@ -72,6 +80,11 @@ export default function StudioShell({
   // overlay's Settings tab exposes a gapless toggle when these are wired.
   transitionMode = 'off',
   onSetTransitionMode,
+  normalization = 'normal',
+  onSetNormalization,
+  eq,
+  eqHeadroom = 0,
+  onSetEq,
   // Metadata editing (owned by App.jsx). The overlay shows an "Edit track
   // info" entry + pencil dock button when this is wired.
   onUpdateTrackMetadata,
@@ -229,13 +242,7 @@ export default function StudioShell({
        no longer exists, and a leftover "genius" in it skipped LRCLIB
        entirely, so synced lyrics never got a look in. */
     const lyricsProvider = 'lrclib+genius';
-    api.fetchLyrics({
-      title: track.title || '',
-      artist: track.artist || '',
-      album: track.album || '',
-      duration: track.duration || 0,
-      provider: lyricsProvider,
-    }).then((res) => {
+    api.fetchLyrics({ ...lyricsAsk(track), provider: lyricsProvider }).then((res) => {
       if (cancelled || lyricsReqRef.current !== reqId) return;
       let data = null;
       if (res?.ok) {
@@ -257,6 +264,25 @@ export default function StudioShell({
     });
     return () => { cancelled = true; };
   }, [currentTrack?.id, currentTrack?.title, currentTrack?.artist]);
+
+  /* The next song's lyrics are fetched while this one plays, so they're
+     saved and show the moment it starts. A few seconds in, so the song
+     playing gets the network first. */
+  const nextTrack = queueIndex >= 0 ? queue[queueIndex + 1] || null : null;
+  useEffect(() => {
+    if (!nextTrack || lyricsCacheRef.current.has(nextTrack.id)) return undefined;
+    const api = typeof window !== 'undefined' ? window.electronAPI : null;
+    if (!api?.fetchLyrics) return undefined;
+    const t = setTimeout(() => {
+      api.fetchLyrics({ ...lyricsAsk(nextTrack), provider: 'lrclib+genius' }).then((res) => {
+        if (!res?.ok || res.temporary || lyricsCacheRef.current.has(nextTrack.id)) return;
+        lyricsCacheRef.current.set(nextTrack.id, {
+          synced: parseLRC(res.syncedLyrics), plain: res.plainLyrics || null, instrumental: !!res.instrumental,
+        });
+      }).catch(() => {});
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [nextTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------- Lyric editing / picking (ported from Immerse) -------------- */
   // The editor (Overlays) saved to the DB itself; this just installs the
@@ -291,7 +317,7 @@ export default function StudioShell({
     const reqId = ++lyricsReqRef.current;
     if (api?.saveLyrics) {
       await api.saveLyrics({
-        title: currentTrack.title, artist: currentTrack.artist,
+        title: currentTrack.title, artist: currentTrack.artist, spotifyId: spotifyIdOf(currentTrack) || null,
         syncedLyrics: candidate.syncedLyrics, plainLyrics: plain,
       });
     }
@@ -398,6 +424,11 @@ export default function StudioShell({
         playEvents={playEvents}
         transitionMode={transitionMode}
         onSetTransitionMode={onSetTransitionMode}
+        normalization={normalization}
+        onSetNormalization={onSetNormalization}
+        eq={eq}
+        eqHeadroom={eqHeadroom}
+        onSetEq={onSetEq}
         discordPresenceEnabled={discordPresenceEnabled}
         onSetDiscordPresenceEnabled={onSetDiscordPresenceEnabled}
         discordAppId={discordAppId}

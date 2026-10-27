@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 /* =========================================================================
@@ -24,6 +24,9 @@ const toBoost = (db) => Math.min(16, Math.max(1, 10 ** (db / 20)));
 /** Where fraction `f` of the range sits, matching the knob's travel. */
 const at = (f) => `calc(7px + (100% - 14px) * ${f})`;
 const fmtDb = (db) => (db < 0.05 ? 'Off' : `+${db.toFixed(db >= 10 ? 0 : 1)} dB`);
+/** One wheel notch on the slider: 2%, and 1% in the bottom quarter, where
+ *  each percent is a bigger change to the ear. */
+const wheelStep = (v) => (v < 0.25 ? 0.01 : 0.02);
 
 const CSS = `
 .stv-boost { position: relative; height: 24px; min-width: 34px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
@@ -78,6 +81,12 @@ const CSS = `
 .stv-meter-val { min-width: 56px; text-align: right; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75); }
 .stv-meter-val.idle { color: rgba(255,255,255,0.35); font-weight: 600; }
 .stv-note { margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: rgba(255,255,255,0.5); }
+
+/* Folded (a narrow Now Playing bar): one speaker button that opens the
+   whole control in a popover. The bar's own styles decide when it folds. */
+.stv-inline { display: contents; }
+.sth-npbtn.stv-fold { display: none; }
+.stv-pop.stv-volpop { width: auto; padding: 8px 10px; display: flex; align-items: center; gap: 2px; border-radius: 12px; }
 `;
 
 function BoostIcon() {
@@ -187,9 +196,62 @@ function BoostPopover({ anchor, boost, onSetBoost, getGainReduction, onClose }) 
   );
 }
 
+function SpeakerIcon({ volume }) {
+  const muted = volume <= 0.001;
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
+      {muted ? <path d="M16 9.5l5 5M21 9.5l-5 5" /> : <><path d="M15.5 9a4 4 0 0 1 0 6" />{volume > 0.5 ? <path d="M18.5 6.5a8 8 0 0 1 0 11" /> : null}</>}
+    </svg>
+  );
+}
+
+/* The whole control in a popover above the folded speaker button. Clicks in
+   the boost popover it can open don't close it. */
+function VolumePopover({ anchor, onClose, ...props }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+  useLayoutEffect(() => {
+    const place = () => {
+      const r = anchor?.getBoundingClientRect();
+      if (!r) return;
+      setPos({ right: Math.max(12, window.innerWidth - r.right - 8), bottom: window.innerHeight - r.top + 10 });
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [anchor]);
+  useEffect(() => {
+    const down = (e) => {
+      if (ref.current?.contains(e.target) || anchor?.contains(e.target) || e.target?.closest?.('.stv-pop')) return;
+      onClose();
+    };
+    const key = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('keydown', key);
+    };
+  }, [anchor, onClose]);
+  if (!pos) return null;
+  return createPortal(
+    <div ref={ref} className="stv-pop stv-volpop" role="dialog" aria-label="Volume" style={{ ...pos, transformOrigin: 'bottom right' }}>
+      {/* eslint-disable-next-line no-use-before-define */}
+      <VolumeControl {...props} width={150} />
+    </div>,
+    document.body,
+  );
+}
+
 /** Mute button, volume slider and boost button. Renders a fragment so it
- *  slots into whichever cluster holds it. */
-function VolumeControl({ volume = 1, onSetVolume, boost = 1, onSetBoost, getGainReduction = null, width = 72 }) {
+ *  slots into whichever cluster holds it. With `fold`, it also carries a
+ *  speaker button that takes their place when the bar is too narrow (the
+ *  bar's styles swap them), so volume is always in reach. */
+function VolumeControl({ volume = 1, onSetVolume, boost = 1, onSetBoost, getGainReduction = null, width = 72, fold = false }) {
+  const foldRef = useRef(null);
+  const [folded, setFolded] = useState(false);
+  const closeFolded = useCallback(() => setFolded(false), []);
   const lastVol = useRef(volume > 0 ? volume : 0.6);
   useEffect(() => { if (volume > 0) lastVol.current = volume; }, [volume]);
   const [open, setOpen] = useState(false);
@@ -197,17 +259,50 @@ function VolumeControl({ volume = 1, onSetVolume, boost = 1, onSetBoost, getGain
   const muted = volume <= 0.001;
   const db = toDb(boost);
   const pct = volume * 100;
+  /* Scrolling over the slider moves it. A native listener, because React's
+     wheel handler can't stop the page scrolling too. Touchpads send many
+     small deltas, so they add up to a notch first. */
+  const sliderRef = useRef(null);
+  const live = useRef({ volume, onSetVolume });
+  live.current = { volume, onSetVolume };
+  useEffect(() => {
+    const el = sliderRef.current;
+    if (!el) return undefined;
+    let pending = 0;
+    const onWheel = (e) => {
+      e.preventDefault();
+      pending += e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+      if (Math.abs(pending) < 50) return;
+      const notches = Math.trunc(pending / 100) || Math.sign(pending);
+      pending = 0;
+      let v = live.current.volume;
+      for (let i = 0; i < Math.abs(notches); i += 1) v -= Math.sign(notches) * wheelStep(notches > 0 ? v - 0.001 : v);
+      live.current.onSetVolume(Math.round(Math.min(1, Math.max(0, v)) * 100) / 100);
+    };
+    // The folded speaker button takes the wheel too.
+    const both = [el, foldRef.current].filter(Boolean);
+    both.forEach((x) => x.addEventListener('wheel', onWheel, { passive: false }));
+    return () => both.forEach((x) => x.removeEventListener('wheel', onWheel));
+  }, []);
   return (
     <>
       <style>{CSS}</style>
+      {fold ? (
+        <button ref={foldRef} type="button" className={`sth-npbtn stv-fold${folded ? ' is-on' : ''}`} onClick={() => setFolded((o) => !o)}
+          title="Volume" aria-label="Volume" aria-haspopup="dialog" aria-expanded={folded}>
+          <SpeakerIcon volume={volume} />
+        </button>
+      ) : null}
+      {fold && folded ? (
+        <VolumePopover anchor={foldRef.current} onClose={closeFolded} volume={volume} onSetVolume={onSetVolume}
+          boost={boost} onSetBoost={onSetBoost} getGainReduction={getGainReduction} />
+      ) : null}
+      <span className="stv-inline">
       <button type="button" className="sth-npbtn" onClick={() => onSetVolume(muted ? (lastVol.current || 0.6) : 0)}
         title={muted ? 'Unmute' : 'Mute'} aria-label={muted ? 'Unmute' : 'Mute'} aria-pressed={muted}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
-          {muted ? <path d="M16 9.5l5 5M21 9.5l-5 5" /> : <><path d="M15.5 9a4 4 0 0 1 0 6" />{volume > 0.5 ? <path d="M18.5 6.5a8 8 0 0 1 0 11" /> : null}</>}
-        </svg>
+        <SpeakerIcon volume={volume} />
       </button>
-      <input type="range" min={0} max={1} step={0.01} value={volume}
+      <input ref={sliderRef} type="range" min={0} max={1} step={0.01} value={volume}
         onChange={(e) => onSetVolume(Number(e.target.value))}
         className="sth-vol" aria-label="Volume"
         style={{ width, background: `linear-gradient(to right, #fff 0%, #fff ${pct}%, rgba(255,255,255,0.16) ${pct}%, rgba(255,255,255,0.16) 100%)` }} />
@@ -222,6 +317,7 @@ function VolumeControl({ volume = 1, onSetVolume, boost = 1, onSetBoost, getGain
         <BoostPopover anchor={btnRef.current} boost={boost} onSetBoost={onSetBoost}
           getGainReduction={getGainReduction} onClose={() => setOpen(false)} />
       ) : null}
+      </span>
     </>
   );
 }

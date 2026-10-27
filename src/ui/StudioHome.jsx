@@ -107,6 +107,11 @@ export default function StudioHome({
   // Playback (owned by App.jsx)
   transitionMode = 'off',
   onSetTransitionMode,
+  normalization = 'normal',
+  onSetNormalization,
+  eq,
+  eqHeadroom = 0,
+  onSetEq,
   // Discord rich presence (owned by App.jsx)
   discordPresenceEnabled = false,
   onSetDiscordPresenceEnabled,
@@ -550,8 +555,11 @@ export default function StudioHome({
   const onPlayTrackRef = useRef(onPlayTrack);
   const libRowsRef = useRef(null);
   useEffect(() => { onPlayTrackRef.current = onPlayTrack; }, [onPlayTrack]);
+  /* A playlist's list is where the song plays from. Songs (your whole
+     library) isn't a place: there the bar shows the song's album. */
+  const libSourceRef = useRef(null);
   const playFromLibRows = useCallback((t) => {
-    onPlayTrackRef.current?.(t, libRowsRef.current || undefined, 'list');
+    onPlayTrackRef.current?.(t, libRowsRef.current || undefined, 'list', libSourceRef.current);
   }, []);
 
   /* A library list's row. On a playlist's page the menu also knows which
@@ -568,7 +576,7 @@ export default function StudioHome({
   }, []);
   /* The same menu for a Spotify row (My Spotify, artist pages, search) and
      for a song in the queue (`queueIndex`, its place in the whole queue). */
-  const openSongMenu = useCallback((e, { track = null, row = null, queueIndex = null } = {}) => {
+  const openSongMenu = useCallback((e, { track = null, row = null, queueIndex = null, playlistId = null } = {}) => {
     e.preventDefault();
     e.stopPropagation();
     /* A song streaming from Spotify (in the queue, say) is a Spotify row as
@@ -579,7 +587,8 @@ export default function StudioHome({
     }
     if (!track && !row?.spotifyId) return;
     setPlSub(null);
-    setRowMenu({ x: e.clientX, y: e.clientY, track, row, queueIndex });
+    // `playlistId`: one of your playlists, open in the album view.
+    setRowMenu({ x: e.clientX, y: e.clientY, track, row, queueIndex, playlistId: track ? playlistId : null });
   }, []);
   const openQueueMenu = useCallback((e, track, queueIndex) => openSongMenu(e, { track, queueIndex }), [openSongMenu]);
 
@@ -2198,6 +2207,11 @@ export default function StudioHome({
     }
     return (LIB_VIEWS.find(([id]) => id === libView) || [, 'Library'])[1];
   }, [libView, playlists]);
+  /* Where a song played from this list comes from, for the bar. */
+  const libSource = useMemo(() => (
+    libView.startsWith('pl:') ? { kind: 'playlist', lib: true, id: libView.slice(3), name: libTitle } : null
+  ), [libView, libTitle]);
+  libSourceRef.current = libSource;
 
   const libRows = useMemo(() => {
     let list = library;
@@ -2629,9 +2643,10 @@ export default function StudioHome({
           const live = rows.filter((r) => !r.notOut);
           const list = live.map((r) => r.libTrack || spotifyPlayable(r));
           if (!list.length) return;
-          if (shuffle) { const sh = [...list].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh); return; }
+          const from = { kind: 'album', lib: true, key, name: a.name };
+          if (shuffle) { const sh = [...list].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh, 'list', from); return; }
           const at = Math.max(0, live.indexOf(want));
-          onPlayTrack?.(list[at], list);
+          onPlayTrack?.(list[at], list, 'list', from);
         },
         edit: onUpdateAlbumMetadata ? () => {
           setPaletteOpen(false);
@@ -2650,6 +2665,71 @@ export default function StudioHome({
     setPaletteOpen(true);
   }, [libAlbumRecord]);
   openLibAlbumRef.current = openLibAlbum;
+  /* One of your playlists in the album view, where it gets the playlist
+     design. Its songs follow the playlist while it's open (libPlaylistLive):
+     a song moved, removed or added shows straight away. */
+  const libPlaylistRows = useCallback((id) => {
+    const pl = playlists.find((p) => p.id === id);
+    if (!pl) return [];
+    return (pl.trackIds || []).map((tid) => libById.get(tid)).filter(Boolean).map((t) => ({
+      title: t.title || '', artists: t.artist || '', album: t.album || '', durationMs: Math.round((Number(t.duration) || 0) * 1000),
+      explicit: !!t.explicit, spotifyId: spotifyIdOf(t) || undefined, albumArtUrl: coverFor(t) || '', libTrack: t,
+    }));
+  }, [playlists, libById, coverFor]);
+  /* The record outlives this render, so what it calls later reads the
+     playlists as they are then. */
+  const libPlaylistRowsRef = useRef(libPlaylistRows);
+  libPlaylistRowsRef.current = libPlaylistRows;
+  const movePlaylistSongRef = useRef(movePlaylistSong);
+  movePlaylistSongRef.current = movePlaylistSong;
+  const libPlaylistRecord = useCallback((id, focusTrack = null) => {
+    const pl = playlists.find((p) => p.id === id);
+    if (!pl) return null;
+    const from = { kind: 'playlist', lib: true, id, name: pl.name };
+    return {
+      focusId: focusTrack ? (spotifyIdOf(focusTrack) || `lib:${focusTrack.id}`) : null,
+      album: {
+        albumId: `libpl:${id}`, name: pl.name, artists: 'You', albumArtUrl: pl.coverArt || '', label: 'Playlist',
+        collection: true, playlist: true, lib: true, playlistId: id, context: from,
+        empty: 'Nothing in this playlist yet. Add songs from any song’s menu.',
+        load: async () => libPlaylistRowsRef.current(id),
+        play: (rows, index = 0, shuffle = false) => {
+          const want = rows[index];
+          const list = rows.map((r) => r.libTrack).filter(Boolean);
+          if (!list.length) return;
+          if (shuffle) { const sh = [...list].sort(() => Math.random() - 0.5); onPlayTrack?.(sh[0], sh, 'list', from); return; }
+          onPlayTrack?.(want?.libTrack || list[0], list, 'list', from);
+        },
+        /* Dropped on the song at `row` in the list: its place in the playlist
+           (the list leaves out any song no longer in your library). */
+        move: onReorderPlaylist ? (trackId, row) => {
+          const target = libPlaylistRowsRef.current(id)[row]?.libTrack?.id;
+          const now = playlistsRef.current.find((p) => p.id === id);
+          const to = target && now ? (now.trackIds || []).indexOf(target) : -1;
+          if (to >= 0) movePlaylistSongRef.current(id, trackId, to);
+        } : null,
+        // Edited right in the view: its name, cover and songs, or the whole playlist gone.
+        editor: {
+          rename: onRenamePlaylist ? (name) => onRenamePlaylist(id, name) : null,
+          setCover: onUpdatePlaylist ? (coverArt) => onUpdatePlaylist(id, { coverArt }) : null,
+          remove: onRemoveFromPlaylist ? (trackId) => removeFromPlaylistNow(id, trackId) : null,
+          del: onDeletePlaylist ? () => { setPaletteOpen(false); deletePlaylistNow(id); } : null,
+        },
+      },
+    };
+  }, [playlists, onPlayTrack, onReorderPlaylist, onRenamePlaylist, onUpdatePlaylist, onRemoveFromPlaylist, onDeletePlaylist, removeFromPlaylistNow, deletePlaylistNow]);
+  const openLibPlaylist = useCallback((id, focusTrack = null) => {
+    const rec = libPlaylistRecord(id, focusTrack);
+    if (!rec) return;
+    setPaletteRecord(rec);
+    setPaletteOpen(true);
+  }, [libPlaylistRecord]);
+  // The open playlist's songs as they are now.
+  const openPlId = paletteOpen ? paletteRecord?.album?.playlistId || null : null;
+  const libPlaylistLive = useMemo(() => {
+    const pl = openPlId ? playlists.find((p) => p.id === openPlId) : null;
+    return pl ? { albumId: `libpl:${pl.id}`, tracks: libPlaylistRows(pl.id), name: pl.name, albumArtUrl: pl.coverArt || '' } : null;
+  }, [openPlId, playlists, libPlaylistRows]);
   /* How the album view looks until you pick one in it: what your settings
      give the rest of the app (Dark mode, Immerse, or Library pages on Cover
      Art or Full Color). */
@@ -2658,21 +2738,70 @@ export default function StudioHome({
   /* Where the song playing came from, for the bar's link back to it and
      the bar menu's Go to item. Opens with the song picked out. */
   const npFrom = playSource && currentTrack && playSource.ids.has(currentTrack.id) ? playSource.item : null;
-  const openFrom = useCallback(() => {
-    if (npFrom) openRecord({ ...npFrom, focusId: spotifyIdOf(currentTrack) || null });
-  }, [npFrom, currentTrack, openRecord]);
-  /* Shown only when it says something the bar doesn't already: an artist's
-     Popular songs would read "Frank Ocean · Frank Ocean", and a one-song
-     release would repeat the song's own title. */
+  /* The album a song is on: your copy's album when you have the album;
+     otherwise the album itself, shown in the album view with this song
+     picked out. Its Spotify id comes from the song when it carries one,
+     else from the song's own Spotify entry, else from Spotify's albums by
+     name. `row` is the Spotify row the song came from, when there is one. */
+  const openTrackAlbum = useCallback(async (t, { row = null, saved = null } = {}) => {
+    if (!t) return;
+    const have = saved ?? (libById.has(t.id) && !t.streamOnly);
+    if (have && (t.album || '').trim() && albumKeyOf(t) !== '::') { openLibAlbum(albumKeyOf(t), t); return; }
+    const sid = row?.spotifyId || t.spotifyId || spotifyIdOf(t) || null;
+    const artistName = row ? String(row.artists || '').split(', ')[0] : primaryArtistOf(t);
+    const albumName = row?.album || t.album || '';
+    const show = (id, name, image) => openRecord({
+      kind: 'album', id, name: name || albumName, image: image || row?.albumArtUrl || coverFor(t) || null,
+      sub: artistName ? `Album · ${artistName}` : '', focusId: sid || null,
+    });
+    const knownId = row?.albumId || t.albumId || null;
+    if (knownId) { show(knownId); return; }
+    const api = window.electronAPI;
+    if (sid && api?.spotifyLinkResolve) {
+      const info = await api.spotifyLinkResolve(`spotify:track:${sid}`).catch(() => null);
+      if (info?.album?.id) { show(info.album.id, info.album.name, info.album.image); return; }
+    }
+    if (albumName && api?.spotifySearchAlbums) {
+      const norm = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      const hits = await api.spotifySearchAlbums(`${albumName} ${artistName}`.trim()).catch(() => []);
+      const list = Array.isArray(hits) ? hits : [];
+      const named = list.filter((h) => norm(h.name) === norm(albumName));
+      const hit = named.find((h) => !artistName || norm(h.artists).includes(norm(artistName))) || named[0];
+      if (hit?.albumId) { show(hit.albumId, hit.name, hit.albumArtUrl); return; }
+    }
+    pushToast?.({ message: `Couldn’t find ${albumName ? `“${albumName}”` : 'this album'} on Spotify.`, kind: 'error', durationMs: 4000, log: false });
+  }, [libById, openLibAlbum, openRecord, coverFor, pushToast]);
+  /* Opens a source: a Spotify album, playlist or mix in the album view, or
+     one of your own albums (album view), playlists or artists (their page).
+     `focus` is the song to pick out where the view can. */
+  const openSource = useCallback((item, focus = null) => {
+    if (!item) return;
+    if (item.lib && item.kind === 'album') { openLibAlbum(item.key, focus); return; }
+    if (item.lib && item.kind === 'playlist') { openLibPlaylist(item.id, focus); return; }
+    if (item.lib && item.kind === 'artist') { setPaletteOpen(false); openArtistAnywhere({ name: item.name }); return; }
+    if (item.songAlbum) { openTrackAlbum(focus); return; }
+    openRecord({ ...item, focusId: spotifyIdOf(focus) || null });
+  }, [openLibAlbum, openLibPlaylist, openRecord, openArtistAnywhere, openTrackAlbum]);
+  /* What the bar shows after the artist: the playlist or album the song is
+     playing from, or else the album the song is on. A source is left out
+     when it says nothing the bar doesn't already: an artist's Popular songs
+     would read "Frank Ocean · Frank Ocean", and a one-song release would
+     repeat the song's own title. */
   const npFromShown = useMemo(() => {
-    if (!npFrom?.name || !currentTrack) return null;
+    if (!currentTrack) return null;
     const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
     const artists = String(currentTrack.artist || '').split(/\s*(?:,|&|\bfeat\.?|\bft\.?)\s*/i);
-    if (same(npFrom.name, currentTrack.title) || same(npFrom.name, currentTrack.artist) || artists.some((a) => same(a, npFrom.name))) return null;
-    return npFrom;
+    const says = (name) => !!String(name || '').trim() && !same(name, currentTrack.title)
+      && !same(name, currentTrack.artist) && !artists.some((a) => same(a, name));
+    if (npFrom && says(npFrom.name)) return npFrom;
+    const album = String(currentTrack.album || '').trim();
+    return says(album) ? { kind: 'album', songAlbum: true, name: album } : null;
   }, [npFrom, currentTrack]);
+  const openFrom = useCallback(() => {
+    if (npFromShown) openSource(npFromShown, currentTrack);
+  }, [npFromShown, currentTrack, openSource]);
   /* The queue's "Next from" link: the same view the bar's link opens. */
-  const openQueueSource = useCallback((item) => { if (item) openRecord(item); }, [openRecord]);
+  const openQueueSource = useCallback((item) => openSource(item), [openSource]);
   const mySpotifyBridge = useMemo(() => {
     const saveState = (row) => {
       if (libBySpotifyId.has(row.spotifyId) || ownedTrackFor(row.title, row.artists, row.album || '')) return 'saved';
@@ -3021,11 +3150,11 @@ export default function StudioHome({
      of these shows and by a page's ··· button. Built at call time from
      what's current, so the openers below stay stable. */
   const atOf = (e) => (e?.at ? e.at : { x: e.clientX, y: e.clientY });
-  const songItems = (tracks, name, { exclude = null } = {}) => {
+  const songItems = (tracks, name, { exclude = null, from = null } = {}) => {
     const ids = tracks.map((t) => t.id);
     return [
-      onPlayTrack ? { label: 'Play', icon: MI.play, run: () => onPlayTrack(tracks[0], tracks) } : null,
-      onPlayTrack && tracks.length > 1 ? { label: 'Shuffle', icon: MI.shuffle, run: () => { const sh = [...tracks].sort(() => Math.random() - 0.5); onPlayTrack(sh[0], sh); } } : null,
+      onPlayTrack ? { label: 'Play', icon: MI.play, run: () => onPlayTrack(tracks[0], tracks, 'list', from) } : null,
+      onPlayTrack && tracks.length > 1 ? { label: 'Shuffle', icon: MI.shuffle, run: () => { const sh = [...tracks].sort(() => Math.random() - 0.5); onPlayTrack(sh[0], sh, 'list', from); } } : null,
       'sep',
       onPlayNext ? { label: 'Play Next', icon: MI.next, run: () => { onPlayNext(tracks); pushToast?.({ message: `Playing next: ${name}` }); } } : null,
       onAddToQueue ? { label: 'Add to Queue', icon: MI.queue, run: () => { onAddToQueue(tracks); pushToast?.({ message: `Added to queue: ${name}` }); } } : null,
@@ -3046,7 +3175,7 @@ export default function StudioHome({
         at: atOf(e),
         head: { art: a.art || coverFor(tracks[0]), title: a.name, sub: [tracks.length === 1 ? 'Single' : 'Album', a.artist].filter(Boolean).join(' · ') },
         items: [
-          ...songItems(tracks, a.name),
+          ...songItems(tracks, a.name, { from: { kind: 'album', lib: true, key: a.key, name: a.name } }),
           a.artist ? { label: 'Go to Artist', icon: MI.artist, run: () => openArtistAnywhere({ name: a.artist }) } : null,
           onUpdateAlbumMetadata ? {
             label: 'Edit Info', icon: MI.edit,
@@ -3067,7 +3196,7 @@ export default function StudioHome({
         at: atOf(e),
         head: { art: plArt(pl), title: pl.name, sub: `Playlist · ${n} ${n === 1 ? 'song' : 'songs'}` },
         items: [
-          ...(tracks.length ? songItems(tracks, pl.name, { exclude: pl.id }) : []),
+          ...(tracks.length ? songItems(tracks, pl.name, { exclude: pl.id, from: { kind: 'playlist', lib: true, id: pl.id, name: pl.name } }) : []),
           onRenamePlaylist || onUpdatePlaylist ? { label: 'Edit Playlist', icon: MI.edit, run: () => setRenamePl({ id: pl.id, name: pl.name }) } : null,
           onDeletePlaylist ? { label: 'Delete Playlist', icon: MI.trash, danger: true, run: () => deletePlaylistNow(pl.id) } : null,
         ],
@@ -3080,7 +3209,7 @@ export default function StudioHome({
         at: atOf(e),
         head: { art: image, title: a.name, sub: `Artist · ${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}`, round: true },
         items: [
-          ...(tracks.length ? songItems(tracks, a.name) : []),
+          ...(tracks.length ? songItems(tracks, a.name, { from: { kind: 'artist', lib: true, name: a.name } }) : []),
           { label: 'Go to Artist', icon: MI.artist, run: () => openArtistAnywhere({ name: a.name, spotifyId: a.spotifyId || null, image }) },
           a.spotifyId ? { label: 'Copy Spotify Link', icon: MI.link, run: () => copyItemLink('artist', a.spotifyId) } : null,
         ],
@@ -3380,7 +3509,7 @@ export default function StudioHome({
             </div>
           ) : null}
           {playlists.map((pl) => {
-            const on = libDetail?.kind === 'playlist' && libDetail.key === pl.id;
+            const on = openPlId === pl.id || (libDetail?.kind === 'playlist' && libDetail.key === pl.id);
             const n = Array.isArray(pl.trackIds) ? pl.trackIds.length : 0;
             const firstArt = !pl.coverArt && n ? (() => {
               const t0 = library.find((t) => t.id === pl.trackIds[0]);
@@ -3389,7 +3518,7 @@ export default function StudioHome({
             const artUrl = pl.coverArt || firstArt;
             return (
               <button key={pl.id} type="button" className={`sth-side-pl${on ? ' on' : ''}`} aria-current={on ? 'page' : undefined}
-                onClick={() => { pickSection('library'); setLibDetail({ kind: 'playlist', key: pl.id }); }}
+                onClick={() => openLibPlaylist(pl.id)}
                 onContextMenu={(e) => openPlaylistMenu(e, pl.id)}>
                 <span className="art" aria-hidden style={{
                   backgroundImage: artUrl ? `url("${artUrl}")` : 'linear-gradient(135deg, rgba(var(--accent-rgb),0.55), rgba(var(--accent-rgb),0.2))',
@@ -3587,6 +3716,11 @@ export default function StudioHome({
               uiFontId={uiFontId}
               onSetUiFontId={onSetUiFontId}
               onSetTransitionMode={onSetTransitionMode}
+              normalization={normalization}
+              onSetNormalization={onSetNormalization}
+              eq={eq}
+              eqHeadroom={eqHeadroom}
+              onSetEq={onSetEq}
               onSpotifyCredsSaved={onSpotifyCredsSaved}
               pickAccentFixed={pickAccentFixed}
               pickAccentMode={pickAccentMode}
@@ -3673,35 +3807,8 @@ export default function StudioHome({
           if (song) await onAddTracksToPlaylist?.(r.id, [song.id]);
           pushToast?.({ message: `Added to ${n}` });
         };
-        /* Your copy's album page when you have the album; otherwise the album
-           itself, shown in the album view with this song picked out. Its
-           Spotify id comes from the song when it carries one, else from the
-           song's own Spotify entry, else from Spotify's albums by name. */
-        const goAlbum = async () => {
-          close();
-          if (saved && (t.album || '').trim() && albumKeyOf(t) !== '::') { openLibAlbum(albumKeyOf(t), t); return; }
-          const albumName = row?.album || t.album || '';
-          const show = (id, name, image) => openRecord({
-            kind: 'album', id, name: name || albumName, image: image || row?.albumArtUrl || coverFor(t) || null,
-            sub: artistName ? `Album · ${artistName}` : '', focusId: sid || null,
-          });
-          const knownId = row?.albumId || t.albumId || null;
-          if (knownId) { show(knownId); return; }
-          const api = window.electronAPI;
-          if (sid && api?.spotifyLinkResolve) {
-            const info = await api.spotifyLinkResolve(`spotify:track:${sid}`).catch(() => null);
-            if (info?.album?.id) { show(info.album.id, info.album.name, info.album.image); return; }
-          }
-          if (albumName && api?.spotifySearchAlbums) {
-            const norm = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-            const hits = await api.spotifySearchAlbums(`${albumName} ${artistName}`.trim()).catch(() => []);
-            const list = Array.isArray(hits) ? hits : [];
-            const named = list.filter((h) => norm(h.name) === norm(albumName));
-            const hit = named.find((h) => !artistName || norm(h.artists).includes(norm(artistName))) || named[0];
-            if (hit?.albumId) { show(hit.albumId, hit.name, hit.albumArtUrl); return; }
-          }
-          pushToast?.({ message: `Couldn’t find ${albumName ? `“${albumName}”` : 'this album'} on Spotify.`, kind: 'error', durationMs: 4000, log: false });
-        };
+        // The album page, as the bar's link opens it (openTrackAlbum).
+        const goAlbum = () => { close(); openTrackAlbum(t, { row, saved }); };
         const copyLink = async () => {
           close();
           if (sid) {
@@ -4231,7 +4338,11 @@ export default function StudioHome({
             openPlaylistPicker(t, { x: r.right - 288, y: r.top - 10, above: true });
           } : null}
           onMore={openBarMenu}
-          from={npFromShown}
+          from={theme.npSource !== false ? npFromShown : null}
+          /* A playlist (Liked Songs and mixes are playlists too) always has
+             its own line: it isn't the song's, so it shouldn't read as part of
+             its credit. An album beside the artist does. */
+          fromLayout={['playlist', 'liked', 'mix'].includes(npFromShown?.kind) || theme.npSourceLayout === 'line' ? 'line' : 'artist'}
           onOpenFrom={openFrom}
           shuffleOn={shuffleOn}
           repeat={repeat}
@@ -4579,6 +4690,15 @@ export default function StudioHome({
         onGetSpotifyTrack={downloadSpotifyRow}
         onPlaySpotifyRows={(rows, i, opts) => mySpotifyBridge.playRows(rows, i, opts)}
         record={paletteRecord}
+        liveRecord={libPlaylistLive}
+        /* The song playing, for the mini player along the bottom of a
+           playlist. */
+        mini={currentTrack ? {
+          track: currentTrack, art: coverFor(currentTrack) || null, playing: !!isPlaying, duration: duration || currentTrack.duration || 0,
+          onToggle: onTogglePlay, onPrev, onNext, onSeek,
+          shuffleOn, repeat, onToggleShuffle, onToggleRepeat,
+          volume, onSetVolume, gainBoost, onSetGainBoost, getGainReduction,
+        } : null}
         look={albumLook}
         onGetSlskFile={downloadSoulseekRow}
         onGetSlskAlbum={downloadSsAlbum}
@@ -4590,6 +4710,7 @@ export default function StudioHome({
           pickSection('library');
         }}
         onOpenLibraryAlbum={(t) => openAlbumFromRow(t)}
+        libAlbumOf={(t) => ((t?.album || '').trim() && albumKeyOf(t) !== '::' ? libAlbumRecord(albumKeyOf(t), t)?.album || null : null)}
         onOpenArtist={(artist) => {
           /* "Open full page" from the panel's artist view. */
           setPaletteOpen(false);
