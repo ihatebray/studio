@@ -27,7 +27,7 @@ import { fullAlbumRows, mergeAlbum } from './home/RecordPage.jsx';
 import { deriveAccent, applyAccent, accentSourceFromTheme, lastAccentSource, rememberAccentSource, NEUTRAL_ACCENT } from '../lib/accentTokens.js';
 import { api, fmtMs } from '../lib/format.js';
 import { ColourStrip, makeHoverSource } from './home/ColourStrip.jsx';
-import { getPlaybackTime } from '../lib/playbackClock.js';
+import { getPlaybackTime, onPlaybackTime } from '../lib/playbackClock.js';
 import { OPEN_SHORTCUTS_EVENT, ShortcutsDialog, keysText, shortcutFor, worksWhileTyping } from './home/Shortcuts.jsx';
 import { CoverLightbox, NowPlayingBar, NowPlayingFullView, NowPlayingPanelDock } from './home/NowPlaying.jsx';
 import { HOME_CSS } from './home/styles.js';
@@ -77,6 +77,7 @@ export default function StudioHome({
   onPrev,
   onNext,
   lyricsData,            // { synced, plain, instrumental } | null
+  lyricsFor = null,      // the song lyricsData is for (until it matches, they're being looked for)
   playlists = [],        // [{ id, name, coverArt, trackIds }]
   onCreatePlaylist,      // ({name}) → App: create, returns { ok, id }
   onDeletePlaylist,
@@ -2858,6 +2859,132 @@ export default function StudioHome({
     };
   }, [libBySpotifyId, ownedTrackFor, dlState, favorites, currentTrack, isPlaying, spotifyPlayable, onPlayTrack, downloadSpotifyRow, openArtistAnywhere, pickSection, openSongMenu, openRecord, openItemMenu]);
 
+  /* ---------- Playlists popped out into their own windows ----------------
+     (PlaylistWindow.jsx, playlistWindows.js.) Music keeps playing from
+     here: each window is pushed its playlist, the song playing, the theme
+     and the position, and what it asks for is done here. Keyed by the
+     record's albumId: `libpl:<id>` for yours, `playlist:<id>` and the like
+     for Spotify's. */
+  const popouts = useRef(new Map()); // key → { album, rows }
+  const [popKeys, setPopKeys] = useState([]);
+  const popOutRecord = useCallback(async (album) => {
+    const key = album?.albumId;
+    if (!key || !window.electronAPI?.plwinOpen) return;
+    if (!popouts.current.has(key)) {
+      const entry = { album, rows: null };
+      popouts.current.set(key, entry);
+      // Spotify's playlists bring their songs once; yours follow the library.
+      if (!album.playlistId && album.load) {
+        entry.rows = await Promise.resolve(album.load()).then((r) => (Array.isArray(r) ? r : r?.tracks || [])).catch(() => []);
+      }
+      setPopKeys((ks) => (ks.includes(key) ? ks : [...ks, key]));
+    }
+    setPaletteOpen(false);
+    window.electronAPI.plwinOpen(key, album.name);
+  }, []);
+  // What one window shows of its playlist.
+  const popoutRecord = useCallback((key) => {
+    const e = popouts.current.get(key);
+    if (!e) return null;
+    const a = e.album;
+    if (a.playlistId) {
+      const pl = playlists.find((p) => p.id === a.playlistId);
+      if (!pl) return { gone: true };
+      return {
+        name: pl.name, artists: 'You', albumArtUrl: pl.coverArt || '', label: 'Playlist', lib: true, empty: a.empty || '',
+        tracks: libPlaylistRows(pl.id), owned: [],
+        can: { move: !!onReorderPlaylist, rename: !!onRenamePlaylist, cover: !!onUpdatePlaylist, remove: !!onRemoveFromPlaylist, del: !!onDeletePlaylist },
+      };
+    }
+    const rows = e.rows || [];
+    return {
+      name: a.name, artists: a.artists || '', albumArtUrl: a.albumArtUrl || '', label: a.label || 'Playlist', lib: false,
+      context: a.context || null, empty: a.empty || '', tracks: rows,
+      owned: rows.filter((r) => r.spotifyId && alreadyOwned(r.title, r.artists, r.album || undefined, r.spotifyId)).map((r) => r.spotifyId),
+      can: {},
+    };
+  }, [playlists, libPlaylistRows, alreadyOwned, onReorderPlaylist, onRenamePlaylist, onUpdatePlaylist, onRemoveFromPlaylist, onDeletePlaylist]);
+  /* The playing song's lyrics for a playlist's lyrics panel: null while
+     they're being looked for, { none } when there aren't any. */
+  const popoutLyrics = useMemo(() => {
+    if (!currentTrack || lyricsFor !== currentTrack.id) return null;
+    return lyricsData || { none: true };
+  }, [currentTrack, lyricsFor, lyricsData]);
+  const popoutTheme = useMemo(() => ({
+    bg: theme.bg, text: theme.text, sub: theme.sub, fg: theme.fg || theme.text, dark, accent: accentTokens, look: albumLook,
+  }), [theme.bg, theme.text, theme.sub, theme.fg, dark, accentTokens, albumLook]);
+  const popoutNow = useMemo(() => {
+    if (!currentTrack) return null;
+    // Which songs in the windows are the one playing (yours or streamed).
+    const ids = new Set([spotifyIdOf(currentTrack), currentTrack.spotifyId].filter(Boolean));
+    for (const e of popouts.current.values()) for (const r of e.rows || []) if (r.spotifyId && mySpotifyBridge.isCurrent(r)) ids.add(r.spotifyId);
+    return {
+      id: currentTrack.id, spotifyIds: [...ids], playing: !!isPlaying,
+      track: { title: currentTrack.title || '', artist: currentTrack.artist || '' }, art: coverFor(currentTrack) || null,
+      duration: duration || currentTrack.duration || 0, shuffleOn: !!shuffleOn, repeat, volume, gainBoost,
+    };
+  }, [currentTrack, isPlaying, coverFor, duration, shuffleOn, repeat, volume, gainBoost, mySpotifyBridge, popKeys]); // eslint-disable-line react-hooks/exhaustive-deps
+  const push = useCallback((key, data) => window.electronAPI?.plwinPush?.(key, data), []);
+  useEffect(() => { if (popKeys.length) push(null, { lyrics: popoutLyrics }); }, [popoutLyrics, popKeys.length, push]);
+  useEffect(() => { if (popKeys.length) push(null, { theme: popoutTheme }); }, [popoutTheme, popKeys.length, push]);
+  useEffect(() => { if (popKeys.length) push(null, { now: popoutNow, time: getPlaybackTime() }); }, [popoutNow, popKeys.length, push]);
+  useEffect(() => { popKeys.forEach((k) => push(k, { record: popoutRecord(k) })); }, [popKeys, popoutRecord, push]);
+  useEffect(() => (popKeys.length ? onPlaybackTime((t) => push(null, { time: t })) : undefined), [popKeys.length, push]);
+  // What a window asks for. Read through a ref, so it's always this render's.
+  const popoutCmd = useRef(null);
+  popoutCmd.current = ({ key, cmd, args = {} }) => {
+    const e = popouts.current.get(key);
+    if (!e) return;
+    const a = e.album;
+    const id = a.playlistId;
+    const rec = id ? libPlaylistRecord(id) : null;
+    switch (cmd) {
+      case 'hello': push(key, { theme: popoutTheme, now: popoutNow, time: getPlaybackTime(), record: popoutRecord(key), lyrics: popoutLyrics }); return;
+      case 'play': {
+        let rows = id ? libPlaylistRows(id) : e.rows || [];
+        // The songs the window shows, in its order (sorted, or narrowed by its search).
+        if (Array.isArray(args.ids) && args.ids.length) {
+          const byKey = new Map(rows.map((r) => [r.libTrack?.id ?? r.spotifyId ?? null, r]));
+          const ordered = args.ids.map((k) => byKey.get(k)).filter(Boolean);
+          if (ordered.length === args.ids.length) rows = ordered;
+        }
+        if (rec) { rec.album.play(rows, args.index || 0, !!args.shuffle); return; }
+        mySpotifyBridge.playRows(rows, args.index || 0, { shuffle: !!args.shuffle, context: a.context || null, source: null });
+        return;
+      }
+      case 'playRows': mySpotifyBridge.playRows(args.rows || [], args.index || 0, args.opts || {}); return;
+      case 'toggle': onTogglePlay?.(); return;
+      case 'prev': onPrev?.(); return;
+      case 'next': onNext?.(); return;
+      case 'seek': onSeek?.(Number(args.t) || 0); return;
+      case 'shuffle': onToggleShuffle?.(); return;
+      case 'repeat': onToggleRepeat?.(); return;
+      case 'volume': onSetVolume?.(Number(args.v)); return;
+      case 'boost': onSetGainBoost?.(Number(args.b)); return;
+      case 'move': rec?.album.move?.(args.trackId, args.row); return;
+      case 'rename': if (id && args.name) onRenamePlaylist?.(id, String(args.name)); return;
+      case 'cover': if (id) onUpdatePlaylist?.(id, { coverArt: args.coverArt || null }); return;
+      case 'remove': if (id) removeFromPlaylistNow(id, args.trackId); return;
+      case 'delete': if (id) deletePlaylistNow(id); return;
+      case 'get': if (args.row) downloadSpotifyRow(args.row); return;
+      case 'openArtist': if (args.name) openArtistAnywhere({ name: args.name }); return;
+      case 'return':
+        if (id) openLibPlaylist(id);
+        else { setPaletteRecord({ focusId: null, album: a }); setPaletteOpen(true); }
+        return;
+      default:
+    }
+  };
+  useEffect(() => {
+    const api = window.electronAPI;
+    const offCmd = api?.onPlwinCmd?.((msg) => popoutCmd.current?.(msg));
+    const offClosed = api?.onPlwinClosed?.(({ key }) => {
+      popouts.current.delete(key);
+      setPopKeys((ks) => ks.filter((k) => k !== key));
+    });
+    return () => { offCmd?.(); offClosed?.(); };
+  }, []);
+
   /* ---------- Spotify links (spotifyLinks.js) ----------------------------
      Ctrl+V anywhere in Studio, or pasting into search, opens a Spotify link;
      one copied in another app is offered in a notification. A song plays
@@ -4034,13 +4161,13 @@ export default function StudioHome({
                     label={compactMode ? 'Turn Off Compact Mode' : 'Turn On Compact Mode'} keys={keysText('compact')} />
                 </>
               ) : null}
-              {saved && onRemoveFromLibrary && !rowMenu.bar && !inQueue ? (
+              {saved && onRemoveFromLibrary && !inQueue ? (
                 <>
                   {sep}
                   <MenuItem accentRgb={acc} danger onClick={() => { onRemoveFromLibrary([t.id]); close(); }}
                     icon={<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />}
-                    label="Remove from library" />
-                  {albumTracks.length > 1 && !plHere ? (
+                    label={rowMenu.bar ? 'Remove from Library' : 'Remove from library'} />
+                  {albumTracks.length > 1 && !plHere && !rowMenu.bar ? (
                     <MenuItem accentRgb={acc} danger onClick={() => { onRemoveFromLibrary(albumTracks.map((x) => x.id)); close(); }}
                       icon={<><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M9 15l6-6M9 9l6 6" /></>}
                       label="Remove whole album"
@@ -4691,6 +4818,8 @@ export default function StudioHome({
         onPlaySpotifyRows={(rows, i, opts) => mySpotifyBridge.playRows(rows, i, opts)}
         record={paletteRecord}
         liveRecord={libPlaylistLive}
+        lyrics={popoutLyrics}
+        onPopOut={popOutRecord}
         /* The song playing, for the mini player along the bottom of a
            playlist. */
         mini={currentTrack ? {

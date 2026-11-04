@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
+import crypto from 'crypto';
 import { app } from 'electron';
 
 /* =========================================================================
@@ -422,7 +424,9 @@ function scoreAlbumRelevance({ displayName, folder }, queryTokensAll) {
 
 const AUDIO_EXTS = new Set([
   '.mp3', '.flac', '.wav', '.ogg', '.m4a', '.aac', '.wma', '.opus',
+  '.aiff', '.aif', '.alac', '.ape', '.wv',
 ]);
+const LOSSLESS_EXT = new Set(['flac', 'wav', 'aiff', 'aif', 'alac', 'ape', 'wv']);
 
 function isAudioFile(filename) {
   if (typeof filename !== 'string') return false;
@@ -448,17 +452,35 @@ function soulseekParentFolder(filePath) {
  * Pull file fields, tolerating naming variants between soulseek-ts
  * versions (bitRate vs bitrate vs bit_rate, etc.).
  */
+/* soulseek-ts hands each file's bitrate, length, sample rate and bit depth
+   over as an `attrs` Map keyed by the protocol's attribute codes, never as
+   named fields. Reading only the named fields left every MP3 at bitrate 0,
+   so a 320 rip ranked and badged the same as an unknown one. */
+const ATTR_BITRATE = 0;
+const ATTR_DURATION = 1;
+const ATTR_SAMPLE_RATE = 4;
+const ATTR_BIT_DEPTH = 5;
+
+function attrOf(f, code) {
+  const a = f?.attrs;
+  if (!a) return 0;
+  const v = typeof a.get === 'function' ? a.get(code) : a[code];
+  return Number(v) || 0;
+}
+
 function pickFileFields(f) {
   return {
     filename: String(f.filename ?? f.file ?? f.name ?? ''),
     size: Number(f.size ?? f.fileSize ?? 0) || 0,
-    bitrate: Number(f.bitRate ?? f.bitrate ?? f.bit_rate ?? 0) || 0,
-    duration: Number(f.duration ?? f.time ?? f.length ?? 0) || 0,
+    bitrate: Number(f.bitRate ?? f.bitrate ?? f.bit_rate ?? 0) || attrOf(f, ATTR_BITRATE),
+    duration: Number(f.duration ?? f.time ?? f.length ?? 0) || attrOf(f, ATTR_DURATION),
+    sampleRate: attrOf(f, ATTR_SAMPLE_RATE),
+    bitDepth: attrOf(f, ATTR_BIT_DEPTH),
   };
 }
 
 function bitrateTier(ext, bitrate) {
-  if (ext === 'flac' || ext === 'wav') return 5;
+  if (LOSSLESS_EXT.has(ext)) return 5;
   if (bitrate >= 320) return 4;
   if (bitrate >= 256) return 3;
   if (bitrate >= 192) return 2;
@@ -526,7 +548,7 @@ export async function soulseekSearch(query, { filter = true, timeout, debug = fa
     // precision and only genuinely empty searches pay for a retry.
     const variants = buildSoulseekQueryVariants(q);
     for (let i = 0; i < variants.length; i++) {
-      raw = await c.search(variants[i], timeout ? { timeout } : undefined);
+      raw = await collectSearch(c, variants[i], timeout ? { maxMs: timeout } : undefined);
       if (Array.isArray(raw) && raw.length > 0) {
         if (i > 0) console.log(`[soulseek] "${q}" \u2192 hit on variant ${i}: "${variants[i]}"`);
         break;
@@ -580,8 +602,11 @@ export async function soulseekSearch(query, { filter = true, timeout, debug = fa
         size: f.size,
         bitrate: f.bitrate,
         duration: f.duration,
+        sampleRate: f.sampleRate,
+        bitDepth: f.bitDepth,
         slots,
         speed,
+        queue: Number(group.queueLength) || 0,
       });
     }
   }
@@ -661,7 +686,7 @@ export async function soulseekSearch(query, { filter = true, timeout, debug = fa
    */
 
   function classifyAlbumQuality(alb) {
-    if (alb.exts.has('flac') || alb.exts.has('wav')) return 'lossless';
+    if ([...alb.exts].some((e) => LOSSLESS_EXT.has(e))) return 'lossless';
     if (alb.bitrates.has(320)) return 'mp3_320';
     return 'mp3_other';
   }
@@ -823,9 +848,677 @@ export async function soulseekSearch(query, { filter = true, timeout, debug = fa
   // are already the best by slot/bitrate/speed, so capping doesn't
   // hide useful results — it just hides the long tail of low-quality
   // rips from slow peers.
-  const cappedResults = dedup.slice(0, 10);
+  /* 40, not 10: the Best probe lays these files against a whole album's
+     tracklist, and ten files can't cover a twelve track record. */
+  const cappedResults = dedup.slice(0, 40);
 
   return { results: cappedResults, albums };
+}
+
+/* ---------- Collecting a search ----------
+ *
+ * soulseek-ts resolves a search only when its whole window runs out, ten
+ * seconds by default, however early the answers stopped arriving. Peers that
+ * have the file almost always answer inside the first two or three seconds,
+ * so this ends a search once answers have gone quiet, and gives up on an
+ * empty one sooner, instead of always sitting out the full window.
+ */
+function collectSearch(c, query, {
+  maxMs = 10_000, minMs = 3_000, quietMs = 2_200, emptyMs = 6_000, onResult, isCancelled,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const got = [];
+    const started = Date.now();
+    let last = 0;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearInterval(tick);
+      resolve(got);
+    };
+    const tick = setInterval(() => {
+      const age = Date.now() - started;
+      if (isCancelled?.()) { finish(); return; }
+      if (age >= maxMs) { finish(); return; }
+      if (!got.length && age >= emptyMs) { finish(); return; }
+      if (got.length && age >= minMs && Date.now() - last >= quietMs) finish();
+    }, 200);
+    let p;
+    try {
+      p = c.search(query, {
+        timeout: maxMs + 500,
+        onResult: (r) => {
+          if (done) return;
+          got.push(r);
+          last = Date.now();
+          try { onResult?.(r); } catch { /* a bad update must not end the search */ }
+        },
+      });
+    } catch (e) {
+      done = true;
+      clearInterval(tick);
+      reject(e);
+      return;
+    }
+    Promise.resolve(p).then(finish, (e) => {
+      if (done) return;
+      done = true;
+      clearInterval(tick);
+      reject(e);
+    });
+  });
+}
+
+/* ---------- Live search (the Soulseek search mode) ----------
+ *
+ * The palette's Soulseek mode asks the network directly, so it gets
+ * everything back rather than the ten best files the Best probe works from:
+ *
+ *   - Answers stream in. A snapshot goes out every few hundred ms while peers
+ *     reply, so the first results show in a second or two.
+ *   - Nothing is thrown away. Live takes, remixes and the like are marked
+ *     and ranked lower instead of being dropped, since searching Soulseek
+ *     directly is how you go looking for exactly those.
+ *   - Folders are first class. Every user × folder is one entry, the same
+ *     record shared by many people folds into one row with its other copies
+ *     listed, and each one can be opened to show its whole contents.
+ */
+
+const VARIANT_LABELS = new Map([
+  ['live', 'Live'], ['remix', 'Remix'], ['instrumental', 'Instrumental'], ['karaoke', 'Karaoke'],
+  ['acapella', 'Acapella'], ['acappella', 'Acapella'], ['a capella', 'Acapella'], ['a cappella', 'Acapella'],
+  ['sped up', 'Sped Up'], ['speed up', 'Sped Up'], ['slowed', 'Slowed'], ['slow down', 'Slowed'],
+  ['nightcore', 'Nightcore'], ['8d audio', '8D'], ['8d', '8D'], ['reverb', 'Reverb'], ['cover', 'Cover'],
+  ['demo', 'Demo'], ['clean', 'Clean'], ['edit', 'Edit'], ['edited', 'Edit'], ['radio edit', 'Radio Edit'],
+]);
+
+/** The version marker a name carries that the query didn't ask for, or ''. */
+function variantOf(query, ...names) {
+  const hay = names.map(normalizeForCompare).join(' ');
+  const q = normalizeForCompare(query);
+  for (const word of JUNK_WORDS) {
+    if (containsWord(hay, word) && !containsWord(q, word)) return VARIANT_LABELS.get(word) || word;
+  }
+  return '';
+}
+
+/** Split a peer path on either separator: peers on Windows use \, others /. */
+function pathSegments(p) {
+  return String(p || '').split(/[\\/]+/).filter(Boolean);
+}
+
+/** The folder part of a peer path, with the peer's own separator kept. */
+function rawParent(p) {
+  const s = String(p || '');
+  const i = Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'));
+  return i === -1 ? '' : s.slice(0, i);
+}
+
+/**
+ * Does this path answer the search, and how well? 0..1, or ok: false.
+ *
+ * The server matches each word ANYWHERE in a peer's path, share roots and
+ * all, so "dedication 5" also finds a song called "Dedication" sitting in
+ * someone's folder named "5". That's the noise. Here every one of the
+ * search's main words has to turn up close to the file: in its own name,
+ * its album folder or the artist folder above that. Where it turns up sets
+ * the score, nearer counting more.
+ *
+ * `core` are the words that must be there. `extra` are words that only
+ * help when present: the artist's name, once it's known which words are the
+ * artist, because many clients hide every file whose path names certain
+ * artists, so the album's own words are often all a path can still carry.
+ */
+function judgePath(core, extra, segsFromLeaf, reach) {
+  const levels = segsFromLeaf.slice(0, reach + 1).map((seg) => {
+    const toks = albumTokenize(seg);
+    return { set: new Set(toks), flat: toks.join('') };
+  });
+  const levelOf = (t) => {
+    for (let i = 0; i < levels.length; i += 1) {
+      if (levels[i].set.has(t)) return i;
+      if (t.length >= 3 && levels[i].flat.includes(t)) return i;
+    }
+    return -1;
+  };
+  const weights = [1, 0.9, 0.78, 0.66];
+  let sum = 0;
+  const at = new Map();
+  for (const t of core) {
+    const lv = levelOf(t);
+    if (lv < 0 || lv >= reach) return { ok: false, rel: 0 };
+    at.set(t, lv);
+    sum += weights[lv] ?? 0.6;
+  }
+  /* A short word ("5", "ii", "op") matches by accident all the time: a folder
+     named "5", a track number. It only counts beside another of the words. */
+  const long = core.filter((t) => t.length >= 3);
+  if (long.length) {
+    for (const t of core) {
+      if (t.length >= 3) continue;
+      if (!long.some((l) => at.get(l) === at.get(t))) return { ok: false, rel: 0 };
+    }
+  }
+  let rel = core.length ? sum / core.length : 1;
+  if (extra.length) {
+    const hits = extra.filter((t) => levelOf(t) >= 0).length;
+    rel += 0.25 * (hits / extra.length);
+  }
+  // The words in the order typed, together in one name: almost surely it.
+  const phrase = core.join('');
+  if (core.length > 1 && levels.slice(0, reach).some((l) => l.flat.includes(phrase))) rel += 0.1;
+  return { ok: true, rel };
+}
+
+/* Words in a folder's name the search didn't ask for: "Dedication Vol. 5
+   Choir" for "dedication 5" is some other record. Format tags, years and
+   edition words don't count. */
+function extraWords(name, core, extra) {
+  const known = new Set([...core, ...extra]);
+  let n = 0;
+  for (const t of albumTokenize(name)) {
+    if (known.has(t) || ALBUM_STOPWORDS.has(t) || ALBUM_NOISE_WORDS.has(t)) continue;
+    if (/^(19|20)\d{2}$/.test(t) || /^\d{1,3}$/.test(t)) continue;
+    if ([...known].some((k) => k.length >= 3 && (t.includes(k) || k.includes(t)))) continue;
+    n += 1;
+  }
+  return n;
+}
+
+/** Judge every file not yet judged against the current words. */
+function judgeAll(state) {
+  for (const f of state.files.values()) {
+    if (f.judgedFor === state.judgeKey) continue;
+    // A disc folder ("CD1") sits between a song and its album without naming anything.
+    const segs = pathSegments(f.filePath).reverse().filter((seg, i) => i === 0 || !DISC_DIR.test(seg.trim()));
+    const j = judgePath(state.core, state.extra, segs, 4);
+    f.judgedFor = state.judgeKey;
+    f.ok = j.ok;
+    f.rel = j.rel;
+    f.variant = variantOf(state.query, f.filename, soulseekBasename(f.folder));
+    f.score = rankFile(f);
+  }
+}
+
+function speedScore(bps) {
+  const kb = (Number(bps) || 0) / 1024;
+  return kb > 0 ? Math.min(12, Math.log2(kb + 1)) : 0;
+}
+
+function rankFile(f) {
+  return Math.round(f.rel * 10) * 100
+    - (f.variant ? 600 : 0)
+    + (f.slots ? 40 : 0)
+    + bitrateTier(f.ext, f.bitrate) * 9
+    + speedScore(f.speed)
+    - Math.min(18, (f.queue || 0) / 4);
+}
+
+function albumKeyName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[([{][^)\]}]*(flac|mp3|320|v0|kbps|24|16|bit|khz|web|cd|vinyl)[^)\]}]*[)\]}]/gi, ' ')
+    .replace(/\b(19|20)\d{2}\b/g, ' ')
+    .replace(/\b(flac|wav|mp3|320|256|192|v0|v2|cbr|vbr|kbps|cd|web|vinyl|24bit|16bit|hi ?res|lossless)\b/gi, ' ')
+    .replace(/\b(deluxe|anniversary|remaster(ed)?|special|expanded|reissue|bonus|extended|collector'?s?|limited|definitive|edition|version|release)\b/gi, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* Which record a folder holds, so copies shared by different people can be
+   told apart from different records with the same title. Peers name album
+   folders "Artist - Album" or put "Album" inside an "Artist" folder; both
+   come out as the same artist and album here. */
+function recordKey(displayName, parentName) {
+  const m = /^(.+?)\s+[-\u2013\u2014]\s+(.+)$/.exec(String(displayName || ''));
+  const artist = albumKeyName(m ? m[1] : parentName);
+  const album = albumKeyName(m ? m[2] : displayName);
+  return `${artist}::${album}`;
+}
+
+/* "Album/CD1/01.flac": the album is the folder above the disc. */
+const DISC_DIR = /^(cd|disc|disk|dvd)\s*[-_.]?\s*\d{1,2}\b|^(cd|disc|disk)\s*(one|two|three|i{1,3})$/i;
+function albumFolderOf(folderRaw) {
+  const base = pathSegments(folderRaw).pop() || '';
+  return DISC_DIR.test(base.trim()) && rawParent(folderRaw) ? rawParent(folderRaw) : folderRaw;
+}
+
+function folderQuality(exts, bitrates) {
+  if ([...exts].some((e) => LOSSLESS_EXT.has(e))) return 'lossless';
+  const br = [...bitrates].filter((b) => b > 0);
+  if (br.length && Math.min(...br) >= 320) return 'mp3_320';
+  return 'other';
+}
+
+const liveSearches = new Map(); // searchId → { cancelled, files: Map<id, file> }
+let lastLiveSearchId = '';
+
+/** Stop listening to a live search. Answers still arriving are ignored. */
+export function soulseekCancelLiveSearch(searchId) {
+  const s = liveSearches.get(String(searchId || ''));
+  if (s) s.cancelled = true;
+  return { ok: true };
+}
+
+function buildLiveSnapshot(state) {
+  const { query, core, extra } = state;
+
+  /* Judged once per file, and again only when the words that must match
+     change (the search fell back to the album's own words). Anything that
+     doesn't answer the search is left out, not just ranked lower. */
+  judgeAll(state);
+  const all = [];
+  for (const f of state.files.values()) if (f.ok) all.push(f);
+  all.sort((a, b) => b.score - a.score);
+
+  /* Folders: one per user × folder, and only folders whose own name (or the
+     artist folder right above it) answers the search. A song found inside
+     some other album still shows, under Songs, with its folder a click away. */
+  const byFolder = new Map();
+  for (const f of all) {
+    if (!f.folderRaw) continue;
+    const albumRaw = albumFolderOf(f.folderRaw);
+    const key = `${f.user}::${albumRaw}`;
+    let g = byFolder.get(key);
+    if (!g) {
+      const segs = pathSegments(albumRaw);
+      g = {
+        id: key,
+        user: f.user,
+        folderRaw: albumRaw,
+        folder: albumRaw.replace(/\\/g, '/'),
+        displayName: segs[segs.length - 1] || f.folderRaw,
+        parentName: segs.length > 1 ? segs[segs.length - 2] : '',
+        matched: 0,
+        totalSize: 0,
+        exts: new Map(),
+        bitrates: new Set(),
+        slots: f.slots,
+        speed: f.speed,
+        queue: f.queue || 0,
+        ...(() => {
+          const j = judgePath(core, extra, [...segs].reverse(), 2);
+          const more = extraWords(segs[segs.length - 1] || '', core, extra);
+          return { fok: j.ok, rel: Math.max(0, j.rel - Math.min(0.3, more * 0.08)) };
+        })(),
+        variant: variantOf(query, segs[segs.length - 1] || ''),
+      };
+      byFolder.set(key, g);
+    }
+    g.matched += 1;
+    g.totalSize += f.size || 0;
+    g.exts.set(f.ext, (g.exts.get(f.ext) || 0) + 1);
+    if (f.bitrate) g.bitrates.add(f.bitrate);
+  }
+
+  const folderRows = [];
+  for (const g of byFolder.values()) {
+    if (!g.fok) continue;
+    const extList = [...g.exts.entries()].sort((a, b) => b[1] - a[1]);
+    const ext = extList.length ? extList[0][0] : '';
+    const br = [...g.bitrates];
+    const quality = folderQuality(new Set(g.exts.keys()), g.bitrates);
+    folderRows.push({
+      id: g.id,
+      user: g.user,
+      folderRaw: g.folderRaw,
+      folder: g.folder,
+      displayName: g.displayName,
+      parentName: g.parentName,
+      trackCount: g.matched,
+      totalSize: g.totalSize,
+      ext,
+      mixed: extList.length > 1,
+      bitrate: br.length ? Math.min(...br) : 0,
+      slots: g.slots,
+      speed: g.speed,
+      queue: g.queue,
+      rel: g.rel,
+      variant: g.variant,
+      quality,
+      normName: recordKey(g.displayName, g.parentName),
+    });
+  }
+
+  /* The same record shared by many people is one row: the best copy leads,
+     the rest wait behind it as other copies to pick from. Copies are kept
+     apart by quality, so the FLAC and the MP3 of one album are two rows. */
+  const better = (a, b) => (
+    (Number(b.slots) - Number(a.slots))
+    || (Math.min(b.trackCount, 40) - Math.min(a.trackCount, 40))
+    || (speedScore(b.speed) - speedScore(a.speed))
+    || ((a.queue || 0) - (b.queue || 0))
+  );
+  const groups = new Map();
+  for (const r of folderRows) {
+    const key = `${r.normName}::${r.quality}`;
+    const list = groups.get(key);
+    if (list) list.push(r); else groups.set(key, [r]);
+  }
+  const qOrder = { lossless: 3, mp3_320: 2, other: 1 };
+  const folders = [...groups.values()].map((list) => {
+    list.sort(better);
+    const [lead, ...rest] = list;
+    return {
+      ...lead,
+      copies: rest.slice(0, 15).map((c) => ({
+        id: c.id, user: c.user, folderRaw: c.folderRaw, folder: c.folder, displayName: c.displayName,
+        parentName: c.parentName, trackCount: c.trackCount, totalSize: c.totalSize, ext: c.ext,
+        mixed: c.mixed, bitrate: c.bitrate, slots: c.slots, speed: c.speed, queue: c.queue,
+      })),
+      copyCount: rest.length,
+    };
+  }).sort((a, b) => (
+    (Math.round(b.rel * 10) - Math.round(a.rel * 10))
+    || (Number(!b.variant) - Number(!a.variant))
+    || ((qOrder[b.quality] || 0) - (qOrder[a.quality] || 0))
+    || (Number(b.slots) - Number(a.slots))
+    || ((b.copyCount || 0) - (a.copyCount || 0))
+    || (Math.min(b.trackCount, 40) - Math.min(a.trackCount, 40))
+  )).slice(0, 80);
+  for (const f of folders) delete f.normName;
+
+  const results = all.slice(0, 200).map((f) => ({
+    id: f.id, user: f.user, filePath: f.filePath, filename: f.filename, folder: f.folder, folderRaw: f.folderRaw,
+    ext: f.ext, size: f.size, bitrate: f.bitrate, duration: f.duration, sampleRate: f.sampleRate, bitDepth: f.bitDepth,
+    slots: f.slots, speed: f.speed, queue: f.queue, variant: f.variant, rel: f.rel,
+  }));
+
+  return { results, folders, peers: state.peerSet.size, fileCount: all.length };
+}
+
+/**
+ * Search Soulseek and stream what comes back. `onUpdate(snapshot)` fires as
+ * answers arrive and once more at the end with `done: true`; the promise
+ * resolves with that last snapshot.
+ */
+export async function soulseekSearchLive(query, { searchId = '', onUpdate, maxMs = 14_000, artist = '', rest = '' } = {}) {
+  const q = String(query || '').trim();
+  const id = String(searchId || `s${Date.now()}`);
+  if (!q) {
+    const empty = { searchId: id, results: [], folders: [], peers: 0, fileCount: 0, done: true };
+    onUpdate?.(empty);
+    return empty;
+  }
+
+  // A new search ends the one before it: only one list is ever on screen.
+  if (lastLiveSearchId && lastLiveSearchId !== id) soulseekCancelLiveSearch(lastLiveSearchId);
+  lastLiveSearchId = id;
+  /* Which words must match. When the app could tell the artist apart from
+     the rest ("lil wayne" + "dedication 5"), only the rest must, and the
+     artist's name ranks a result up when it's there. */
+  const restQ = String(rest || '').trim();
+  const artistQ = String(artist || '').trim();
+  const split = !!(restQ && artistQ && albumTokenize(restQ).length);
+  const state = {
+    cancelled: false, files: new Map(), peerSet: new Set(), query: q,
+    core: [...new Set(albumTokenize(split ? restQ : q))],
+    extra: split ? [...new Set(albumTokenize(artistQ))] : [],
+    judgeKey: 0,
+  };
+  liveSearches.set(id, state);
+  // Keep the last few searches' files for folder fallbacks, drop older ones.
+  if (liveSearches.size > 4) liveSearches.delete(liveSearches.keys().next().value);
+
+  const c = await ensureConnected();
+
+  let dirty = false;
+  const add = (group) => {
+    if (state.cancelled || !group || typeof group !== 'object') return;
+    const user = String(group.username || group.user || '').trim();
+    if (!user) return;
+    state.peerSet.add(user);
+    const slots = !!(group.slotsFree ?? group.hasFreeUploadSlot ?? group.slots);
+    const speed = Number(group.avgSpeed ?? group.uploadSpeed ?? group.speed ?? 0) || 0;
+    const queue = Number(group.queueLength) || 0;
+    for (const fRaw of Array.isArray(group.files) ? group.files : []) {
+      const f = pickFileFields(fRaw);
+      if (!f.filename || !isAudioFile(f.filename)) continue;
+      const fileId = `${user}::${f.filename}`;
+      if (state.files.has(fileId)) continue;
+      const filename = soulseekBasename(f.filename);
+      state.files.set(fileId, {
+        id: fileId,
+        user,
+        filePath: f.filename,
+        filename,
+        folder: soulseekParentFolder(f.filename),
+        folderRaw: rawParent(f.filename),
+        ext: path.extname(filename).slice(1).toLowerCase(),
+        size: f.size,
+        bitrate: f.bitrate,
+        duration: f.duration,
+        sampleRate: f.sampleRate,
+        bitDepth: f.bitDepth,
+        slots,
+        speed,
+        queue,
+      });
+      dirty = true;
+    }
+  };
+
+  const snap = (done) => ({
+    searchId: id,
+    query: q,
+    ...buildLiveSnapshot(state),
+    done,
+  });
+
+  const pump = setInterval(() => {
+    if (!dirty || state.cancelled) return;
+    dirty = false;
+    try { onUpdate?.(snap(false)); } catch { /* window gone */ }
+  }, 450);
+
+  /* The query as typed first, and with the artist known, the album or song
+     words on their own alongside it: many clients won't return any file whose
+     path names certain artists, so "lil wayne dedication 5" can come back
+     empty while "dedication 5" finds the same folders. If it's still empty
+     after a few seconds the cleaner variants join in, feeding the same list. */
+  const variants = buildSoulseekQueryVariants(q);
+  const isCancelled = () => state.cancelled;
+  const okCount = () => { judgeAll(state); let n = 0; for (const f of state.files.values()) if (f.ok) n += 1; return n; };
+  const runs = [];
+  try {
+    runs.push(collectSearch(c, variants[0], { maxMs, onResult: add, isCancelled }));
+    if (split) {
+      for (const v of buildSoulseekQueryVariants(restQ).slice(0, 1)) {
+        if (v.toLowerCase() !== variants[0].toLowerCase()) runs.push(collectSearch(c, v, { maxMs, onResult: add, isCancelled }));
+      }
+    }
+    for (let i = 1; i < variants.length; i += 1) {
+      runs.push(new Promise((resolve) => {
+        setTimeout(() => {
+          if (state.cancelled || state.files.size) { resolve([]); return; }
+          collectSearch(c, variants[i], { maxMs: maxMs - 2500 * i, onResult: add, isCancelled })
+            .then(resolve, () => resolve([]));
+        }, 2500 * i);
+      }));
+    }
+    await Promise.all(runs);
+
+    /* Still almost nothing and the artist wasn't known: drop words from the
+       front, where the artist usually is, one at a time, until something
+       answers. What was dropped still ranks results up when it's there. */
+    const words = q.split(/\s+/).filter(Boolean);
+    for (let drop = 1; !split && !state.cancelled && okCount() < 3 && words.length - drop >= 1; drop += 1) {
+      const left = words.slice(drop).join(' ');
+      const leftToks = albumTokenize(left);
+      if (!leftToks.length || (leftToks.length === 1 && leftToks[0].length < 4)) break;
+      state.core = [...new Set(leftToks)];
+      state.extra = [...new Set(albumTokenize(words.slice(0, drop).join(' ')))];
+      state.judgeKey += 1;
+      dirty = true;
+      await collectSearch(c, left, { maxMs, onResult: add, isCancelled });
+    }
+  } catch (e) {
+    clearInterval(pump);
+    forceDisconnect();
+    throw new Error(String(e?.message || e));
+  }
+  clearInterval(pump);
+  const last = snap(true);
+  if (!state.cancelled) {
+    try { onUpdate?.(last); } catch { /* window gone */ }
+  }
+  return last;
+}
+
+/* ---------- Opening a folder ----------
+ *
+ * A search only returns the files whose paths matched the words, so an
+ * album folder found by its name usually shows two or three of its twelve
+ * songs. Opening it asks the peer for the folder's whole listing, the way
+ * the official client's "browse folder" does (peer message 36, answered by
+ * 37). soulseek-ts doesn't speak that pair, so it's written here against
+ * the peer connection it already holds. If the peer doesn't answer, the
+ * files the search did turn up are the fallback.
+ */
+function readFolderContents(buf) {
+  let p = 0;
+  const u32 = () => { const v = buf.readUInt32LE(p); p += 4; return v; };
+  const u64 = () => { const v = Number(buf.readBigUInt64LE(p)); p += 8; return v; };
+  const u8 = () => { const v = buf.readUInt8(p); p += 1; return v; };
+  const str = () => { const n = u32(); const v = buf.toString('utf8', p, p + n); p += n; return v; };
+
+  const token = u32();
+  const folder = str();
+  const dirs = [];
+  const nDirs = u32();
+  for (let d = 0; d < nDirs; d += 1) {
+    const dir = str();
+    const nFiles = u32();
+    const files = [];
+    for (let i = 0; i < nFiles; i += 1) {
+      u8(); // code
+      const name = str();
+      const size = u64();
+      str(); // extension, unreliable, the name carries it
+      const nAttrs = u32();
+      const attrs = new Map();
+      for (let a = 0; a < nAttrs; a += 1) {
+        const k = u32();
+        attrs.set(k, u32());
+      }
+      files.push({ name, size, attrs });
+    }
+    dirs.push({ dir, files });
+  }
+  return { token, folder, dirs };
+}
+
+function filesFromSearches(user, folderRaw) {
+  const out = [];
+  const seen = new Set();
+  for (const s of liveSearches.values()) {
+    for (const f of s.files.values()) {
+      if (f.user !== user || seen.has(f.id)) continue;
+      if (f.folderRaw !== folderRaw && albumFolderOf(f.folderRaw) !== folderRaw) continue;
+      seen.add(f.id);
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+export async function soulseekBrowseFolder({ user, folder, timeoutMs = 15_000 } = {}) {
+  const who = String(user || '').trim();
+  const folderRaw = String(folder || '');
+  if (!who || !folderRaw) return { ok: false, error: 'Missing user or folder.' };
+
+  const fallback = (error) => {
+    const files = filesFromSearches(who, folderRaw).map((f) => ({ ...f, audio: true }));
+    return { ok: files.length > 0, partial: true, error, user: who, folderRaw, dirs: files.length ? [{ path: folderRaw, files }] : [] };
+  };
+
+  let c;
+  try { c = await ensureConnected(); } catch (e) { return fallback(String(e?.message || e)); }
+
+  let peer;
+  try {
+    peer = await withTimeout(c.getPeerByUsername(who), 20_000, `Couldn’t reach ${who}.`);
+  } catch {
+    return fallback(`${who} didn’t answer. They may be offline or behind a firewall.`);
+  }
+  if (!peer?.conn || !peer?.msgs) return fallback('This peer can’t be browsed.');
+
+  const token = crypto.randomBytes(4).readUInt32LE(0);
+  const fb = Buffer.from(folderRaw, 'utf8');
+  const body = Buffer.alloc(12 + fb.length);
+  body.writeUInt32LE(36, 0);
+  body.writeUInt32LE(token, 4);
+  body.writeUInt32LE(fb.length, 8);
+  fb.copy(body, 12);
+  const head = Buffer.alloc(4);
+  head.writeUInt32LE(body.length, 0);
+
+  let listing;
+  try {
+    listing = await new Promise((resolve, reject) => {
+      let timer;
+      const cleanup = () => {
+        clearTimeout(timer);
+        peer.msgs.off('message', onMsg);
+        peer.off?.('close', onClose);
+      };
+      const onClose = () => { cleanup(); reject(new Error('closed')); };
+      function onMsg(msg) {
+        try {
+          const data = msg?.data;
+          if (!data || data.length < 8 || data.readUInt32LE(4) !== 37) return;
+          const res = readFolderContents(zlib.unzipSync(data.subarray(8)));
+          if (res.token !== token && res.folder !== folderRaw) return;
+          cleanup();
+          resolve(res);
+        } catch { /* not ours, or garbled: keep waiting */ }
+      }
+      timer = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, timeoutMs);
+      peer.msgs.on('message', onMsg);
+      peer.once?.('close', onClose);
+      peer.conn.write(Buffer.concat([head, body]));
+    });
+  } catch {
+    return fallback(`${who} didn’t send the folder in time.`);
+  }
+
+  const dirs = [];
+  for (const d of listing.dirs) {
+    const sep = d.dir.includes('\\') ? '\\' : '/';
+    const files = d.files.map((f) => {
+      // Some clients send whole paths here instead of bare names.
+      const filePath = /[\\/]/.test(f.name) ? f.name : `${d.dir}${sep}${f.name}`;
+      const name = soulseekBasename(filePath);
+      const ext = path.extname(name).slice(1).toLowerCase();
+      return {
+        id: `${who}::${filePath}`,
+        user: who,
+        filePath,
+        filename: name,
+        folder: soulseekParentFolder(filePath),
+        folderRaw: d.dir,
+        ext,
+        size: f.size,
+        bitrate: f.attrs.get(ATTR_BITRATE) || 0,
+        duration: f.attrs.get(ATTR_DURATION) || 0,
+        sampleRate: f.attrs.get(ATTR_SAMPLE_RATE) || 0,
+        bitDepth: f.attrs.get(ATTR_BIT_DEPTH) || 0,
+        audio: isAudioFile(name),
+      };
+    }).sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }));
+    dirs.push({ path: d.dir, files });
+  }
+  // The folder itself first, then its subfolders (Disc 1, Disc 2) in order.
+  dirs.sort((a, b) => (a.path === folderRaw ? -1 : b.path === folderRaw ? 1 : a.path.localeCompare(b.path, undefined, { numeric: true })));
+
+  if (!dirs.some((d) => d.files.some((f) => f.audio))) {
+    const fb2 = fallback('');
+    if (fb2.ok) return { ...fb2, error: 'The folder came back without any songs, so these are the files your search found.' };
+    return { ok: false, user: who, folderRaw, dirs, error: 'This folder has no songs in it.' };
+  }
+  return { ok: true, partial: false, user: who, folderRaw, dirs };
 }
 
 /* ---------- Download ---------- */

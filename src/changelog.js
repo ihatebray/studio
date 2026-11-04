@@ -8,6 +8,69 @@
 
 export const CHANGELOG = [
   {
+    version: '0.1.2',
+    date: '2026-11-04',
+    sections: [
+      {
+        heading: 'New',
+        items: [
+          { lead: 'Pop Out Playlists', text: 'Pop a playlist out of Studio into a window of its own.', sub: [
+            'Click Pop Out at the top of any playlist.',
+            'Put it on another monitor and size it however you like. It opens where you left it next time.',
+            'It keeps the playlist’s design, Dark or Immerse included, with the song playing along the bottom.',
+            'Its cover and name sit in the top bar, with play, shuffle, edit, a search box for its songs and a Sort menu in one row below.',
+            'Keep on Top holds it above your other windows, including games running in a window.',
+            'Play, skip, edit and reorder right from it. Return to App puts it back.',
+          ] },
+          { lead: 'Playlist Lyrics', text: 'See the playing song’s lyrics right in a playlist, popped out or not.', sub: [
+            'Click the lyrics button beside the volume at the bottom.',
+            'They show in a card over the songs, scrolling along with the line being sung in the middle.',
+            'Drag the card by its top to put it anywhere. It stays where you leave it.',
+            'Click a line to jump to it.',
+          ] },
+          { lead: 'Sort Playlists', text: 'Sort a playlist by title, artist, album or length.', sub: [
+            'Click a column heading. Click it again to reverse the order, and a third time to go back to the playlist’s own order.',
+            'A sorted playlist plays in the order it shows.',
+            'Each playlist remembers how it’s sorted.',
+          ] },
+          { lead: 'Soulseek Search', text: 'Search Soulseek on its own, right from the search box.', sub: [
+            'Switch the search box from Spotify to Soulseek at the top right.',
+            'Results show up as people answer instead of after a long wait, as albums and songs.',
+            'Only results that actually match your search are shown.',
+            'Artists whose names are blocked on Soulseek still turn up, by searching their album or song name for you too.',
+          ] },
+          { lead: 'Soulseek Folders', text: 'Click any Soulseek folder to see every song in it before you download.', sub: [
+            'It asks that person for the whole folder, not only the songs your search matched.',
+            'See every song with its length, and the album cover when there is one.',
+            'Download the whole folder, click songs to pick a few, or grab one at a time, with progress on each song.',
+            'Other Copies lets you get the same album from someone else.',
+            'Folders in Best results open the same way.',
+          ] },
+        ],
+      },
+      {
+        heading: 'Changed',
+        items: [
+          { lead: 'Playlist View', text: 'Immerse now always takes its colors from the song playing, and fades smoothly from one song to the next.', sub: [
+            'The Mostly line under a playlist’s name has been removed.',
+          ] },
+          { lead: 'Progress Bar', text: 'The progress bar in the Now Playing bar, fullscreen and playlists now moves smoothly instead of in small steps.' },
+          { lead: 'Search', text: 'The start screen is simpler and says what search covers. The switch at the top picks Spotify or Soulseek.' },
+          { lead: 'Now Playing Menu', text: 'The menu in the Now Playing bar now has Remove from Library, for the song playing.' },
+        ],
+      },
+      {
+        heading: 'Fixed',
+        items: [
+          'Fixed MP3s from Soulseek showing no bitrate, so a 320 ranked the same as a copy of unknown quality.',
+          'Fixed Soulseek searches always taking ten seconds or more, even when people answered right away.',
+          'Fixed Best finding only some of an album’s songs on Soulseek.',
+          'Fixed clicking a Soulseek folder in Best results downloading only the few songs your search matched, without showing what was in it.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.1',
     date: '2026-10-23',
     sections: [

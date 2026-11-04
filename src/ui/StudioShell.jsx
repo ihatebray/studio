@@ -416,6 +416,7 @@ export default function StudioShell({
         onPrev={onPrev}
         onNext={onNext}
         lyricsData={lyricsData}
+        lyricsFor={lyricsTrackId}
         onSeek={onSeek}
         shuffleOn={shuffleOn}
         repeat={repeat}

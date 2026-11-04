@@ -15,7 +15,7 @@ import { coverLayers } from '../../lib/coverUrl.js';
 import { useStudioFollows, isStudioFollowed, followArtist, unfollowArtist } from '../../lib/studioFollows.js';
 import { playContextFor } from '../../lib/playContext.js';
 import { spotifyIdOf } from '../../lib/spotifyMediaElement.js';
-import { usePlaybackTime } from '../../lib/playbackClock.js';
+import { usePlaybackTime, useProgressFill } from '../../lib/playbackClock.js';
 import { BoundedMap } from '../../lib/boundedMap.js';
 
 /* The Spotify ids of a song's artists, when it was played from a Spotify page. */
@@ -67,7 +67,8 @@ export function NowPlayingFullView({
     if (e.key === 'ArrowLeft') { e.preventDefault(); onSeek(Math.max(0, currentTime - 5)); }
   };
   const shownTime = scrub != null ? scrub * dur : currentTime;
-  const pct = dur ? Math.min(100, Math.max(0, (shownTime / dur) * 100)) : 0;
+  const fillRef = useRef(null);
+  useProgressFill(fillRef, dur, isPlaying, scrub);
   const fmt = (sec) => {
     if (!Number.isFinite(sec) || sec < 0) return '0:00';
     return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
@@ -158,7 +159,7 @@ export function NowPlayingFullView({
               role="slider" aria-label="Seek" tabIndex={0}
               aria-valuemin={0} aria-valuemax={Math.round(dur) || 0} aria-valuenow={Math.round(shownTime)}
               aria-valuetext={`${fmt(shownTime)} of ${fmt(dur)}`}>
-              <div className="sth-npbar-seek-fill" style={{ width: `${pct}%` }}>
+              <div className="sth-npbar-seek-fill" ref={fillRef}>
                 <span className="sth-npbar-seek-knob" />
               </div>
             </div>
@@ -1349,7 +1350,8 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
   // live one so the handle tracks the cursor smoothly; commit on release.
   const [scrub, setScrub] = useState(null); // 0..1 while dragging, else null
   const seekTrackRef = useRef(null);
-  const shownPct = scrub != null ? scrub * 100 : (dur ? Math.min(100, Math.max(0, (currentTime / dur) * 100)) : 0);
+  const fillRef = useRef(null);
+  useProgressFill(fillRef, dur, isPlaying, scrub);
   const fmtT = (sec) => {
     if (!Number.isFinite(sec) || sec < 0) return '0:00';
     const m = Math.floor(sec / 60); const s = Math.floor(sec % 60);
@@ -1511,7 +1513,7 @@ function NowPlayingBarBody({ track, isPlaying, art, accent, immersePalette = nul
               aria-valuetext={`${fmtT(shownTime)} of ${fmtT(dur)}`}
               tabIndex={0}
             >
-              <div className="sth-npbar-seek-fill" style={{ width: `${shownPct}%` }}>
+              <div className="sth-npbar-seek-fill" ref={fillRef}>
                 <span className="sth-npbar-seek-knob" />
               </div>
             </div>

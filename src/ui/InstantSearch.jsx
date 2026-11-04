@@ -12,10 +12,12 @@ import { parseSpotifyLink } from '../lib/spotifyLink.js';
 import { PauseIcon, PlayIcon } from './sharedUI.jsx';
 import { PlayingBars, useRowDrag } from './home/common.jsx';
 import { coverAt } from '../lib/coverUrl.js';
-import { usePlaybackTime } from '../lib/playbackClock.js';
+import { usePlaybackTime, useProgressFill } from '../lib/playbackClock.js';
 import { pageWash, recordDeep, recordWashSource, sampleCoverTheme } from '../lib/coverTheme.js';
 import { AnimatedGradientBg } from './VisualEffects.jsx';
+import { activeLyricIndex } from '../lib/mediaUtils.js';
 import VolumeControl from './VolumeControl.jsx';
+import { SoulseekResults, SoulseekFolder, SoulseekStyles } from './SoulseekSearch.jsx';
 
 /* =========================================================================
  *  studio — instant search
@@ -188,6 +190,84 @@ const FILTER_HINTS = [
   ['is:owned', 'Include songs you own'],
 ];
 
+/* A playlist's songs in the order picked at the top of its list: its own
+   order (no sort), or by title, lead artist, album or length, either way.
+   Songs that tie keep their place in the playlist. */
+const SORT_BY = {
+  title: (t) => t.title || '',
+  artist: (t) => String(t.artists || '').split(/,(?=\s)/)[0].trim(),
+  album: (t) => t.album || '',
+  time: (t) => Number(t.durationMs) || 0,
+};
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+export function sortPlaylistRows(rows, sort) {
+  const key = sort && SORT_BY[sort.by];
+  if (!key) return rows;
+  return rows.map((r, i) => [r, i]).sort(([a, i], [b, j]) => {
+    const x = key(a);
+    const y = key(b);
+    const c = typeof x === 'number' ? x - y : collator.compare(x, y);
+    return c ? c * (sort.dir < 0 ? -1 : 1) : i - j;
+  }).map(([r]) => r);
+}
+
+/* A playlist's songs matching what's typed in its search box: every word
+   somewhere in the title, the artists or the album. */
+export function filterPlaylistRows(rows, query) {
+  const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return rows;
+  return rows.filter((t) => {
+    const hay = `${t.title || ''} ${t.artists || ''} ${t.album || ''}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/* A playlist window's Sort menu: its own order, or by title, artist, album
+   or length. Picking the sort it's already on turns it around. */
+const SORT_OPTIONS = [['order', 'Playlist Order'], ['title', 'Title'], ['artist', 'Artist'], ['album', 'Album'], ['time', 'Length']];
+function SortMenu({ sort, onPick }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const down = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('keydown', key, true);
+    return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true); };
+  }, [open]);
+  const by = sort?.by || 'order';
+  const label = SORT_OPTIONS.find(([v]) => v === by)?.[1] || 'Playlist Order';
+  const arrow = (dir) => <Svg size={11} w={2.4}><path d={dir > 0 ? 'M12 19V5M6 11l6-6 6 6' : 'M12 5v14M6 13l6 6 6-6'} /></Svg>;
+  return (
+    <div className="isx-sortwrap" ref={ref}>
+      <button type="button" className={`isx-ghost is-big isx-playbtn isx-sortbtn${open ? ' is-open' : ''}`} onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu" aria-expanded={open} title={`Sort: ${label}`}>
+        <Svg size={13} w={2}><path d="M4 6h11M4 12h7M4 18h4M17 8v12M14 17l3 3 3-3" /></Svg>
+        <span className="isx-btnlabel">Sort: {label}</span>
+        {sort ? <span className="isx-btnlabel isx-sortdir">{arrow(sort.dir)}</span> : null}
+      </button>
+      {open ? (
+        <div className="isx-sortmenu" role="menu">
+          {SORT_OPTIONS.map(([v, l]) => {
+            const on = v === by;
+            return (
+              <button key={v} type="button" role="menuitemradio" aria-checked={on} className={on ? 'is-on' : ''}
+                onClick={() => {
+                  onPick(v === 'order' ? null : on && sort ? { by: v, dir: -sort.dir } : { by: v, dir: 1 });
+                  if (v === 'order' || !on) setOpen(false);
+                }}>
+                <span>{l}</span>
+                {on && sort ? arrow(sort.dir) : on ? <Svg d={Ico.check} size={12} w={2.4} /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /* How long a playlist runs: "31 min", "1 hr 12 min". */
 function runTime(ms) {
   const m = Math.round(ms / 60000);
@@ -195,24 +275,114 @@ function runTime(ms) {
   return m % 60 ? `${Math.floor(m / 60)} hr ${m % 60} min` : `${Math.floor(m / 60)} hr`;
 }
 
-/* Who a playlist mostly is: the lead artists with more than one song on
-   it, most first, three at most. Nothing for a short or scattered one. */
-function mostlyOn(tracks) {
-  if ((tracks || []).length < 4) return [];
-  const count = new Map();
-  for (const t of tracks) {
-    const lead = String(t.artists || '').split(/,(?=\s)/)[0].trim();
-    if (lead) count.set(lead, (count.get(lead) || 0) + 1);
-  }
-  return [...count.entries()].filter(([, n]) => n > 1).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([n]) => n);
+/* The playing song's lyrics in a playlist: a small card floating over its
+   songs, with the line being sung between the ones either side of it (click
+   one to jump there), or the words as they are when they aren't timed. Drag
+   it by its top to put it anywhere in the view; it stays where it's left.
+   Its own component, so the clock ticking redraws only this. */
+const CARD_KEY = 'studio:lyricsCard';
+function LyricsCard({ lyrics, onSeek, hasSong, onClose }) {
+  const now = usePlaybackTime();
+  const synced = lyrics?.synced?.length ? lyrics.synced : null;
+  const plain = !synced && lyrics?.plain ? lyrics.plain : null;
+  /* The line being sung. It only steps back for a real seek: a report a
+     moment late would otherwise light the line before again for an instant. */
+  const raw = synced ? activeLyricIndex(synced, now) : -1;
+  const held = useRef({ idx: -1, time: 0, lines: null });
+  let idx = raw;
+  if (held.current.lines === synced && raw < held.current.idx && held.current.time - now < 0.5) idx = held.current.idx;
+  held.current = { idx, time: Math.max(now, idx === held.current.idx ? held.current.time : 0), lines: synced };
+
+  /* Every line is in one column that slides so the line being sung sits in
+     the middle of the card. The lines all keep one size and weight (only
+     their color changes), so nothing reflows as the song moves on, and the
+     card stays the same height whatever the words. */
+  const viewRef = useRef(null);
+  const lineRefs = useRef([]);
+  const [offset, setOffset] = useState(0);
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    const el = lineRefs.current[Math.max(0, idx)];
+    if (!view || !el) return;
+    setOffset(Math.round(view.clientHeight / 2 - (el.offsetTop + el.offsetHeight / 2)));
+  }, [idx, synced]);
+
+  /* Where it sits: its distance from the view's bottom-right corner, kept
+     inside the view as it's dragged and when the window is resized. */
+  const ref = useRef(null);
+  const [pos, setPos] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem(CARD_KEY) || 'null'); return v && Number.isFinite(v.r) && Number.isFinite(v.b) ? v : { r: 14, b: 14 }; } catch { return { r: 14, b: 14 }; }
+  });
+  const clamp = useCallback((p) => {
+    const el = ref.current;
+    const host = el?.parentElement;
+    if (!el || !host) return p;
+    const maxR = Math.max(8, host.clientWidth - el.offsetWidth - 8);
+    const maxB = Math.max(8, host.clientHeight - el.offsetHeight - 8);
+    return { r: Math.min(maxR, Math.max(8, p.r)), b: Math.min(maxB, Math.max(8, p.b)) };
+  }, []);
+  useLayoutEffect(() => {
+    const host = ref.current?.parentElement;
+    if (!host) return undefined;
+    const fit = () => setPos((p) => { const c = clamp(p); return c.r === p.r && c.b === p.b ? p : c; });
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(host);
+    ro.observe(ref.current); // its own height changes with the lines in it
+    return () => ro.disconnect();
+  }, [clamp]);
+  const startDrag = (e) => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    e.preventDefault();
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const from = pos;
+    let last = from;
+    const move = (ev) => { last = clamp({ r: from.r - (ev.clientX - sx), b: from.b - (ev.clientY - sy) }); setPos(last); };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      try { localStorage.setItem(CARD_KEY, JSON.stringify(last)); } catch { /* kept for this session only */ }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
+  return (
+    <div ref={ref} className="isx-lycard" style={{ right: pos.r, bottom: pos.b }} role="region" aria-label="Lyrics">
+      <div className="isx-lycard-hd" onPointerDown={startDrag} title="Drag to move">
+        <span>Lyrics</span>
+        <button type="button" className="isx-winbtn" onClick={onClose} title="Close" aria-label="Close lyrics">
+          <Svg size={12} w={2.2}><path d="M6 6l12 12M18 6L6 18" /></Svg>
+        </button>
+      </div>
+      {synced ? (
+        <div className="isx-lycard-view" ref={viewRef}>
+          <div className="isx-lycard-col" style={{ transform: `translateY(${offset}px)` }}>
+            {synced.map((l, i) => (
+              <div key={i} ref={(el) => { lineRefs.current[i] = el; }}
+                className={`isx-lyl${i === idx ? ' is-cur' : i < idx ? ' is-past' : ''}`}
+                onClick={onSeek ? () => onSeek(l.time) : undefined}>
+                {l.text || '♪'}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : plain ? (
+        <div className="isx-lycard-view is-plain">{plain}</div>
+      ) : (
+        <div className="isx-lycard-view is-empty">
+          {!hasSong ? 'Play a song to see its lyrics.' : lyrics?.instrumental ? 'Instrumental' : lyrics ? 'No lyrics for this song.' : 'Looking for lyrics…'}
+        </div>
+      )}
+    </div>
+  );
 }
 
-/* The song playing, along the bottom of a playlist: the Now Playing bar in
-   small, built from the bar's own controls (the same buttons, scrubber and
-   volume), laid out the same way: the song on the left, the transport and
-   scrubber in the middle, volume on the right. Its own component, so the
-   clock ticking redraws only this. */
-function MiniPlayer({ mini }) {
+/* The song playing, along the bottom of a playlist: the Now Playing bar's
+   controls in one row, with the lyrics button beside the volume. Its own
+   component, so the clock ticking redraws only this. */
+function MiniPlayer({ mini, lyricsOpen = false, onToggleLyrics = null }) {
   const now = usePlaybackTime();
   const { track, art, playing, duration, onToggle, onPrev, onNext, onSeek,
     shuffleOn, repeat = 'off', onToggleShuffle, onToggleRepeat,
@@ -225,7 +395,8 @@ function MiniPlayer({ mini }) {
     return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
   };
   const shown = scrub != null ? scrub * dur : now;
-  const pct = dur ? Math.min(100, Math.max(0, (shown / dur) * 100)) : 0;
+  const fillRef = useRef(null);
+  useProgressFill(fillRef, dur, playing, scrub);
   const seekProps = {
     role: 'slider', 'aria-label': 'Seek', tabIndex: 0,
     'aria-valuemin': 0, 'aria-valuemax': Math.round(dur), 'aria-valuenow': Math.round(shown),
@@ -237,7 +408,7 @@ function MiniPlayer({ mini }) {
   return (
     <div className="isx-mini">
       {/* The progress is a line along the top edge, to keep it one row. */}
-      <div className="isx-mini-line" {...seekProps}><i style={{ width: `${pct}%` }} /></div>
+      <div className="isx-mini-line" {...seekProps}><i ref={fillRef} /></div>
       <div className="isx-mini-song">
         <span className="isx-mini-art" style={{ backgroundImage: art ? `url("${coverAt(art, 120)}")` : 'none' }} />
         <div style={{ minWidth: 0 }}>
@@ -284,6 +455,15 @@ function MiniPlayer({ mini }) {
         </div>
       </div>
       <div className="isx-mini-right">
+        {onToggleLyrics ? (
+          <button type="button" className={`sth-npbtn is-toggle isx-mini-lyr${lyricsOpen ? ' is-on' : ''}`} onClick={onToggleLyrics}
+            title="Lyrics" aria-label="Lyrics" aria-pressed={lyricsOpen}>
+            {/* The Now Playing bar's lyrics icon: a speech bubble with quote marks. */}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M6.6 4.5h10.8a3 3 0 0 1 3 3v6.6a3 3 0 0 1-3 3H12l-3.9 3.4v-3.4H6.6a3 3 0 0 1-3-3V7.5a3 3 0 0 1 3-3z" /><path fill="currentColor" stroke="none" d="M9.90 8.30A1.30 1.30 0 0 1 11.20 9.60C11.20 11.20 10.30 12.40 8.80 13.00L8.50 12.50C9.40 12.00 9.80 11.40 9.90 10.90A1.30 1.30 0 0 1 9.90 8.30Z M14.30 8.30A1.30 1.30 0 0 1 15.60 9.60C15.60 11.20 14.70 12.40 13.20 13.00L12.90 12.50C13.80 12.00 14.20 11.40 14.30 10.90A1.30 1.30 0 0 1 14.30 8.30Z" />
+            </svg>
+          </button>
+        ) : null}
         {onSetVolume ? (
           <VolumeControl volume={volume} onSetVolume={onSetVolume} width={72}
             boost={gainBoost} onSetBoost={onSetGainBoost} getGainReduction={getGainReduction} />
@@ -423,9 +603,20 @@ export default function InstantSearch({
   /* The song playing ({ track, art, playing, duration, onToggle, onPrev,
      onNext, onSeek }), for the mini player along a playlist's bottom. */
   mini = null,
+  /* The playing song's lyrics ({ synced, plain, instrumental }; null while
+     they're looked for), for a playlist's lyrics panel. */
+  lyrics = null,
   /* How an album looks until you pick another in it: 'dark', 'color',
      'full' or 'immerse' (StudioHome, from your settings). */
   look = 'color',
+  /* (album) → this playlist into a window of its own: the Pop Out button
+     in a playlist's top bar. */
+  onPopOut = null,
+  /* The view is a playlist's own window (PlaylistWindow.jsx): it fills the
+     window, its top bar moves the window, and `windowBar` (pin, back into
+     the app, minimize, close) ends that bar. */
+  windowed = false,
+  windowBar = null,
 }) {
   /* ---------------------------------------------------------------- state */
   // A preview started from the panel ends with the panel.
@@ -554,6 +745,17 @@ export default function InstantSearch({
     try { localStorage.setItem(QUALITY_KEY, m); } catch { /* ignore */ }
   }, []);
 
+  /* Where the box searches: Spotify (your library and Spotify, as
+     always) or Soulseek on its own, straight from other people's shares,
+     with folders you can open. Kept between opens. */
+  const [slskMode, setSlskModeState] = useState(() => {
+    try { return localStorage.getItem('studio:searchSource') === 'soulseek'; } catch { return false; }
+  });
+  const setSlskMode = useCallback((on) => {
+    setSlskModeState(!!on);
+    try { localStorage.setItem('studio:searchSource', on ? 'soulseek' : 'all'); } catch { /* ignore */ }
+  }, []);
+
   /* The drill stack. [] is the results list; each push is a frame. */
   const [stack, setStack] = useState([]);
   const frame = stack[stack.length - 1] || null;
@@ -629,6 +831,31 @@ export default function InstantSearch({
     try { localStorage.setItem('studio:playlistLook', v); } catch { /* kept for this session only */ }
   }, []);
   const plLook = plLookPick || (look === 'immerse' ? 'immerse' : 'dark');
+  /* How each playlist's songs are sorted (sortPlaylistRows), kept per
+     playlist; its window shares it. */
+  const [plSorts, setPlSorts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('studio:playlistSort') || '{}') || {}; } catch { return {}; }
+  });
+  const plSort = plView ? plSorts[frame.album.albumId] || null : null;
+  const writeSort = useCallback((pick) => {
+    const id = frame?.album?.albumId;
+    if (!id) return;
+    setPlSorts((m) => {
+      const next = pick(m[id]);
+      const n = { ...m };
+      if (next) n[id] = next; else delete n[id];
+      try { localStorage.setItem('studio:playlistSort', JSON.stringify(n)); } catch { /* kept for this session only */ }
+      return n;
+    });
+  }, [frame?.album?.albumId]);
+  // A column sorts up, then down, then goes back to the playlist's order.
+  const sortBy = useCallback((by) => writeSort((cur) => (
+    by === 'order' ? null : !cur || cur.by !== by ? { by, dir: 1 } : cur.dir > 0 ? { by, dir: -1 } : null
+  )), [writeSort]);
+  const setSortTo = useCallback((next) => writeSort(() => next), [writeSort]);
+  /* What's typed in a playlist window's search box, narrowing its songs. */
+  const [plQuery, setPlQuery] = useState('');
+  useEffect(() => { setPlQuery(''); }, [frame?.album?.albumId]);
   const albumLook = frame?.kind === 'album' ? (plView ? plLook : lookPick === 'auto' ? look : lookPick) : null;
   /* A playlist's cover: the one it was given, or else four of its songs'
      albums in a square (one when it has fewer), as its page always showed. */
@@ -642,15 +869,9 @@ export default function InstantSearch({
     }
     return seen.length === 4 ? seen : seen.slice(0, 1);
   }, [plView, frame, albumData]);
-  /* Where a playlist's Immerse takes its colors: the song playing (changing
-     with each song), or the playlist's cover. Your pick is kept. With nothing
-     playing it's the cover. */
-  const [plFrom, setPlFrom] = useState(() => { try { return localStorage.getItem('studio:playlistImmerseFrom') === 'playlist' ? 'playlist' : 'song'; } catch { return 'song'; } });
-  const pickPlFrom = useCallback((v) => {
-    setPlFrom(v);
-    try { localStorage.setItem('studio:playlistImmerseFrom', v); } catch { /* kept for this session only */ }
-  }, []);
-  const plSongArt = plView && plFrom === 'song' ? mini?.art || '' : '';
+  /* A playlist's Immerse takes its colors from the song playing, and from
+     the playlist's cover while nothing plays. */
+  const plSongArt = plView ? mini?.art || '' : '';
   // The open album's colors, read from its cover.
   const lookArt = frame?.kind === 'album' ? (plView ? plSongArt || plTiles[0] || '' : frame.album.albumArtUrl || '') : '';
   const lookKey = plView && !plSongArt ? plTiles.slice(0, 3).join('\n') : lookArt;
@@ -672,7 +893,10 @@ export default function InstantSearch({
     }).catch(() => { if (live) setLookTheme(null); });
     return () => { live = false; };
   }, [lookKey]);
-  const lookColors = lookTheme && lookTheme.src === lookKey ? lookTheme : null;
+  /* A playlist keeps the last song's colors until the next song's are read,
+     so Immerse fades from one to the other instead of dropping to dark in
+     between. */
+  const lookColors = lookTheme && (lookTheme.src === lookKey || (plView && lookKey)) ? lookTheme : null;
   /* Your playlist as it changes while it's open: songs moved, removed or
      added, a new name or cover. */
   useEffect(() => {
@@ -690,7 +914,14 @@ export default function InstantSearch({
   const plNameSkip = useRef(false);
   useEffect(() => { setPlEdit(false); }, [frame?.album?.albumId]);
   // Dragging a song to a new place, in a playlist that can be reordered.
-  const plDrag = useRowDrag(plView ? frame.album.move || null : null);
+  /* A playlist's lyrics panel: open or not, kept (the window shares it). */
+  const [lyrOpen, setLyrOpen] = useState(() => { try { return localStorage.getItem('studio:playlistLyrics') === '1'; } catch { return false; } });
+  const toggleLyrics = useCallback(() => setLyrOpen((o) => {
+    try { localStorage.setItem('studio:playlistLyrics', o ? '0' : '1'); } catch { /* kept for this session only */ }
+    return !o;
+  }), []);
+  // Not while sorted: the rows on screen aren't the playlist's order then.
+  const plDrag = useRowDrag(plView && !plSort && !plQuery.trim() ? frame.album.move || null : null);
 
   /* ------------------------------------------------------- open / reset */
   useEffect(() => {
@@ -780,8 +1011,9 @@ export default function InstantSearch({
   useEffect(() => {
     if (!open) return undefined;
     const q = parsed;
-    /* Nothing to ask, or nothing worth asking — see localCertainty. */
-    if (!hasQuery || certain) {
+    /* Nothing to ask, or nothing worth asking — see localCertainty. The
+       Soulseek mode does its own searching. */
+    if (!hasQuery || certain || slskMode) {
       /* Bumping the counter orphans anything already in flight. Without it,
          the search fired at "keshi drun" lands underneath the answer for
          "keshi drunk" and the panel fills with results it deliberately
@@ -887,7 +1119,7 @@ export default function InstantSearch({
 
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, raw, hasQuery, certainId]);
+  }, [open, raw, hasQuery, certainId, slskMode]);
 
   /* ------------------------------------------------- tier 0: the library */
   /* The library has no section of its own any more — it merges into `songs`
@@ -1366,9 +1598,12 @@ export default function InstantSearch({
      way round — sections owning their rows — is what makes arrow keys in a
      grouped list turn into a special case per group. */
   const liveItems = useMemo(() => {
+    // Soulseek draws its own list, and Enter mustn't act on rows nobody can see.
+    if (frame?.kind === 'slsk' || (slskMode && !frame)) return [];
     if (frame?.kind === 'album') {
       const d = albumData[frame.album.albumId] || {};
-      const tracks = d.tracks || [];
+      const all = plView ? filterPlaylistRows(d.tracks || [], plQuery) : d.tracks || [];
+      const tracks = plSort ? sortPlaylistRows(all, plSort) : all;
       const list = [];
       tracks.forEach((t, i) => {
         const key = trackKey(t, i);
@@ -1572,6 +1807,11 @@ export default function InstantSearch({
           data: { action: 'filter', n: band.total },
         });
       }
+      /* The same words, asked of Soulseek directly: every folder and file
+         people share for it, not only the copies of songs found above. */
+      if (api()?.soulseekSearchLive && !frame) {
+        list.push({ key: 'act:slsk', group: 'More', kind: 'action', data: { action: 'slsk' } });
+      }
       /* 'full' — "open the full results page" — is gone with the page it
          opened. The palette IS the results page now. */
       if (parsed.artist || parsed.album || parsed.year) {
@@ -1579,9 +1819,9 @@ export default function InstantSearch({
       }
     }
     return list;
-  }, [frame, albumData, albumProbes, artistData, artistTracks, topTracks, discog, spotify.albums,
+  }, [frame, plView, plSort, plQuery, albumData, albumProbes, artistData, artistTracks, topTracks, discog, spotify.albums,
     expandedTrack, expandedSong, songProbes,
-    artists, albums, songs, folders, hasQuery, parsed, certain, band, alreadyOwned, onFilterLibrary, recents, renderArtist]);
+    artists, albums, songs, folders, hasQuery, parsed, certain, band, alreadyOwned, onFilterLibrary, recents, renderArtist, slskMode]);
 
   /* Instant means one complete answer, not a list that fills in. Results
      for what you've typed show only once everything for it is in: the
@@ -2001,14 +2241,17 @@ export default function InstantSearch({
     ...t, album: t.album || a.name || '', albumId: t.albumId || a.albumId, albumArtUrl: t.albumArtUrl || a.albumArtUrl || '',
   })), [albumData]);
   const playRecord = useCallback((a, index = 0, shuffle = false) => {
-    const rows = recordRows(a);
+    // A sorted playlist plays in the order it shows.
+    const mine = a === frame?.album && plView;
+    const shown = mine ? filterPlaylistRows(recordRows(a), plQuery) : recordRows(a);
+    const rows = mine && plSort ? sortPlaylistRows(shown, plSort) : shown;
     // Your album plays as your library does (StudioHome's libAlbumRecord).
     if (a.play) { if (rows.length) a.play(rows, index, shuffle); return; }
     /* An album found in search has no page it came from, so it's its own
        source: the bar links back to it here. */
     const source = a.context ? null : { kind: 'album', id: a.albumId, name: a.name, image: a.albumArtUrl || null, sub: a.artists ? `Album · ${a.artists}` : '' };
     if (rows.length) onPlaySpotifyRows?.(rows, index, { shuffle, context: a.context || null, source });
-  }, [recordRows, onPlaySpotifyRows]);
+  }, [recordRows, onPlaySpotifyRows, plSort, plQuery, plView, frame]);
 
   const getAlbumMissing = useCallback((album) => {
     const d = albumData[album.albumId];
@@ -2099,7 +2342,8 @@ export default function InstantSearch({
       saveSong(data);
       return;
     }
-    if (kind === 'folder') { onGetSlskAlbum?.(data); return; }
+    // A folder opens to show every song in it. Save All on the row still grabs it outright.
+    if (kind === 'folder') { push({ kind: 'slsk', folder: data }); return; }
     // Listed but not out yet: nothing to play or save.
     if (kind === 'albumtrack' && data?.track?.notOut) return;
     if (kind === 'albumtrack') {
@@ -2126,6 +2370,7 @@ export default function InstantSearch({
       /* Override the certainty gate for THIS query. Scoped to the exact
          string so it lapses on its own as soon as you type something else. */
       if (data.action === 'anyway') { setForceFor(raw); }
+      if (data.action === 'slsk') { setSlskMode(true); inputRef.current?.focus(); }
       if (data.action === 'filter') {
         /* The raw string, scopes and all — libRows matches on plain text, so
            the plain text is what it gets. */
@@ -2465,7 +2710,7 @@ export default function InstantSearch({
       const f = item.data;
       const key = `ssa:${f.id}`;
       return (
-        <button key={item.key} {...common}>
+        <button key={item.key} {...common} title="Open this folder to see every song in it">
           <div className="isx-glyph"><Svg d={Ico.folder} size={17} w={1.8} /></div>
           <div className="isx-mid">
             <div className="isx-nm" style={{ fontSize: 12.5 }}>{f.displayName}</div>
@@ -2666,6 +2911,20 @@ export default function InstantSearch({
           </button>
         );
       }
+      if (act === 'slsk') {
+        return (
+          <button key={item.key} {...common}>
+            <div className="isx-glyph"><Svg d={Ico.folder} size={16} w={1.8} /></div>
+            <div className="isx-mid">
+              <div className="isx-nm">Search Soulseek for “{raw.trim()}”</div>
+              <div className="isx-meta">
+                <span className="isx-mi">every folder and file people share, often in lossless</span>
+              </div>
+            </div>
+            <span className="isx-kb">Soulseek</span>
+          </button>
+        );
+      }
       if (act === 'anyway') {
         return (
           <button key={item.key} {...common}>
@@ -2699,6 +2958,21 @@ export default function InstantSearch({
     return null;
   }
 
+  /* A playlist's column head that sorts by it, with an arrow while it does. */
+  function sortHead(by, label, name = null) {
+    const on = by !== 'order' && plSort?.by === by;
+    const title = by === 'order' ? 'Playlist order' : `Sort by ${name || label}`;
+    return (
+      <span role="button" tabIndex={-1} className={`isx-sort${on ? ' is-on' : ''}`} title={title} aria-label={title}
+        onClick={(e) => { e.stopPropagation(); sortBy(by); }}>
+        {label}
+        {on && by !== 'order' ? (
+          <Svg size={10} w={2.6}><path d={plSort.dir > 0 ? 'M12 19V5M6 11l6-6 6 6' : 'M12 5v14M6 13l6 6 6-6'} /></Svg>
+        ) : null}
+      </span>
+    );
+  }
+
   /* --- section-aware list ------------------------------------------------ */
   function renderList() {
     const out = [];
@@ -2709,9 +2983,11 @@ export default function InstantSearch({
         last = item.group;
         out.push(
           /* A button like the rows, so it lays out exactly as they do. */
-          <button type="button" tabIndex={-1} className="isx-trk is-pl isx-plhead isx-in" key="plhead" aria-hidden>
-            <span className="isx-n">#</span><span /><span>Title</span><span>Album</span>
-            <span className="isx-dur"><Svg size={12} w={2}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></Svg></span><span />
+          <button type="button" tabIndex={-1} className="isx-trk is-pl isx-plhead isx-in" key="plhead">
+            <span className="isx-n">{sortHead('order', '#')}</span><span />
+            <span className="isx-sortcell">{sortHead('title', 'Title')}<span className="isx-sortsl">/</span>{sortHead('artist', 'Artist')}</span>
+            <span>{sortHead('album', 'Album')}</span>
+            <span className="isx-dur">{sortHead('time', <Svg size={12} w={2}><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></Svg>, 'Length')}</span><span />
           </button>,
         );
       }
@@ -2788,15 +3064,10 @@ export default function InstantSearch({
     return out;
   }
 
-  // An artist named in a list: their view here, or their page.
-  function openArtistNamed(n) {
-    if (renderArtist) push({ kind: 'artist', artist: { id: null, name: n } });
-    else if (onOpenArtist) { onOpenArtist({ name: n }); onClose?.(); }
-  }
-
   /* --- the header of a drilled frame ------------------------------------- */
   function renderHero() {
     if (frame?.kind === 'artist' && renderArtist) return null; // the view has its own hero
+    if (frame?.kind === 'slsk') return null; // so does a Soulseek folder
     if (frame?.kind === 'album') {
       const a = frame.album;
       const d = albumData[a.albumId] || {};
@@ -2827,15 +3098,16 @@ export default function InstantSearch({
       const playBtns = playable ? (
         <>
           <button type="button" className="isx-ghost is-big isx-playbtn" onClick={() => (nowHere && onTogglePlay ? onTogglePlay() : playRecord(a))}>
-            {showPause ? <PauseIcon size={13} /> : <PlayIcon size={13} />} {showPause ? 'Pause' : 'Play'}
+            {showPause ? <PauseIcon size={13} /> : <PlayIcon size={13} />}<span className="isx-btnlabel">{showPause ? 'Pause' : 'Play'}</span>
           </button>
-          <button type="button" className="isx-ghost is-big isx-playbtn" onClick={() => playRecord(a, 0, true)}><Svg d={Ico.shuffle} size={13} w={2} /> Shuffle</button>
+          <button type="button" className="isx-ghost is-big isx-playbtn" title="Shuffle" onClick={() => playRecord(a, 0, true)}>
+            <Svg d={Ico.shuffle} size={13} w={2} /><span className="isx-btnlabel">Shuffle</span>
+          </button>
         </>
       ) : null;
       if (plView) {
-        /* A playlist: its cover, who made it, how long it runs, and who's
-           mostly on it, which says what a playlist is when there's no one
-           artist to name. Edit Playlist edits it right here. */
+        /* A playlist: its cover, who made it and how long it runs. Edit
+           Playlist edits it right here. */
         const tracks = d.tracks || [];
         const ms = tracks.reduce((sum, t) => sum + (Number(t.durationMs) || 0), 0);
         const by = String(a.artists || '').trim();
@@ -2846,6 +3118,76 @@ export default function InstantSearch({
           const n = plName.trim();
           if (n && n !== a.name) ed?.rename?.(n);
         };
+        const pickCover = (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f) return;
+          const rd = new FileReader();
+          rd.onload = () => ed.setCover(String(rd.result));
+          rd.readAsDataURL(f);
+        };
+        const trash = <Svg size={13} w={2}><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13" /></Svg>;
+        /* A playlist's own window: its cover and name are in the top bar, so
+           in place of a header there's one row of tools: play, shuffle and
+           edit, then a search box and the sort. Editing turns the row into
+           the cover, the name and the rest of the edits. */
+        if (windowed) {
+          return editing ? (
+            <div className="isx-pltool is-edit">
+              {ed.setCover ? (
+                <label className="isx-tbcover" title={a.albumArtUrl ? 'Replace Cover' : 'Add Cover'}
+                  style={{ backgroundImage: plTiles[0] ? `url("${coverAt(plTiles[0], 120)}")` : 'none' }}>
+                  <span className="isx-tbcover-ic"><Svg size={15} w={1.9}><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="M21 16l-5-5-8 8" /></Svg></span>
+                  <input type="file" accept="image/*" hidden onChange={pickCover} />
+                </label>
+              ) : null}
+              {ed.rename ? (
+                <input className="isx-tbname" data-own-keys="" value={plName} aria-label="Playlist name" autoFocus
+                  onChange={(e) => setPlName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                    if (e.key === 'Escape') { plNameSkip.current = true; setPlName(a.name); e.currentTarget.blur(); }
+                  }}
+                  onBlur={() => { if (plNameSkip.current) { plNameSkip.current = false; return; } commitName(); }} />
+              ) : <span className="isx-tbsp" />}
+              {ed.setCover && a.albumArtUrl ? (
+                <button type="button" className="isx-ghost is-big isx-playbtn" title="Remove Cover" onClick={() => ed.setCover(null)}>
+                  <Svg size={13} w={2}><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M5 19L19 5" /></Svg><span className="isx-btnlabel">Remove Cover</span>
+                </button>
+              ) : null}
+              {ed.del ? (
+                <button type="button" className="isx-ghost is-big isx-playbtn isx-danger" title="Delete Playlist" onClick={ed.del}>
+                  {trash}<span className="isx-btnlabel">Delete Playlist</span>
+                </button>
+              ) : null}
+              <button type="button" className="isx-ghost is-big isx-playbtn" title="Done" onClick={() => setPlEdit(false)}>
+                <Svg d={Ico.check} size={13} w={2.2} /><span className="isx-btnlabel">Done</span>
+              </button>
+            </div>
+          ) : (
+            <div className="isx-pltool">
+              {playBtns}
+              {canEdit ? (
+                <button type="button" className="isx-ghost is-big isx-playbtn" title="Edit Playlist" onClick={() => { setPlName(a.name); setPlEdit(true); }}>
+                  <Svg d={Ico.edit} size={12} w={2} /><span className="isx-btnlabel">Edit</span>
+                </button>
+              ) : null}
+              <span className="isx-tbsp" />
+              <div className="isx-tbsearch">
+                <Svg d={Ico.search} size={13} w={2.2} />
+                <input data-own-keys="" value={plQuery} placeholder={`Search in ${a.name}`} aria-label={`Search in ${a.name}`}
+                  onChange={(e) => setPlQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); if (plQuery) setPlQuery(''); else e.currentTarget.blur(); } }} />
+                {plQuery ? (
+                  <button type="button" className="isx-tbclear" title="Clear" aria-label="Clear search" onClick={() => setPlQuery('')}>
+                    <Svg size={11} w={2.4}><path d="M6 6l12 12M18 6L6 18" /></Svg>
+                  </button>
+                ) : null}
+              </div>
+              <SortMenu sort={plSort} onPick={setSortTo} />
+            </div>
+          );
+        }
         return (
           <div className="isx-peek is-album is-playlist">
             <div className="isx-peekhero">
@@ -2882,23 +3224,8 @@ export default function InstantSearch({
                 <div className="isx-peeksub">
                   {total ? `${total} ${total === 1 ? 'song' : 'songs'}` : ''}{total && ms ? ` · ${runTime(ms)}` : ''}
                 </div>
-                {(() => {
-                  const names = editing ? [] : mostlyOn(tracks);
-                  if (!names.length) return null;
-                  return (
-                    <div className="isx-mostly">
-                      Mostly{' '}
-                      {names.map((n, k) => (
-                        <React.Fragment key={n}>
-                          {k ? (k === names.length - 1 ? ' and ' : ', ') : null}
-                          <span className="isx-tartist" role="link" tabIndex={-1} title={`Open ${n}`} onClick={() => openArtistNamed(n)}>{n}</span>
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  );
-                })()}
                 {editing ? (
-                  <div className="isx-peekacts">
+                  <div className="isx-peekacts is-edit">
                     <button type="button" className="isx-ghost is-big isx-playbtn" onClick={() => setPlEdit(false)}><Svg d={Ico.check} size={13} w={2.2} /> Done</button>
                     {ed.setCover && a.albumArtUrl ? <button type="button" className="isx-ghost is-big isx-playbtn" onClick={() => ed.setCover(null)}>Remove Cover</button> : null}
                     {ed.del ? (
@@ -2911,8 +3238,8 @@ export default function InstantSearch({
                   <div className="isx-peekacts">
                     {playBtns}
                     {canEdit ? (
-                      <button type="button" className="isx-ghost is-big isx-playbtn" onClick={() => { setPlName(a.name); setPlEdit(true); }}>
-                        <Svg d={Ico.edit} size={12} w={2} /> Edit Playlist
+                      <button type="button" className="isx-ghost is-big isx-playbtn" title="Edit Playlist" onClick={() => { setPlName(a.name); setPlEdit(true); }}>
+                        <Svg d={Ico.edit} size={12} w={2} /><span className="isx-btnlabel">Edit Playlist</span>
                       </button>
                     ) : a.edit ? <button type="button" className="isx-ghost is-big isx-playbtn" onClick={a.edit}><Svg d={Ico.edit} size={12} w={2} /> Edit Playlist</button> : null}
                   </div>
@@ -3017,6 +3344,8 @@ export default function InstantSearch({
      artist or a release pushes a frame (so the crumb and Esc walk back), a
      search replaces the stack — except the explicit "Open full page". */
   const embedArtist = frame?.kind === 'artist' && !!renderArtist;
+  // Soulseek's views: its search mode, or a folder opened from anywhere.
+  const slskSurface = frame?.kind === 'slsk' || (slskMode && !stack.length);
   const artistNav = {
     openArtist: (a) => push({ kind: 'artist', artist: { id: a.id || null, name: a.name, image: a.image || null } }),
     openAlbum: (r) => push({
@@ -3041,14 +3370,56 @@ export default function InstantSearch({
      straight away, exactly where you left it, and fades in. */
   const artistBack = embedArtist && cameBack;
 
-  const crumb = stack.length ? (
+  const winTracks = plView ? albumData[frame.album.albumId]?.tracks || [] : [];
+  const winLength = winTracks.reduce((sum, t) => sum + (Number(t.durationMs) || 0), 0);
+  /* A playlist's own window: the look on the left, its name in the middle,
+     the window's buttons on the right, on one line at any width. */
+  const winCrumb = stack.length && windowed ? (
+    <div className="isx-crumb is-win">
+      <div className="isx-winside">
+        {stack.length > 1 ? (
+          <button type="button" className="isx-back" onClick={pop} title="Back (Esc)" aria-label="Back">
+            <Svg d={Ico.back} size={13} w={2.4} />
+          </button>
+        ) : null}
+        {plView ? (
+          <div className="isx-lookseg" role="radiogroup" aria-label="Playlist look">
+            {[['dark', 'Dark'], ['immerse', 'Immerse']].map(([v, label]) => (
+              <button key={v} type="button" role="radio" aria-checked={plLook === v} className={plLook === v ? 'on' : ''}
+                onClick={() => pickPlLook(v)}>{label}</button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {/* The name with a small cover beside it, as a Discord server's title has. */}
+      <div className="isx-wintitle">
+        {frame?.kind === 'album' ? (
+          <span className="isx-wintitle-art" aria-hidden style={{
+            backgroundImage: (plView ? plTiles[0] : frame.album.albumArtUrl) ? `url("${coverAt(plView ? plTiles[0] : frame.album.albumArtUrl, 80)}")` : 'none',
+          }} />
+        ) : null}
+        <span className="isx-wintitle-t">{frame?.kind === 'album' ? frame.album.name : frame?.artist?.name}</span>
+        {plView && winTracks.length ? (
+          <span className="isx-wintitle-m">
+            {winTracks.length} {winTracks.length === 1 ? 'song' : 'songs'}
+            {winLength ? ` · ${runTime(winLength)}` : ''}
+          </span>
+        ) : null}
+      </div>
+      <div className="isx-winside is-end">{windowBar}</div>
+    </div>
+  ) : null;
+  const crumb = winCrumb || (stack.length ? (
     <div className="isx-crumb">
-      <button type="button" className="isx-back" onClick={pop} title="Back (Esc)" aria-label="Back">
-        <Svg d={Ico.back} size={13} w={2.4} />
-      </button>
+      {/* A window's own playlist has nothing to go back to. */}
+      {windowed && stack.length === 1 && stack[0].root ? null : (
+        <button type="button" className="isx-back" onClick={pop} title="Back (Esc)" aria-label="Back">
+          <Svg d={Ico.back} size={13} w={2.4} />
+        </button>
+      )}
       <div className="isx-path-bc">
         {stack.map((f, i) => {
-          const label = f.kind === 'album' ? f.album.name : f.artist.name;
+          const label = f.kind === 'album' ? f.album.name : f.kind === 'slsk' ? f.folder.displayName : f.artist.name;
           return (
             <React.Fragment key={i}>
               {i > 0 ? <span className="sl">/</span> : null}
@@ -3067,22 +3438,20 @@ export default function InstantSearch({
       </div>
       <div style={{ flex: 1 }} />
       {plView ? (
-        <>
-          {plLook === 'immerse' ? (
-            <div className="isx-lookseg" role="radiogroup" aria-label="Immerse colors from" style={{ marginRight: 8 }}>
-              {[['song', 'Song Cover', 'Colors from the song playing'], ['playlist', 'Playlist Cover', 'Colors from the playlist’s cover']].map(([v, label, tip]) => (
-                <button key={v} type="button" role="radio" aria-checked={plFrom === v} className={plFrom === v ? 'on' : ''}
-                  title={tip} onClick={() => pickPlFrom(v)}>{label}</button>
-              ))}
-            </div>
-          ) : null}
+        <div className="isx-segrow">
           <div className="isx-lookseg" role="radiogroup" aria-label="Playlist look">
             {[['dark', 'Dark'], ['immerse', 'Immerse']].map(([v, label]) => (
               <button key={v} type="button" role="radio" aria-checked={plLook === v} className={plLook === v ? 'on' : ''}
                 onClick={() => pickPlLook(v)}>{label}</button>
             ))}
           </div>
-        </>
+          {onPopOut && !windowed ? (
+            <button type="button" className="isx-winbtn" style={{ marginLeft: 6 }} onClick={() => onPopOut(frame.album)}
+              title="Pop Out" aria-label="Pop out into its own window">
+              <Svg size={15} w={1.9}><rect x="3" y="7" width="14" height="14" rx="3" /><path d="M14 3h7v7M21 3l-9 9" /></Svg>
+            </button>
+          ) : null}
+        </div>
       ) : frame?.kind === 'album' ? (
         <div className="isx-lookseg" role="radiogroup" aria-label="Album look">
           {[['auto', 'Auto', 'Follow your settings'], ['dark', 'Dark'], ['color', 'Color'], ['full', 'Full Color'], ['immerse', 'Immerse']].map(([v, label, tip]) => (
@@ -3092,7 +3461,7 @@ export default function InstantSearch({
         </div>
       ) : null}
     </div>
-  ) : null;
+  ) : null);
 
   /* Hints describe MOVEMENT and the one submit key. No "↵ play" or
      "↵ get" — Enter doesn't do those any more, and a hint for a binding
@@ -3113,11 +3482,81 @@ export default function InstantSearch({
         ? [['↑↓', 'move'], ...enterHint, ...albumHint, ...pageHint, ...filterHint]
         : [];
 
+  const listBody = embedArtist ? (
+          <div className="isx-artistbody">
+            {renderArtist(
+              { name: frame.artist.name, spotifyId: frame.artist.id, image: artistImage(frame.artist) },
+              artistNav,
+            )}
+          </div>
+        ) : (
+        <div className="isx-body" ref={listRef} onMouseLeave={hideHoverCursor}>
+          {!hasQuery && !stack.length ? (
+            <div className="isx-start">
+              {/* What search covers, in two short lines, and the filters as
+                  tokens: hover one for what it does, click to add it. Recent
+                  searches follow underneath. */}
+              <div className="isx-hello">
+                <span className="isx-hello-ic"><Svg d={Ico.search} size={16} w={2.2} /></span>
+                <div className="isx-hello-t">Search Spotify</div>
+                <div className="isx-hello-l">Find any song, album or artist, plus anything already in your library.</div>
+                <div className="isx-hello-l is-dim">Add a filter to narrow it down.</div>
+                <div className="isx-toks">
+                  {FILTER_HINTS.map(([tok, desc]) => (
+                    <button key={tok} type="button" className="isx-tok-f" data-tip={desc} aria-label={`${tok} ${desc}`}
+                      onClick={() => {
+                        if (tok.endsWith(':')) {
+                          // A prefix: drop it in and wait for the value.
+                          setText((t) => `${t && !/\s$/.test(t) ? `${t} ` : t}${tok}`);
+                        } else {
+                          setChips((c) => mergeChips(c, [tok]));
+                        }
+                        inputRef.current?.focus();
+                      }}>
+                      {tok}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {items.length ? renderList() : null}
+            </div>
+          ) : items.length ? (
+            renderList()
+          ) : waiting || phase.spotify === 'busy' || albumData[frame?.album?.albumId]?.busy || artistData[frame?.artist?.id]?.busy ? (
+            <div className="isx-empty"><div className="isx-emptyhint">Looking…</div></div>
+          ) : frame?.kind === 'album' ? (
+            <div className="isx-empty">
+              <div className="isx-emptytitle">
+                {albumData[frame.album.albumId]?.error ? 'Couldn\u2019t load this release'
+                  : plView && plQuery.trim() && albumData[frame.album.albumId]?.tracks?.length ? <>No songs here match “{plQuery.trim()}”.</>
+                    : frame.album.collection ? (frame.album.empty || 'Nothing to play here yet.') : 'No songs listed for this release'}
+              </div>
+              {albumData[frame.album.albumId]?.error || !frame.album.collection
+                ? <div className="isx-emptyhint">{albumData[frame.album.albumId]?.error || 'Spotify returned an empty tracklist.'}</div> : null}
+              {albumData[frame.album.albumId]?.error ? (
+                <button type="button" className="isx-ghost" style={{ marginTop: 12 }}
+                  onClick={() => { setAlbumData((m) => { const n = { ...m }; delete n[frame.album.albumId]; return n; }); loadAlbum(frame.album); }}>
+                  Try Again
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <div className="isx-empty">
+              <div className="isx-emptytitle">{phase.spotify === 'error' && errorNote ? 'Search didn\u2019t go through' : <>Nothing matched “{parsed.text || parsed.artist || parsed.album}”.</>}</div>
+              <div className="isx-emptyhint">
+                {errorNote || 'Try fewer words. Peers match on the whole phrase, so a shorter query usually returns more.'}
+              </div>
+            </div>
+          )}
+        </div>
+        );
+
   return (
     <>
       <style>{STYLES}</style>
-      <div className={`isx-scrim${open ? '' : ' is-leaving'}`} onClick={onClose} />
-      <div className={`isx-panel${open ? '' : ' is-leaving'}${stack.length ? ' is-wide' : ''}${embedArtist ? ' is-artist' : ''}${artistBack ? ' is-back' : ''}${albumLook && albumLook !== 'dark' && lookColors ? ' has-look' : ''}`} role="dialog" aria-label="Search" ref={panelRef} onAnimationEnd={onPanelAnimEnd}>
+      <SoulseekStyles />
+      {windowed ? null : <div className={`isx-scrim${open ? '' : ' is-leaving'}`} onClick={onClose} />}
+      <div className={`isx-panel${windowed ? ' is-windowed' : ''}${open ? '' : ' is-leaving'}${stack.length || (slskMode && hasQuery) ? ' is-wide' : ''}${embedArtist ? ' is-artist' : ''}${artistBack ? ' is-back' : ''}${albumLook && albumLook !== 'dark' && lookColors ? ' has-look' : ''}`} role="dialog" aria-label="Search" ref={panelRef} onAnimationEnd={onPanelAnimEnd}>
         {albumLook && albumLook !== 'dark' && lookColors ? (
           <div className={`isx-look is-${albumLook}`} aria-hidden style={albumLook === 'color'
             ? { background: `linear-gradient(180deg, rgba(${lookColors.wash},0.9) 0%, rgba(${lookColors.wash},0.5) 200px, rgba(${lookColors.wash},0.14) 420px, rgba(${lookColors.wash},0) 640px)` }
@@ -3177,7 +3616,7 @@ export default function InstantSearch({
                   e.preventDefault();
                   onSpotifyLink(pasted);
                 }}
-                placeholder={chips.length ? 'Add words…' : 'Search songs, albums and artists'}
+                placeholder={chips.length ? 'Add words…' : slskMode ? 'Search Soulseek for an artist, album or song' : 'Search songs, albums and artists'}
                 spellCheck={false}
                 aria-label="Search"
               />
@@ -3193,82 +3632,44 @@ export default function InstantSearch({
                 <Svg d={Ico.x} size={12} w={2.4} />
               </button>
             ) : null}
+            {api()?.soulseekSearchLive ? (
+              <div className="isx-lookseg isx-srcseg" role="radiogroup" aria-label="Search where">
+                <button type="button" role="radio" aria-checked={!slskMode} className={!slskMode ? 'on' : ''}
+                  title="Search Spotify" onClick={() => { setSlskMode(false); inputRef.current?.focus(); }}>Spotify</button>
+                <button type="button" role="radio" aria-checked={slskMode} className={slskMode ? 'on' : ''}
+                  title="Other people’s shares on Soulseek, with folders you can open" onClick={() => { setSlskMode(true); inputRef.current?.focus(); }}>Soulseek</button>
+              </div>
+            ) : null}
             <button type="button" className="isx-escbtn" onClick={onClose} title="Close (Esc)" aria-label="Close search">Esc</button>
           </div>
         ) : null}
 
-        {renderHero()}
-
-        {embedArtist ? (
-          <div className="isx-artistbody">
-            {renderArtist(
-              { name: frame.artist.name, spotifyId: frame.artist.id, image: artistImage(frame.artist) },
-              artistNav,
-            )}
+        {/* A playlist: its songs, with its lyrics card floating over them
+            while it's open. */}
+        {plView ? (
+          <div className="isx-plmain">
+            <div className="isx-plcol">{renderHero()}{listBody}</div>
+            {lyrOpen ? <LyricsCard lyrics={lyrics} onSeek={mini?.onSeek} hasSong={!!mini} onClose={toggleLyrics} /> : null}
           </div>
+        ) : frame?.kind === 'slsk' ? (
+          <SoulseekFolder key={frame.folder.id} folder={frame.folder}
+            dlState={dlState} dlProgress={dlProgress}
+            onGetFile={onGetSlskFile} onGetFolder={onGetSlskAlbum}
+            onOpenCopy={(c) => setStack((st) => [...st.slice(0, -1), { kind: 'slsk', folder: c }])} />
+        ) : slskMode && !stack.length ? (
+          <SoulseekResults query={raw}
+            dlState={dlState} dlProgress={dlProgress}
+            onGetFile={onGetSlskFile}
+            onOpenFolder={(f) => push({ kind: 'slsk', folder: f })}
+            onPickQuery={(q) => { setRaw(q); inputRef.current?.focus(); }} />
         ) : (
-        <div className="isx-body" ref={listRef} onMouseLeave={hideHoverCursor}>
-          {!hasQuery && !stack.length ? (
-            <div className="isx-start">
-              {/* What search covers, in two short lines, and the filters as
-                  tokens: hover one for what it does, click to add it. Recent
-                  searches follow underneath. */}
-              <div className="isx-hello">
-                <span className="isx-hello-ic"><Svg d={Ico.search} size={16} w={2.2} /></span>
-                <div className="isx-hello-t">Search Everything</div>
-                <div className="isx-hello-l">Your library and all of Spotify in one place.</div>
-                <div className="isx-hello-l is-dim">Each song shows up once. Duplicate copies are hidden.</div>
-                <div className="isx-toks">
-                  {FILTER_HINTS.map(([tok, desc]) => (
-                    <button key={tok} type="button" className="isx-tok-f" data-tip={desc} aria-label={`${tok} ${desc}`}
-                      onClick={() => {
-                        if (tok.endsWith(':')) {
-                          // A prefix: drop it in and wait for the value.
-                          setText((t) => `${t && !/\s$/.test(t) ? `${t} ` : t}${tok}`);
-                        } else {
-                          setChips((c) => mergeChips(c, [tok]));
-                        }
-                        inputRef.current?.focus();
-                      }}>
-                      {tok}
-                    </button>
-                  ))}
-                </div>
-                <div className="isx-hello-hint">Hover a filter to see what it does.</div>
-              </div>
-              {items.length ? renderList() : null}
-            </div>
-          ) : items.length ? (
-            renderList()
-          ) : waiting || phase.spotify === 'busy' || albumData[frame?.album?.albumId]?.busy || artistData[frame?.artist?.id]?.busy ? (
-            <div className="isx-empty"><div className="isx-emptyhint">Looking…</div></div>
-          ) : frame?.kind === 'album' ? (
-            <div className="isx-empty">
-              <div className="isx-emptytitle">
-                {albumData[frame.album.albumId]?.error ? 'Couldn\u2019t load this release'
-                  : frame.album.collection ? (frame.album.empty || 'Nothing to play here yet.') : 'No songs listed for this release'}
-              </div>
-              {albumData[frame.album.albumId]?.error || !frame.album.collection
-                ? <div className="isx-emptyhint">{albumData[frame.album.albumId]?.error || 'Spotify returned an empty tracklist.'}</div> : null}
-              {albumData[frame.album.albumId]?.error ? (
-                <button type="button" className="isx-ghost" style={{ marginTop: 12 }}
-                  onClick={() => { setAlbumData((m) => { const n = { ...m }; delete n[frame.album.albumId]; return n; }); loadAlbum(frame.album); }}>
-                  Try Again
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <div className="isx-empty">
-              <div className="isx-emptytitle">{phase.spotify === 'error' && errorNote ? 'Search didn\u2019t go through' : <>Nothing matched “{parsed.text || parsed.artist || parsed.album}”.</>}</div>
-              <div className="isx-emptyhint">
-                {errorNote || 'Try fewer words. Peers match on the whole phrase, so a shorter query usually returns more.'}
-              </div>
-            </div>
-          )}
-        </div>
+          <>
+            {renderHero()}
+            {listBody}
+          </>
         )}
 
-        {plView ? (mini ? <div className="isx-foot is-mini"><MiniPlayer mini={mini} /></div> : null) : (
+        {plView ? (mini ? <div className="isx-foot is-mini"><MiniPlayer mini={mini} lyricsOpen={lyrOpen} onToggleLyrics={toggleLyrics} /></div> : null) : slskSurface ? null : (
         <div className="isx-foot">
           {footHints.map(([k, label]) => (
             <span key={k}><kbd>{k}</kbd>{titleCase(label)}</span>
@@ -3600,6 +4001,11 @@ const STYLES = `
   text-transform: uppercase; color: rgba(var(--st-sub-rgb), 0.42); border-bottom: 1px solid rgba(var(--st-fg-rgb), 0.07);
   border-radius: 0; margin-bottom: 4px; }
 .isx-plhead > .isx-n { font-size: 11px; letter-spacing: 0; color: inherit; }
+.isx-sort { pointer-events: auto; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; border-radius: 4px; transition: color 0.12s ease; }
+.isx-sort:hover, .isx-sort.is-on { color: var(--st-text); }
+.isx-sortsl { margin: 0 6px; opacity: 0.5; }
+.isx-sortcell { display: flex; align-items: center; min-width: 0; }
+.isx-panel.has-look .isx-sort:hover, .isx-panel.has-look .isx-sort.is-on { color: #fff; }
 .isx-plhead > .isx-dur { display: flex; justify-content: flex-end; color: inherit; }
 .isx-trk.is-dragged { opacity: 0.4; }
 .isx-trk.is-drop-before { box-shadow: inset 0 2px 0 rgb(var(--st-acc-rgb)); }
@@ -3630,14 +4036,41 @@ const STYLES = `
 .isx-mini-mid .sth-npbar-transport { gap: 6px; }
 .isx-mini-right { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
 .isx-mini-time { width: 36px; font-size: 11px; }
+/* A playlist's songs, with its lyrics card floating over them. */
+.isx-plmain { flex: 1 1 auto; min-height: 0; display: flex; position: relative; }
+.isx-plcol { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; container: isxcol / inline-size; }
+.isx-lycard { position: absolute; z-index: 4; width: min(320px, calc(100% - 16px)); padding: 10px 14px 14px; border-radius: 14px;
+  background: rgba(18, 18, 20, 0.94); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  animation: isxCardIn 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.isx-panel.has-look .isx-lycard { background: rgba(10, 8, 10, 0.5); border-color: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); }
+@keyframes isxCardIn { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+.isx-lycard-hd { display: flex; align-items: center; justify-content: space-between; margin: 0 -6px 6px 0; cursor: grab;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255, 255, 255, 0.5); }
+.isx-lycard-hd:active { cursor: grabbing; }
+.isx-lycard-hd .isx-winbtn { width: 24px; height: 24px; }
+.isx-lycard-view { position: relative; height: 240px; overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 22%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 22%, #000 78%, transparent 100%); }
+.isx-lycard-col { display: flex; flex-direction: column; gap: 10px; will-change: transform;
+  transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+.isx-lyl { font-size: 16px; font-weight: 750; line-height: 1.35; color: rgba(255, 255, 255, 0.34); cursor: pointer;
+  transition: color 0.45s ease; }
+.isx-lyl.is-past { color: rgba(255, 255, 255, 0.22); }
+.isx-lyl.is-cur { color: #fff; }
+.isx-lyl:not(.is-cur):hover { color: rgba(255, 255, 255, 0.62); }
+.isx-lycard-view.is-plain { overflow-y: auto; -webkit-mask-image: none; mask-image: none; white-space: pre-line;
+  font-size: 13.5px; font-weight: 600; line-height: 1.6; color: rgba(255, 255, 255, 0.85); padding-right: 4px; }
+.isx-lycard-view.is-empty { display: flex; align-items: center; justify-content: center; text-align: center;
+  -webkit-mask-image: none; mask-image: none; font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.55); }
+@media (prefers-reduced-motion: reduce) { .isx-lycard, .isx-lycard-col { animation: none; transition: none; } }
+
 /* The progress line on the footer's top edge, thicker under the pointer. */
 .isx-mini-line { position: absolute; left: 0; right: 0; top: -6px; height: 12px; cursor: pointer; touch-action: none; z-index: 1; }
 .isx-mini-line::before, .isx-mini-line i { content: ''; position: absolute; left: 0; top: 5px; height: 2px; transition: height 0.12s ease, top 0.12s ease; }
 .isx-mini-line::before { right: 0; background: rgba(255,255,255,0.14); }
 .isx-mini-line i { background: var(--accent-line, #fff); }
 .isx-mini-line:hover::before, .isx-mini-line:hover i { top: 4px; height: 4px; }
-.isx-mostly { font-size: 12.5px; color: rgba(var(--st-sub-rgb), 0.5); margin-top: 6px; }
-.isx-mostly .isx-tartist { color: rgba(var(--st-text-rgb), 0.82); font-weight: 650; }
 .isx-none { font-size: 10.5px; color: rgba(var(--st-sub-rgb), 0.3); white-space: nowrap; }
 .isx-srcct { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px;
   background: rgba(var(--st-fg-rgb), 0.08); color: rgba(var(--st-fg-rgb), 0.4); }
@@ -3798,5 +4231,112 @@ const STYLES = `
 /* The color stops at the panel's rounded edge. Its moving layers are drawn
    apart from the page, and a rounded overflow clip alone let their square
    corners show past the border. */
-.isx-look { clip-path: inset(0 round 18px); }
+.isx-look { clip-path: inset(0 round 18px); transition: background-color 0.8s ease; }
+/* Small square buttons at the end of the top bar: Pop Out, and a playlist
+   window's own controls. */
+.isx-winbtn { width: 28px; height: 28px; flex-shrink: 0; border: none; border-radius: 8px; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: rgba(var(--st-fg-rgb), 0.6);
+  transition: background 0.14s ease, color 0.14s ease; }
+.isx-winbtn:hover { background: rgba(var(--st-fg-rgb), 0.1); color: var(--st-text); }
+.isx-winbtn.is-on { background: rgba(var(--st-fg-rgb), 0.14); color: var(--st-text); }
+.isx-winbtn.is-close:hover { background: rgb(196, 43, 28); color: #fff; }
+.isx-panel.has-look .isx-winbtn { color: rgba(255,255,255,0.72); }
+.isx-panel.has-look .isx-winbtn:hover, .isx-panel.has-look .isx-winbtn.is-on { background: rgba(255,255,255,0.14); color: #fff; }
+.isx-panel.has-look .isx-winbtn.is-close:hover { background: rgb(196, 43, 28); }
+.isx-winsep { width: 1px; height: 18px; margin: 0 4px; flex-shrink: 0; background: rgba(var(--st-fg-rgb), 0.12); }
+.isx-panel.has-look .isx-winsep { background: rgba(255,255,255,0.16); }
+/* A playlist's own window: the view fills it edge to edge, and its top bar
+   is what you drag the window by (its buttons and switches still click). */
+.isx-panel.is-windowed { top: 0; left: 0; width: 100vw; height: 100vh; max-height: none; transform: none; border-radius: 0;
+  border: none; box-shadow: none; animation: none; transition: none; }
+.isx-panel.is-windowed .isx-look { clip-path: none; }
+.isx-panel.is-windowed .isx-crumb { -webkit-app-region: drag; }
+.isx-panel.is-windowed .isx-crumb button, .isx-panel.is-windowed .isx-crumb .isx-lookseg { -webkit-app-region: no-drag; }
+.isx-segrow { display: flex; align-items: center; min-width: 0; }
+.isx-path-bc { flex-shrink: 1; }
+.isx-path-bc b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isx-crumb.is-win { display: grid; grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr); column-gap: 12px; }
+.isx-winside { display: flex; align-items: center; gap: 6px; }
+.isx-winside.is-end { justify-content: flex-end; gap: 2px; }
+.isx-wintitle { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 13.5px; font-weight: 700; color: var(--st-text); }
+.isx-wintitle-art { width: 20px; height: 20px; flex-shrink: 0; border-radius: 6px; background: rgba(255, 255, 255, 0.1) center/cover no-repeat;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.isx-wintitle-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isx-wintitle-m { flex-shrink: 0; font-size: 12px; font-weight: 600; color: rgba(var(--st-fg-rgb), 0.55); }
+.isx-panel.has-look .isx-wintitle-m { color: rgba(255, 255, 255, 0.6); }
+@container isxwin (max-width: 640px) { .isx-wintitle-m { display: none; } }
+/* A playlist window's row of tools, in place of a header. */
+.isx-pltool { display: flex; align-items: center; gap: 8px; padding: 12px 18px 10px; flex-shrink: 0; min-width: 0; }
+.isx-pltool .isx-ghost.is-big { height: 36px; padding: 0 14px; font-size: 12.5px; flex-shrink: 0; }
+.isx-tbsp { flex: 1; min-width: 8px; }
+.isx-tbsearch { display: flex; align-items: center; gap: 8px; width: clamp(150px, 34cqw, 280px); min-width: 0; height: 36px; padding: 0 8px 0 11px;
+  border-radius: 9px; border: 1px solid rgba(var(--st-fg-rgb), 0.12); background: rgba(var(--st-fg-rgb), 0.05); color: rgba(var(--st-fg-rgb), 0.5); }
+.isx-tbsearch:focus-within { border-color: rgba(var(--st-fg-rgb), 0.3); }
+.isx-tbsearch input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font: inherit; font-size: 13px; font-weight: 600; color: var(--st-text); }
+.isx-tbsearch input::placeholder { color: rgba(var(--st-fg-rgb), 0.45); }
+.isx-tbclear { display: grid; place-items: center; width: 22px; height: 22px; border: none; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.isx-tbclear:hover { background: rgba(var(--st-fg-rgb), 0.1); color: var(--st-text); }
+.isx-panel.has-look .isx-tbsearch { background: rgba(0, 0, 0, 0.18); border-color: rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.6); }
+.isx-panel.has-look .isx-tbsearch input::placeholder { color: rgba(255, 255, 255, 0.5); }
+.isx-sortwrap { position: relative; flex-shrink: 0; }
+.isx-sortdir { display: inline-flex; margin-left: -2px; }
+.isx-sortmenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 180px; padding: 5px; border-radius: 12px;
+  background: var(--surface, #0f0f11); border: 1px solid var(--border, rgba(255, 255, 255, 0.1)); box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+  animation: isxCardIn 0.14s ease both; }
+.isx-sortmenu button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px;
+  border: none; border-radius: 8px; background: transparent; color: rgba(255, 255, 255, 0.82); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; }
+.isx-sortmenu button:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+.isx-sortmenu button.is-on { color: #fff; font-weight: 700; }
+/* Editing: the cover (click to change it) and the name, in the same row. */
+.isx-tbcover { position: relative; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; cursor: pointer; overflow: hidden;
+  background: rgba(var(--st-fg-rgb), 0.08) center/cover no-repeat; }
+.isx-tbcover-ic { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; opacity: 0.85; transition: opacity 0.14s ease; }
+.isx-tbcover:hover .isx-tbcover-ic { opacity: 1; background: rgba(0, 0, 0, 0.6); }
+.isx-tbname { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid rgba(var(--st-fg-rgb), 0.24);
+  background: rgba(var(--st-fg-rgb), 0.06); color: var(--st-text); font: inherit; font-size: 15px; font-weight: 750; outline: none; }
+.isx-tbname:focus { border-color: rgba(var(--st-fg-rgb), 0.42); }
+.isx-panel.has-look .isx-tbname { background: rgba(0, 0, 0, 0.18); border-color: rgba(255, 255, 255, 0.25); }
+/* Narrow: the buttons are their icons and the search box takes the room. */
+@container isxcol (max-width: 600px) {
+  .isx-pltool { gap: 6px; padding: 10px 12px 8px; }
+  .isx-pltool .isx-btnlabel { display: none; }
+  .isx-pltool .isx-ghost.is-big { width: 36px; padding: 0; justify-content: center; }
+  .isx-pltool .isx-tbsp { display: none; }
+  .isx-tbsearch { flex: 1; width: auto; }
+  .isx-pltool.is-edit .isx-tbname { font-size: 14px; }
+}
+.isx-btnlabel { display: inline; }
+/* A window can be any size: it lays itself out by its own width. The cover,
+   the name and the buttons scale with it rather than jumping between sizes,
+   and the buttons stay on one line. */
+.isx-panel.is-windowed { container: isxwin / inline-size; }
+.isx-panel.is-windowed .isx-plcover { width: clamp(92px, 24cqw, 150px); height: auto; aspect-ratio: 1; }
+.isx-panel.is-windowed .isx-peek.is-album .isx-peektitle { font-size: clamp(22px, 5.6cqw, 32px); }
+.isx-panel.is-windowed .isx-peek.is-album .isx-peekacts { flex-wrap: nowrap; }
+.isx-panel.is-windowed .isx-peek.is-album .isx-peekacts.is-edit { flex-wrap: wrap; }
+.isx-panel.is-windowed .isx-peek.is-album .isx-playbtn { min-width: 0; }
+.isx-panel.is-windowed .isx-peek.is-album .isx-ghost.is-big { padding: 9px clamp(11px, 2.6cqw, 16px); }
+.isx-panel.is-windowed .isx-foot.is-mini { padding-top: 10px; padding-bottom: 10px; }
+@container isxwin (max-width: 700px) {
+  .isx-mini { gap: 10px; }
+  .isx-mini-right .stv-boost { display: none; }
+  .isx-mini-right .sth-vol { width: 56px !important; }
+}
+/* The playlist's own column (its songs, and its header) by its own width:
+   the window's, or what's left beside the lyrics. */
+@container isxcol (max-width: 640px) {
+  .isx-talb, .isx-plhead > span:nth-child(4) { display: none; }
+  .isx-trk.is-pl { grid-template-columns: 30px 42px minmax(0,1fr) 52px 32px; }
+}
+@container isxcol (max-width: 560px) {
+  .isx-peek.is-album { padding: 16px 16px 6px; }
+  .isx-peek.is-album .isx-peekhero { gap: 16px; }
+  .isx-peek.is-album .isx-peekacts { gap: 8px; margin-top: 12px; }
+  .isx-btnlabel { display: none; }
+}
+@container isxwin (max-width: 560px) {
+  .isx-mini-time { display: none; }
+  .isx-mini .sth-npbtn.is-toggle:not(.isx-mini-lyr) { display: none; }
+}
 `;

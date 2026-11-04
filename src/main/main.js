@@ -37,6 +37,7 @@ if (require('electron-squirrel-startup')) {
 
 import path from 'path';
 import fs from 'fs';
+import { registerPlaylistWindows } from './playlistWindows.js';
 import { ensureLibraryOpen, loadAllTracks, loadAlbumCovers, setAlbumCover, loadArtistHeaders, setArtistHeader, clearArtistHeader, loadArtistImageCache, setArtistImageCache, loadCoverColours, setCoverColour, setAlbumCoversBulk, upsertTracks, removeTracksByIds, clearAllLibraryData, updateTrackMetadata, updateAlbumMetadata, loadAllPlaylists, loadPlaylistTrackIds, createPlaylist, updatePlaylist, deletePlaylist, renamePlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, addTracksToPlaylist, removeTracksFromPlaylist, closeLibraryDb, isPlaybackPathAllowed, loadCachedLyrics, saveCachedLyrics, deleteCachedLyrics, setTrackFavorite, recordTrackPlay, loadPlayEvents, getStatsHealth, getLibraryOverview, clearAllStats, loadFollowedArtistOverrides, addFollowedArtist, excludeFollowedArtist, clearFollowedArtistOverride, setItunesArtistIdForArtist, loadCachedReleases, upsertArtistReleases } from './libraryDb.js';
 import { analyzeSamples, themeFromAnalysis } from '../lib/coverTheme.js';
 import { analyseCover } from '../lib/coverColour.js';
@@ -63,7 +64,7 @@ import {
 } from './itunesClient.js';
 import http from 'http';
 import { downloadYoutubeAudioById, searchCandidatesForPicker } from './ytdlpImport.js';
-import { saveSoulseekCredentials, soulseekCredentialsConfigured, soulseekStatus, soulseekTestConnection, soulseekDisconnect, soulseekSearch, soulseekDownload, soulseekCancelDownload } from './soulseekClient.js';
+import { saveSoulseekCredentials, soulseekCredentialsConfigured, soulseekStatus, soulseekTestConnection, soulseekDisconnect, soulseekSearch, soulseekDownload, soulseekCancelDownload, soulseekSearchLive, soulseekCancelLiveSearch, soulseekBrowseFolder } from './soulseekClient.js';
 import { resolveCoverFilePath, colorFilePath, mimeForCoverPath, storeCoverFromDataUri, mirroredFrom } from './coverArtStore.js';
 import * as discordPresence from './discordPresence.js';
 import { resolveForDiscord as resolveImgurCover } from './coverUploader.js';
@@ -433,11 +434,11 @@ function resolvePreloadPath() {
   return sibling;
 }
 
-function createWindow() {
-  // Resolve the icon from the project root so it works both in dev
-  // (npm start / electron-forge dev) and in a packaged build.
-  // macOS prefers .icns, Windows .ico — both fall back to .png gracefully.
-  const iconPath = (() => {
+// Resolve the icon from the project root so it works both in dev
+// (npm start / electron-forge dev) and in a packaged build.
+// macOS prefers .icns, Windows .ico — both fall back to .png gracefully.
+function appIconPath() {
+  return (() => {
     const fs = require('fs');
     const names =
       process.platform === 'darwin' ? ['icon.icns', 'icon.png']
@@ -458,15 +459,12 @@ function createWindow() {
     }
     return null; // fall back to the executable's own icon
   })();
+}
 
-  mainWindow = new BrowserWindow({
-    title: 'studio',
-    width: 1400,
-    height: 776,
-    minWidth: 1000,
-    minHeight: 600,
-    frame: false,
-    backgroundColor: '#000000',
+/** What every Studio window shares: the icon and how its page runs. */
+function sharedWindowOptions() {
+  const iconPath = appIconPath();
+  return {
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: resolvePreloadPath(),
@@ -480,12 +478,35 @@ function createWindow() {
          face detection (Windows and macOS) and is simply absent elsewhere. */
       enableBlinkFeatures: 'ShapeDetection',
     },
+  };
+}
+
+/** Loads the app's page into a window, with `query` on its URL. */
+function loadPage(win, query = null) {
+  const qs = query ? new URLSearchParams(query).toString() : '';
+  // MAIN_WINDOW_VITE_DEV_SERVER_URL is set by electron-forge vite plugin
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) win.loadURL(qs ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}?${qs}` : MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  else win.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`), query ? { query } : undefined);
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    title: 'studio',
+    width: 1400,
+    height: 776,
+    minWidth: 1000,
+    minHeight: 600,
+    frame: false,
+    backgroundColor: '#000000',
+    ...sharedWindowOptions(),
   });
 
   // Leaving the window, and every half minute, settings go to disk.
   mainWindow.on('blur', flushStorage);
   const flushTimer = setInterval(flushStorage, 30_000);
   mainWindow.on('closed', () => clearInterval(flushTimer));
+  // Popped-out playlists play from this window, so they go with it.
+  mainWindow.on('close', closePlaylistWindows);
 
   const pushMaximized = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -494,15 +515,10 @@ function createWindow() {
   mainWindow.on('maximize', pushMaximized);
   mainWindow.on('unmaximize', pushMaximized);
 
-  // MAIN_WINDOW_VITE_DEV_SERVER_URL is set by electron-forge vite plugin
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-    // Auto-open devtools in dev mode, undocked to the right so the app
-    // window keeps its layout.
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  } else {
-    mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`));
-  }
+  loadPage(mainWindow);
+  // Auto-open devtools in dev mode, undocked to the right so the app
+  // window keeps its layout.
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) mainWindow.webContents.openDevTools({ mode: 'detach' });
 
   // Explicit F12 / Ctrl+Shift+I / Cmd+Option+I handler as a safety net. Some
   // Electron builds drop the default menu (which normally provides these),
@@ -3083,6 +3099,39 @@ ipcMain.handle('soulseek:search', async (event, query) => {
   }
 });
 
+/* The Soulseek search mode: answers stream back on 'soulseek:searchUpdate'
+   as { searchId, results, folders, peers, fileCount, done } while peers
+   reply, and the call resolves with the last of them. */
+ipcMain.handle('soulseek:searchLive', async (event, params = {}) => {
+  const searchId = String(params.searchId || '');
+  const query = String(params.query || '').trim();
+  const sender = event.sender;
+  const send = (snap) => {
+    try { if (!sender.isDestroyed()) sender.send('soulseek:searchUpdate', snap); } catch { /* window gone */ }
+  };
+  try {
+    const last = await soulseekSearchLive(query, {
+      searchId, onUpdate: send, artist: String(params.artist || ''), rest: String(params.rest || ''),
+    });
+    return { ok: true, ...last };
+  } catch (e) {
+    const error = String(e?.message || e);
+    send({ searchId, error, done: true, results: [], folders: [], peers: 0, fileCount: 0 });
+    return { ok: false, searchId, error };
+  }
+});
+
+ipcMain.handle('soulseek:cancelSearch', (event, searchId) => soulseekCancelLiveSearch(searchId));
+
+/* Everything in one peer's folder, not only the files a search matched. */
+ipcMain.handle('soulseek:folder', async (event, params = {}) => {
+  try {
+    return await soulseekBrowseFolder({ user: params.user, folder: params.folder });
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+});
+
 ipcMain.handle('soulseek:cancelDownload', (event, id) => {
   const ok = soulseekCancelDownload(String(id || ''));
   return { ok };
@@ -3862,6 +3911,14 @@ ipcMain.on('window:maximize', (e) => {
 });
 ipcMain.handle('window:isMaximized', (e) => !!windowFromEvent(e)?.isMaximized());
 ipcMain.on('window:close', (e) => windowFromEvent(e)?.close());
+
+/* Playlists popped out of the app into windows of their own
+   (playlistWindows.js). */
+const closePlaylistWindows = registerPlaylistWindows({
+  getMainWindow: () => mainWindow,
+  openWindow: loadPage,
+  windowOptions: sharedWindowOptions,
+});
 
 /** The key a song's lyrics are saved under: the song, plus its Spotify
  *  version when it has one (clean and explicit share the rest). */

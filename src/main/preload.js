@@ -103,6 +103,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   soulseekDownload: (params) => ipcRenderer.invoke('soulseek:download', params),
   soulseekDownloadAlbum: (params) => ipcRenderer.invoke('soulseek:downloadAlbum', params),
   soulseekCancelDownload: (id) => ipcRenderer.invoke('soulseek:cancelDownload', id),
+  soulseekSearchLive: (params) => ipcRenderer.invoke('soulseek:searchLive', params),
+  soulseekCancelSearch: (searchId) => ipcRenderer.invoke('soulseek:cancelSearch', searchId),
+  soulseekFolder: (params) => ipcRenderer.invoke('soulseek:folder', params),
+  onSoulseekSearchUpdate: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('soulseek:searchUpdate', listener);
+    return () => ipcRenderer.removeListener('soulseek:searchUpdate', listener);
+  },
   // Playlist import
   spotifyFetchPlaylist: (input) => ipcRenderer.invoke('spotify:fetchPlaylist', input),
   playlistDetectConflicts: (tracks) => ipcRenderer.invoke('playlist:detectConflicts', tracks),
@@ -261,4 +269,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('window:maximized', listener);
   },
   close: () => ipcRenderer.send('window:close'),
+
+  /* Playlists popped out into their own windows (playlistWindows.js).
+     The app's side: open one, push it what it shows, hear what it asks. */
+  plwinOpen: (key, title) => ipcRenderer.invoke('plwin:open', { key, title }),
+  plwinPush: (key, data) => ipcRenderer.send('plwin:push', { key, data }),
+  onPlwinCmd: (cb) => {
+    const listener = (_e, msg) => cb(msg);
+    ipcRenderer.on('plwin:cmd', listener);
+    return () => ipcRenderer.removeListener('plwin:cmd', listener);
+  },
+  onPlwinClosed: (cb) => {
+    const listener = (_e, msg) => cb(msg);
+    ipcRenderer.on('plwin:closed', listener);
+    return () => ipcRenderer.removeListener('plwin:closed', listener);
+  },
+  /* The window's side: what the app pushes, asking it for things, keeping
+     on top, and going back into the app. */
+  onPlwinState: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on('plwin:state', listener);
+    return () => ipcRenderer.removeListener('plwin:state', listener);
+  },
+  plwinCmd: (cmd, args) => ipcRenderer.send('plwin:cmd', { cmd, args }),
+  plwinPin: (on) => ipcRenderer.invoke('plwin:pin', on),
+  plwinReturn: () => ipcRenderer.send('plwin:return'),
 });
